@@ -127,9 +127,10 @@ def extract_pixel_temp_dataframes(exp_data):
         y, x = np.indices((well_nrows, well_ncols))
         temp_group_idx = ((y // 5) * well_temp_ncols + (x // 5)).flatten()
 
-        active_y = y.flatten()[idx_active]
-        active_x = x.flatten()[idx_active]
-        active_temp_mapping = temp_group_idx[idx_active]
+        # Force these to be raw NumPy arrays to prevent Pandas Index Alignment NaNs
+        active_y = np.asarray(y.flatten()[idx_active])
+        active_x = np.asarray(x.flatten()[idx_active])
+        active_temp_mapping = np.asarray(temp_group_idx[idx_active])
 
         # Calculate Pixel Data
         n_time_lin = well.well_3d_lin.shape[2]
@@ -143,10 +144,18 @@ def extract_pixel_temp_dataframes(exp_data):
         well_2d_nl_bs_active = well_2d_nl_bs[:, idx_active]
 
         time_cols = [f"Cycle_{t}" for t in time_npr]
+        
+        # Safely calculate means while ignoring missing/broken sensor NaNs
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            mean_temp_lin = np.nanmean(well_temp_lin2d, axis=0)
+            mean_temp_nl = np.nanmean(well_2d_temp_npr, axis=0)
 
         # --- 1. Linearised Pixel DF ---
         df_pl = pd.DataFrame(well_2d_bs_active.T, columns=time_cols)
         df_pl['well_id'] = w_idx
+        
+        # Assign safely as 1D numpy arrays
         df_pl['pixel_row_idx'] = active_y
         df_pl['pixel_col_idx'] = active_x
         df_pl['temp_group_idx'] = active_temp_mapping
@@ -154,11 +163,8 @@ def extract_pixel_temp_dataframes(exp_data):
         counts = df_pl['temp_group_idx'].value_counts()
         df_pl['num_active_pixels_in_temp_group'] = df_pl['temp_group_idx'].map(counts)
 
-        mean_temp_lin = well_temp_lin2d.mean(axis=0)
-        df_pl['well_temp_lin2d_mean'] = mean_temp_lin[active_temp_mapping]
-
-        mean_temp_nl = well_2d_temp_npr.mean(axis=0)
-        df_pl['well_2d_temp_npr_mean'] = mean_temp_nl[active_temp_mapping]
+        df_pl['well_temp_lin2d_mean'] = np.asarray(mean_temp_lin[active_temp_mapping])
+        df_pl['well_2d_temp_npr_mean'] = np.asarray(mean_temp_nl[active_temp_mapping])
 
         # --- 2. Non-Linearised Pixel DF ---
         df_pnl = pd.DataFrame(well_2d_nl_bs_active.T, columns=time_cols)
@@ -167,8 +173,8 @@ def extract_pixel_temp_dataframes(exp_data):
         df_pnl['pixel_col_idx'] = active_x
         df_pnl['temp_group_idx'] = active_temp_mapping
         df_pnl['num_active_pixels_in_temp_group'] = df_pnl['temp_group_idx'].map(counts)
-        df_pnl['well_temp_lin2d_mean'] = mean_temp_lin[active_temp_mapping]
-        df_pnl['well_2d_temp_npr_mean'] = mean_temp_nl[active_temp_mapping]
+        df_pnl['well_temp_lin2d_mean'] = np.asarray(mean_temp_lin[active_temp_mapping])
+        df_pnl['well_2d_temp_npr_mean'] = np.asarray(mean_temp_nl[active_temp_mapping])
 
         # Standardize Metadata Order
         meta_cols = ['well_id', 'pixel_row_idx', 'pixel_col_idx', 'temp_group_idx',
@@ -730,9 +736,9 @@ if __name__ == "__main__":
     n_wells = 10
     n_a_type = "v04"
 
-    exp_folder = "/Users/kautsarg/Documents/Run Data/trial test data"
-    exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name != ".DS_Store"]
-    # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
+    exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
+    # exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name != ".DS_Store"]
+    exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
     
     window_size_ori = 50
     window_size_1stder = 200
