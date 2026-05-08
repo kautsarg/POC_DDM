@@ -7,7 +7,7 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 set_global_determinism(0)
 
 exp_path = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data/D20250808_E00_C00_F4500KHz_U_Sample_7"
-data_path = os.path.join(exp_path, "curve_for_training_updated.pkl")
+data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
 results_file_path = os.path.join(exp_path, "all_ml_results_dynamic.pkl")
 
 with open(data_path, 'rb') as f:

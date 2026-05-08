@@ -25,11 +25,11 @@ important_feature_combinations = training_data.get("important_feature_combinatio
 
 # Ensure multi-dataset arrays are correctly sized (len = num datasets)
 msc_configs = [
-    ("msc_linear_0.01", 0.01, linear_feature_combinations),
     ("msc_linear_0.05", 0.05, linear_feature_combinations),
+    ("msc_linear_0.01", 0.01, linear_feature_combinations),
     ("msc_linear_0.001", 0.001, linear_feature_combinations),
-    ("msc_baseline_0.01", 0.01, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
     ("msc_baseline_0.05", 0.05, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
+    ("msc_baseline_0.01", 0.01, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
     ("msc_baseline_0.001", 0.001, [["Ct", "Cy0", "log_F0"]] * len(dataset_name))
 ]
 
