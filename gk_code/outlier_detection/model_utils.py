@@ -1,4 +1,9 @@
 import os
+# ====================================================================
+# SUPPRESS TENSORFLOW C++ WARNINGS (Must be before TF import)
+# ====================================================================
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=INFO, 1=WARN, 2=ERROR, 3=FATAL
+
 import random
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,28 +13,22 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 
 import tensorflow as tf
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR)
+tf.get_logger().setLevel('ERROR')
+
 from scikeras.wrappers import KerasClassifier
 
 # ====================================================================
 # GLOBAL DETERMINISM SETUP
 # ====================================================================
 def set_global_determinism(seed=0):
-    # 1. Set Python built-in hash seed
     os.environ['PYTHONHASHSEED'] = str(seed)
-    
-    # 2. Set Python random seed
     random.seed(seed)
-    
-    # 3. Set NumPy random seed
     np.random.seed(seed)
-    
-    # 4. Set TensorFlow random seed
     tf.random.set_seed(seed)
-    
-    # 5. Force TensorFlow to use deterministic operations
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-    
     try:
         tf.config.experimental.enable_op_determinism()
     except AttributeError:
@@ -57,22 +56,18 @@ def create_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
 
 
 # ====================================================================
-# MODULE 1: MODEL EVALUATION FUNCTION (NaN-SAFE)
+# MODULE 1: MODEL EVALUATION FUNCTION (NaN-SAFE & MIN-CLASS SAFE)
 # ====================================================================
 def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name):
-    """
-    Evaluates CNN, KNN, and LR using specific outlier filters.
-    X_curves: The 2D array of curves to train on.
-    features_df: The DataFrame containing the outlier labels.
-    """
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.10, random_state=0)
-    
     X_FFI_full = X_curves[:, [-1]]
     results_dict = {}
+    
+    total_filters = len(outlier_filters)
 
-    for f in outlier_filters:
+    for idx, f in enumerate(outlier_filters):
         filter_name = f if f else 'None (Baseline)'
-        print(f"  -> Testing Filter: {filter_name}")
+        filter_pct = ((idx + 1) / total_filters) * 100
+        print(f"  -> Testing Filter [{idx+1}/{total_filters} | {filter_pct:.1f}%]: {filter_name}")
         
         # 1. Generate robust mask
         if f is None:
@@ -88,9 +83,34 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         X_FFI = np.nan_to_num(X_FFI_full[mask], nan=0.0, posinf=0.0, neginf=0.0)
         y_true = y_encoded[mask]
 
-        if len(np.unique(y_true)) < 2:
-            print(f"     [Warning] Not enough classes left after filtering. Skipping.")
+        # --- SAFEGUARD 1: Remove classes with fewer than 2 samples ---
+        unique_classes, class_counts = np.unique(y_true, return_counts=True)
+        rare_classes = unique_classes[class_counts < 2]
+
+        if len(rare_classes) > 0:
+            valid_class_mask = ~np.isin(y_true, rare_classes)
+            X_AC = X_AC[valid_class_mask]
+            X_FFI = X_FFI[valid_class_mask]
+            y_true = y_true[valid_class_mask]
+
+        n_classes = len(np.unique(y_true))
+        
+        # --- SAFEGUARD 2: Check if enough classes remain ---
+        if n_classes < 2:
+            print(f"     [Warning] Not enough classes left to train after filtering. Skipping.")
             continue
+
+        # --- THE FIX: Dynamic Test Sizing ---
+        # We need at least 1 sample per class in Train AND Test (min 2 * n_classes)
+        if len(y_true) < 2 * n_classes:
+            print(f"     [Warning] Too few samples left ({len(y_true)}) to stratify {n_classes} classes. Skipping.")
+            continue
+
+        # Calculate absolute test size: 10%, but NEVER less than the number of classes
+        calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
+
+        # Move SSS *inside* the loop so it can use the dynamic size
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
 
         y_trues_, y_preds_AC_, y_preds_AC_kNN_, y_preds_FFI_ = [], [], [], []
 
@@ -104,9 +124,10 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             y_trues_.append(y_test)
 
             # --- Neural Network (AC) ---
+            # ... (The rest of your model training code remains exactly the same below here) ...
             clf_AC = myWrapper(model=create_model,
                                model__input_size=X_AC.shape[1],
-                               model__output_size=len(np.unique(y_encoded)),
+                               model__output_size=len(np.unique(y_encoded)), # Keep original output size to prevent shape errors
                                epochs=1000, 
                                batch_size=512, 
                                shuffle=True, 
@@ -142,18 +163,15 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         results_dict[f] = {
             "y_trues_": y_trues_, "y_preds_AC_": y_preds_AC_,
             "y_preds_AC_kNN_": y_preds_AC_kNN_, "y_preds_FFI_": y_preds_FFI_,
-            "mask_count": np.sum(mask)
+            "mask_count": np.sum(mask) # Track original mask count
         }
 
     return results_dict
-
 
 # ====================================================================
 # MODULE 2: VISUALIZATION FUNCTIONS
 # ====================================================================
 def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, total_count, save_prefix=None):
-    
-    # Setup labels and colors
     filter_labels = [str(f) if f is not None else "No Filter" for f in outlier_filters if f in results_dict]
     
     colors = []
@@ -210,7 +228,6 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
     if save_prefix:
         acc_path = f"{save_prefix}_accuracies.png"
         fig_acc.savefig(acc_path, bbox_inches='tight', dpi=300, facecolor='white')
-        print(f"  -> Saved accuracy plot to: {acc_path}")
     plt.close(fig_acc)
 
     # --- 2. PLOT DATA COMPOSITION ---
@@ -236,9 +253,8 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
     if save_prefix:
         comp_path = f"{save_prefix}_composition.png"
         fig_comp.savefig(comp_path, bbox_inches='tight', dpi=300, facecolor='white')
-        print(f"  -> Saved composition plot to: {comp_path}")
     plt.close(fig_comp)
-
+    
     # --- 3. CONSOLE LEADERBOARD PRINT ---
     print(f"\n  🏆 Top Combinations for {mode_name}: {dataset_name}")
     print("  " + "-"*95)
