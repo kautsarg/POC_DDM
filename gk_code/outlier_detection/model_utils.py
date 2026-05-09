@@ -56,12 +56,12 @@ def create_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
 
 
 # ====================================================================
-# MODULE 1: MODEL EVALUATION FUNCTION (NaN-SAFE & MIN-CLASS SAFE)
+# MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
-def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name):
+def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None):
     X_FFI_full = X_curves[:, [-1]]
-    results_dict = {}
     
+    results_dict = cached_results.copy() if cached_results is not None else {}
     total_filters = len(outlier_filters)
 
     for idx, f in enumerate(outlier_filters):
@@ -69,7 +69,10 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         filter_pct = ((idx + 1) / total_filters) * 100
         print(f"  -> Testing Filter [{idx+1}/{total_filters} | {filter_pct:.1f}%]: {filter_name}")
         
-        # 1. Generate robust mask
+        if f in results_dict:
+            print(f"     [CACHE HIT] Model already trained for this filter. Skipping.")
+            continue
+        
         if f is None:
             mask = np.ones(len(y_encoded), dtype=bool)
         elif f in features_df.columns:
@@ -78,12 +81,10 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             print(f"     [Warning] {f} not found in dataset. Skipping.")
             continue
 
-        # Sanitize NaN and Inf values to 0.0 to prevent training crashes
         X_AC = np.nan_to_num(X_curves[mask], nan=0.0, posinf=0.0, neginf=0.0)
         X_FFI = np.nan_to_num(X_FFI_full[mask], nan=0.0, posinf=0.0, neginf=0.0)
         y_true = y_encoded[mask]
 
-        # --- SAFEGUARD 1: Remove classes with fewer than 2 samples ---
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
 
@@ -95,26 +96,23 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
         n_classes = len(np.unique(y_true))
         
-        # --- SAFEGUARD 2: Check if enough classes remain ---
         if n_classes < 2:
             print(f"     [Warning] Not enough classes left to train after filtering. Skipping.")
             continue
 
-        # --- THE FIX: Dynamic Test Sizing ---
-        # We need at least 1 sample per class in Train AND Test (min 2 * n_classes)
         if len(y_true) < 2 * n_classes:
             print(f"     [Warning] Too few samples left ({len(y_true)}) to stratify {n_classes} classes. Skipping.")
             continue
 
-        # Calculate absolute test size: 10%, but NEVER less than the number of classes
         calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
-
-        # Move SSS *inside* the loop so it can use the dynamic size
         sss = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
 
-        y_trues_, y_preds_AC_, y_preds_AC_kNN_, y_preds_FFI_ = [], [], [], []
+        # Initialize lists for hard predictions AND probabilities
+        y_trues_ = []
+        y_preds_AC_, y_probs_AC_, classes_AC_ = [], [], []
+        y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
+        y_preds_FFI_, y_probs_FFI_, classes_FFI_ = [], [], []
 
-        # 2. Train / Test Split
         splits = sss.split(X_AC, y_true)
         
         for train_index, test_index in splits:
@@ -124,18 +122,22 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             y_trues_.append(y_test)
 
             # --- Neural Network (AC) ---
-            # ... (The rest of your model training code remains exactly the same below here) ...
             clf_AC = myWrapper(model=create_model,
                                model__input_size=X_AC.shape[1],
-                               model__output_size=len(np.unique(y_encoded)), # Keep original output size to prevent shape errors
+                               model__output_size=len(np.unique(y_encoded)), 
                                epochs=1000, 
                                batch_size=512, 
                                shuffle=True, 
                                verbose=False,
                                random_state=0)
             clf_AC.fit(X_AC_train, y_train)
+            
             pred_AC = clf_AC.predict(X_AC_test)
+            prob_AC = clf_AC.predict_proba(X_AC_test) # <-- New
+            
             y_preds_AC_.append(pred_AC)
+            y_probs_AC_.append(prob_AC)
+            classes_AC_.append(clf_AC.classes_)
             
             cnn_acc = accuracy_score(y_test, pred_AC) * 100
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA) | {cnn_acc:5.2f}%")
@@ -144,8 +146,13 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             # --- K-Nearest Neighbors (AC) ---
             clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
             clf_AC_kNN.fit(X_AC_train, y_train)
+            
             pred_kNN = clf_AC_kNN.predict(X_AC_test)
+            prob_kNN = clf_AC_kNN.predict_proba(X_AC_test) # <-- New
+            
             y_preds_AC_kNN_.append(pred_kNN)
+            y_probs_AC_kNN_.append(prob_kNN)
+            classes_AC_kNN_.append(clf_AC_kNN.classes_)
             
             knn_acc = accuracy_score(y_test, pred_kNN) * 100
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA) | {knn_acc:5.2f}%")
@@ -153,20 +160,38 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             # --- Logistic Regression (FFI) ---
             clf_FFI = LogisticRegression(max_iter=1000)
             clf_FFI.fit(X_FFI_train, y_train)
+            
             pred_FFI = clf_FFI.predict(X_FFI_test)
+            prob_FFI = clf_FFI.predict_proba(X_FFI_test) # <-- New
+            
             y_preds_FFI_.append(pred_FFI)
+            y_probs_FFI_.append(prob_FFI)
+            classes_FFI_.append(clf_FFI.classes_)
             
             lr_acc = accuracy_score(y_test, pred_FFI) * 100
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)  | {lr_acc:5.2f}%")
             
-        # Store results for this filter
+        # Store comprehensive results for this filter
         results_dict[f] = {
-            "y_trues_": y_trues_, "y_preds_AC_": y_preds_AC_,
-            "y_preds_AC_kNN_": y_preds_AC_kNN_, "y_preds_FFI_": y_preds_FFI_,
-            "mask_count": np.sum(mask) # Track original mask count
+            "y_trues_": y_trues_,
+            
+            "y_preds_AC_": y_preds_AC_,
+            "y_probs_AC_": y_probs_AC_,
+            "classes_AC_": classes_AC_,
+            
+            "y_preds_AC_kNN_": y_preds_AC_kNN_,
+            "y_probs_AC_kNN_": y_probs_AC_kNN_,
+            "classes_AC_kNN_": classes_AC_kNN_,
+            
+            "y_preds_FFI_": y_preds_FFI_,
+            "y_probs_FFI_": y_probs_FFI_,
+            "classes_FFI_": classes_FFI_,
+            
+            "mask_count": np.sum(mask) 
         }
 
     return results_dict
+
 
 # ====================================================================
 # MODULE 2: VISUALIZATION FUNCTIONS

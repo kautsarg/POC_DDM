@@ -30,10 +30,17 @@ y_full = encoder.fit_transform(Y_well)
 
 # 1. Dynamically gather all filter columns
 all_columns = kinetic_features[0].columns.tolist()
-outlier_filters = [None, 
-                   "msc_label_msc_linear_0.01", "msc_label_msc_linear_0.001", "msc_label_msc_baseline_0.01", "msc_label_msc_baseline_0.001", 
-                   "amf_label_amf_important", "amf_label_amf_send_5", "amf_label_amf_send_15", "amf_label_amf_send_25",
-                   "mean_std_label_env_1std", "mean_std_label_env_2std", "mean_std_label_env_3std"]
+outlier_filters = [None] + [c for c in all_columns if 'label' in c and ('msc_' in c or 'amf_' in c or 'mean_std_' in c)]
+outlier_filters = [None, 'msc_label_msc_linear_0.01', 'msc_label_msc_linear_0.05',
+					'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.01', 
+				    'msc_label_msc_baseline_0.05', 'msc_label_msc_baseline_0.001',
+                    'amf_label_amf_important', 'amf_label_amf_send_5',
+                    'amf_label_amf_send_10', 'amf_label_amf_send_15',
+                    'amf_label_amf_send_20', 'amf_label_amf_send_25',
+                    'amf_label_amf_send_abs_5', 'amf_label_amf_send_abs_10',
+                    'amf_label_amf_send_abs_15', 'amf_label_amf_send_abs_20',
+                    'amf_label_amf_send_abs_25', 'mean_std_label_env_1std',
+                    'mean_std_label_env_2std', 'mean_std_label_env_3std']
 
 print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
@@ -59,14 +66,14 @@ for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_f
     
     # --- NATIVE TRAINING ---
     print(f"  [MODE 1/2] NATIVE TRAINING")
-    if "Native" not in all_ml_results[clean_title]:
-        res = evaluate_outlier_filters(curves_2d, features_df, y_full, outlier_filters, clean_title, "Native")
-        all_ml_results[clean_title]["Native"] = res
-        with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
-    else:
-        print(f"    -> Cached results found. Skipping Native.")
+    cached_native = all_ml_results[clean_title].get("Native", {})
+    
+    res_native = evaluate_outlier_filters(
+        curves_2d, features_df, y_full, outlier_filters, clean_title, "Native", cached_results=cached_native
+    )
+    all_ml_results[clean_title]["Native"] = res_native
+    with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
         
-    # --- THE FIX: Call the plotter for Native results ---
     prefix_native = os.path.join(model_plot_path, f"{name}_Native")
     plot_ml_results(
         results_dict=all_ml_results[clean_title]["Native"], 
@@ -79,14 +86,14 @@ for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_f
         
     # --- REFERENCE TRAINING ---
     print(f"\n  [MODE 2/2] REFERENCE TRAINING")
-    if "Reference" not in all_ml_results[clean_title]:
-        res = evaluate_outlier_filters(dataset[0], features_df, y_full, outlier_filters, clean_title, "Reference")
-        all_ml_results[clean_title]["Reference"] = res
-        with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
-    else:
-        print(f"    -> Cached results found. Skipping Reference.")
+    cached_ref = all_ml_results[clean_title].get("Reference", {})
+    
+    res_ref = evaluate_outlier_filters(
+        dataset[0], features_df, y_full, outlier_filters, clean_title, "Reference", cached_results=cached_ref
+    )
+    all_ml_results[clean_title]["Reference"] = res_ref
+    with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
         
-    # --- THE FIX: Call the plotter for Reference results ---
     prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
     plot_ml_results(
         results_dict=all_ml_results[clean_title]["Reference"], 

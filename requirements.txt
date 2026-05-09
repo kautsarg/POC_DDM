@@ -84,7 +84,7 @@ scikit-base==0.13.1
 scikit-learn==1.7.2
 scipy==1.17.1
 seaborn==0.13.2
-# setuptools==82.0.1
+# setuptools==81.0.0
 six==1.17.0
 sktime==0.40.1
 soundfile==0.13.1
