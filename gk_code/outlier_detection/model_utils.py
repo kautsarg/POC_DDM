@@ -58,11 +58,14 @@ def create_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
 # ====================================================================
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
-def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None):
+def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None, models=["cnn", "knn", "ffi"]):
     X_FFI_full = X_curves[:, [-1]]
     
     results_dict = cached_results.copy() if cached_results is not None else {}
     total_filters = len(outlier_filters)
+    
+    # Normalize model names to lowercase for robust matching
+    models = [m.lower() for m in models]
 
     for idx, f in enumerate(outlier_filters):
         filter_name = f if f else 'None (Baseline)'
@@ -107,7 +110,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
 
-        # Initialize lists for hard predictions AND probabilities
+        # Initialize lists
         y_trues_ = []
         y_preds_AC_, y_probs_AC_, classes_AC_ = [], [], []
         y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
@@ -122,73 +125,83 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             y_trues_.append(y_test)
 
             # --- Neural Network (AC) ---
-            clf_AC = myWrapper(model=create_model,
-                               model__input_size=X_AC.shape[1],
-                               model__output_size=len(np.unique(y_encoded)), 
-                               epochs=1000, 
-                               batch_size=512, 
-                               shuffle=True, 
-                               verbose=False,
-                               random_state=0)
-            clf_AC.fit(X_AC_train, y_train)
-            
-            pred_AC = clf_AC.predict(X_AC_test)
-            prob_AC = clf_AC.predict_proba(X_AC_test) # <-- New
-            
-            y_preds_AC_.append(pred_AC)
-            y_probs_AC_.append(prob_AC)
-            classes_AC_.append(clf_AC.classes_)
-            
-            cnn_acc = accuracy_score(y_test, pred_AC) * 100
-            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA) | {cnn_acc:5.2f}%")
-            tf.keras.backend.clear_session()
+            if "cnn" in models:
+                clf_AC = myWrapper(model=create_model,
+                                   model__input_size=X_AC.shape[1],
+                                   model__output_size=len(np.unique(y_encoded)), 
+                                   epochs=1000, 
+                                   batch_size=512, 
+                                   shuffle=True, 
+                                   verbose=False,
+                                   random_state=0)
+                clf_AC.fit(X_AC_train, y_train)
+                
+                pred_AC = clf_AC.predict(X_AC_test)
+                prob_AC = clf_AC.predict_proba(X_AC_test)
+                
+                y_preds_AC_.append(pred_AC)
+                y_probs_AC_.append(prob_AC)
+                classes_AC_.append(clf_AC.classes_)
+                
+                cnn_acc = accuracy_score(y_test, pred_AC) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA) | {cnn_acc:5.2f}%")
+                tf.keras.backend.clear_session()
 
             # --- K-Nearest Neighbors (AC) ---
-            clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
-            clf_AC_kNN.fit(X_AC_train, y_train)
-            
-            pred_kNN = clf_AC_kNN.predict(X_AC_test)
-            prob_kNN = clf_AC_kNN.predict_proba(X_AC_test) # <-- New
-            
-            y_preds_AC_kNN_.append(pred_kNN)
-            y_probs_AC_kNN_.append(prob_kNN)
-            classes_AC_kNN_.append(clf_AC_kNN.classes_)
-            
-            knn_acc = accuracy_score(y_test, pred_kNN) * 100
-            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA) | {knn_acc:5.2f}%")
+            if "knn" in models:
+                clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
+                clf_AC_kNN.fit(X_AC_train, y_train)
+                
+                pred_kNN = clf_AC_kNN.predict(X_AC_test)
+                prob_kNN = clf_AC_kNN.predict_proba(X_AC_test) 
+                
+                y_preds_AC_kNN_.append(pred_kNN)
+                y_probs_AC_kNN_.append(prob_kNN)
+                classes_AC_kNN_.append(clf_AC_kNN.classes_)
+                
+                knn_acc = accuracy_score(y_test, pred_kNN) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA) | {knn_acc:5.2f}%")
 
             # --- Logistic Regression (FFI) ---
-            clf_FFI = LogisticRegression(max_iter=1000)
-            clf_FFI.fit(X_FFI_train, y_train)
+            if "ffi" in models:
+                clf_FFI = LogisticRegression(max_iter=1000)
+                clf_FFI.fit(X_FFI_train, y_train)
+                
+                pred_FFI = clf_FFI.predict(X_FFI_test)
+                prob_FFI = clf_FFI.predict_proba(X_FFI_test) 
+                
+                y_preds_FFI_.append(pred_FFI)
+                y_probs_FFI_.append(prob_FFI)
+                classes_FFI_.append(clf_FFI.classes_)
+                
+                lr_acc = accuracy_score(y_test, pred_FFI) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)  | {lr_acc:5.2f}%")
             
-            pred_FFI = clf_FFI.predict(X_FFI_test)
-            prob_FFI = clf_FFI.predict_proba(X_FFI_test) # <-- New
-            
-            y_preds_FFI_.append(pred_FFI)
-            y_probs_FFI_.append(prob_FFI)
-            classes_FFI_.append(clf_FFI.classes_)
-            
-            lr_acc = accuracy_score(y_test, pred_FFI) * 100
-            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)  | {lr_acc:5.2f}%")
-            
-        # Store comprehensive results for this filter
-        results_dict[f] = {
+        # Dynamically build the results entry based on trained models
+        res_entry = {
             "y_trues_": y_trues_,
-            
-            "y_preds_AC_": y_preds_AC_,
-            "y_probs_AC_": y_probs_AC_,
-            "classes_AC_": classes_AC_,
-            
-            "y_preds_AC_kNN_": y_preds_AC_kNN_,
-            "y_probs_AC_kNN_": y_probs_AC_kNN_,
-            "classes_AC_kNN_": classes_AC_kNN_,
-            
-            "y_preds_FFI_": y_preds_FFI_,
-            "y_probs_FFI_": y_probs_FFI_,
-            "classes_FFI_": classes_FFI_,
-            
             "mask_count": np.sum(mask) 
         }
+        if "cnn" in models:
+            res_entry.update({
+                "y_preds_AC_": y_preds_AC_,
+                "y_probs_AC_": y_probs_AC_,
+                "classes_AC_": classes_AC_,
+            })
+        if "knn" in models:
+            res_entry.update({
+                "y_preds_AC_kNN_": y_preds_AC_kNN_,
+                "y_probs_AC_kNN_": y_probs_AC_kNN_,
+                "classes_AC_kNN_": classes_AC_kNN_,
+            })
+        if "ffi" in models:
+            res_entry.update({
+                "y_preds_FFI_": y_preds_FFI_,
+                "y_probs_FFI_": y_probs_FFI_,
+                "classes_FFI_": classes_FFI_,
+            })
+            
+        results_dict[f] = res_entry
 
     return results_dict
 
@@ -207,14 +220,27 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
         elif 'amf_' in f: colors.append('#2ca02c')
         else: colors.append('#9467bd')
 
-    method_info = [
-        ('Logistic Regression (FFI)', 'y_preds_FFI_'),
-        ('kNN (ACA)', 'y_preds_AC_kNN_'),
-        ('Convolutional Neural Network (ACA)', 'y_preds_AC_')
-    ]
+    # Dynamically determine which models were evaluated
+    sample_res = next((results_dict[f] for f in outlier_filters if f in results_dict), None)
+    
+    method_info = []
+    if sample_res:
+        if 'y_preds_FFI_' in sample_res:
+            method_info.append(('Logistic Regression (FFI)', 'y_preds_FFI_'))
+        if 'y_preds_AC_kNN_' in sample_res:
+            method_info.append(('kNN (ACA)', 'y_preds_AC_kNN_'))
+        if 'y_preds_AC_' in sample_res:
+            method_info.append(('Convolutional Neural Network (ACA)', 'y_preds_AC_'))
+
+    if not method_info:
+        print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")
+        return []
 
     # --- 1. PLOT ACCURACIES ---
-    fig_acc, axes = plt.subplots(len(method_info), 1, figsize=(14, 18))
+    # Adjust figure height based on the number of models actually plotted
+    fig_acc, axes = plt.subplots(len(method_info), 1, figsize=(14, 6 * len(method_info)))
+    if len(method_info) == 1:
+        axes = [axes]
     
     for ax, (title, m_key) in zip(axes, method_info):
         means, stds = [], []
