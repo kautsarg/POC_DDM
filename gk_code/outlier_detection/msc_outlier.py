@@ -115,6 +115,24 @@ def run_msc_pipeline(exp_label, p_value, ref_curves, msc_plot_path, dataset_name
         
         save_path = os.path.join(msc_plot_path, f"{name}_{exp_label}.html")
         with open(save_path, "w") as f: f.write(html)
+        
+        interactive_path = os.path.join(msc_plot_path, f"{name}_{exp_label}_INTERACTIVE.html")
+        is_outlier_array = (new_feats_df[f"msc_label_{exp_label}"] == -1).fillna(False).values
+        
+        build_interactive_msc_html(
+            save_path=interactive_path,
+            title=clean_title,
+            msc_feats=msc_feats,
+            Y_well=Y_well,
+            X_feats=feats_df[msc_feats[0]].values,
+            Y_feats=feats_df[msc_feats[1]].values,
+            Z_feats=feats_df[msc_feats[2]].values,
+            is_outlier=is_outlier_array,
+            curves=curves,
+            ref_curves=ref_curves,
+            line_fits=line_fits
+        )
+        
         gc.collect()
         
     return results_dfs

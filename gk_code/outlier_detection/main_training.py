@@ -11,7 +11,7 @@ set_global_determinism(0)
 
 exp_path = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data/D20250808_E00_C00_F4500KHz_U_Sample_7"
 data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
-results_file_path = os.path.join(exp_path, "classification_performances.pkl")
+results_file_path = os.path.join(exp_path, "classification_performances_with_proba.pkl")
 
 # Ensure the plot directory exists
 model_plot_path = os.path.join(exp_path, "model_performance")
@@ -53,7 +53,8 @@ else:
 total_datasets = len(dataset_name)
 total_samples = len(y_full)
 
-for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
+# for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
+for idx, (name, features_df, curves_2d) in enumerate(reversed(list(zip(dataset_name, kinetic_features, dataset)))):
     clean_title = name.replace("_", " ").title()
     progress_pct = ((idx + 1) / total_datasets) * 100
     

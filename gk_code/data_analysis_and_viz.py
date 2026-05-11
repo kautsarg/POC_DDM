@@ -41,26 +41,20 @@ def first_pos_zero_crossing_vec(data_2d):
 
 def lowest_integral_to_next_crossing_vec(data_2d):
     def single_lowest_exit(arr):
-        # Identify boundaries based on sign changes
         sign_changes = np.nonzero(np.diff(np.sign(arr)))[0] + 1
         boundaries = np.concatenate(([0], sign_changes, [len(arr)]))
-        
         lowest_sum = 0
         best_exit_idx = 0 
-        
-        # Pre-calculate cumulative sum for O(1) segment sum extraction
         c_sum = np.cumsum(arr)
         
         for i in range(len(boundaries) - 1):
             start, end = boundaries[i], boundaries[i+1]
-            # Calculate segment sum via cumsum differences
             segment_sum = c_sum[end-1] - (c_sum[start-1] if start > 0 else 0)
             if segment_sum < lowest_sum:
                 lowest_sum = segment_sum
                 best_exit_idx = end
         return best_exit_idx
     
-    # Use fromiter for faster C-level array generation over lists
     return np.fromiter((single_lowest_exit(row) for row in data_2d), dtype=int, count=len(data_2d))
 
 def apply_baseline_cleaning(curves, cross_indices, margin):
@@ -74,7 +68,6 @@ def apply_baseline_cleaning(curves, cross_indices, margin):
     return cleaned, np.where(mask, actual_indices, 0)
 
 def get_derivatives(curves_batch, timestamps):
-    # Switched to loky backend with auto batching for CPU-bound performance
     return Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
         delayed(sp.calculate_first_derivative)(timestamps, y) for y in curves_batch
     )
@@ -127,12 +120,10 @@ def extract_pixel_temp_dataframes(exp_data):
         y, x = np.indices((well_nrows, well_ncols))
         temp_group_idx = ((y // 5) * well_temp_ncols + (x // 5)).flatten()
 
-        # Force these to be raw NumPy arrays to prevent Pandas Index Alignment NaNs
         active_y = np.asarray(y.flatten()[idx_active])
         active_x = np.asarray(x.flatten()[idx_active])
         active_temp_mapping = np.asarray(temp_group_idx[idx_active])
 
-        # Calculate Pixel Data
         n_time_lin = well.well_3d_lin.shape[2]
         well_2d_lin = well.well_3d_lin.reshape(-1, n_time_lin, order='C').T
         well_2d_bs = well_2d_lin - well_2d_lin[idx_settled, :]
@@ -145,28 +136,21 @@ def extract_pixel_temp_dataframes(exp_data):
 
         time_cols = [f"Cycle_{t}" for t in time_npr]
         
-        # Safely calculate means while ignoring missing/broken sensor NaNs
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             mean_temp_lin = np.nanmean(well_temp_lin2d, axis=0)
             mean_temp_nl = np.nanmean(well_2d_temp_npr, axis=0)
 
-        # --- 1. Linearised Pixel DF ---
         df_pl = pd.DataFrame(well_2d_bs_active.T, columns=time_cols)
         df_pl['well_id'] = w_idx
-        
-        # Assign safely as 1D numpy arrays
         df_pl['pixel_row_idx'] = active_y
         df_pl['pixel_col_idx'] = active_x
         df_pl['temp_group_idx'] = active_temp_mapping
-
         counts = df_pl['temp_group_idx'].value_counts()
         df_pl['num_active_pixels_in_temp_group'] = df_pl['temp_group_idx'].map(counts)
-
         df_pl['well_temp_lin2d_mean'] = np.asarray(mean_temp_lin[active_temp_mapping])
         df_pl['well_2d_temp_npr_mean'] = np.asarray(mean_temp_nl[active_temp_mapping])
 
-        # --- 2. Non-Linearised Pixel DF ---
         df_pnl = pd.DataFrame(well_2d_nl_bs_active.T, columns=time_cols)
         df_pnl['well_id'] = w_idx
         df_pnl['pixel_row_idx'] = active_y
@@ -176,18 +160,15 @@ def extract_pixel_temp_dataframes(exp_data):
         df_pnl['well_temp_lin2d_mean'] = np.asarray(mean_temp_lin[active_temp_mapping])
         df_pnl['well_2d_temp_npr_mean'] = np.asarray(mean_temp_nl[active_temp_mapping])
 
-        # Standardize Metadata Order
         meta_cols = ['well_id', 'pixel_row_idx', 'pixel_col_idx', 'temp_group_idx',
                      'num_active_pixels_in_temp_group', 'well_temp_lin2d_mean', 'well_2d_temp_npr_mean']
         df_pl = df_pl[meta_cols + time_cols]
         df_pnl = df_pnl[meta_cols + time_cols]
 
-        # --- 3. Linearised Temp DF ---
         df_tl = pd.DataFrame(well_temp_lin2d.T, columns=time_cols)
         df_tl.insert(0, 'well_id', w_idx)
         df_tl.insert(1, 'temp_group_idx', np.arange(well_temp_lin2d.shape[1]))
 
-        # --- 4. Non-Linearised Temp DF ---
         df_tnl = pd.DataFrame(well_2d_temp_npr.T, columns=time_cols)
         df_tnl.insert(0, 'well_id', w_idx)
         df_tnl.insert(1, 'temp_group_idx', np.arange(well_2d_temp_npr.shape[1]))
@@ -277,7 +258,6 @@ def sigmoid_fitting_5p(curves, ori_timestamps, starting_idxs=None):
     if starting_idxs is None:
         starting_idxs = np.zeros(len(curves), dtype=int)
         
-    # Loky backend to bypass GIL for CPU bound tasks, with auto batching
     results = Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
         delayed(_fit_single_curve)(y, ori_timestamps, t) 
         for y, t in zip(curves, starting_idxs)
@@ -287,7 +267,6 @@ def sigmoid_fitting_5p(curves, ori_timestamps, starting_idxs=None):
     return np.array(curves_out_full), np.array(curves_out_stretched), np.array(params_out), np.array(rmse_out)
 
 def run_all_fits(processed_curves, indices_dict, ori_timestamps):
-    # Calculate all fits
     raw_fits = {
         "original": sigmoid_fitting_5p(processed_curves[0], ori_timestamps, None),
         "cleaned_std": sigmoid_fitting_5p(processed_curves[3], ori_timestamps, indices_dict["cleaned_idx"]),
@@ -297,7 +276,6 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
         "avg_cleaned_lowest": sigmoid_fitting_5p(processed_curves[9], ori_timestamps, indices_dict["avg_cleaned_lowest_idx"])
     }
     
-    # Restructure into the requested dictionary format
     structured_fits = {}
     for key, fit_tuple in raw_fits.items():
         structured_fits[key] = {
@@ -325,25 +303,28 @@ def save_experiment_data(exp_path, fitting_results, processed_curves, indices_di
     save_path = os.path.join(exp_path, "processed_curve_results.pkl")
     with open(save_path, 'wb') as f:
         pickle.dump(save_data, f)
-    print(f"  -> Saved numerical results and DFs to {save_path}")
 
 
 # ==========================================
-# 6. PLOTTING MODULE 1: SIGMOID GRIDS
+# 6. PLOTTING MODULE 1: SIGMOID GRIDS (OPTIMIZED)
 # ==========================================
 
 def draw_stats(p, data_array, timestamps):
-    y_mean, y_std = np.nanmean(data_array, axis=0), np.nanstd(data_array, axis=0)
-    p.line(x=timestamps, y=y_mean, color="red", line_width=0.5)
-    p.line(x=timestamps, y=y_mean + y_std, color="red", line_width=0.25, line_dash="dashed", alpha=0.8)
-    p.line(x=timestamps, y=y_mean - y_std, color="red", line_width=0.25, line_dash="dashed", alpha=0.8)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        y_mean, y_std = np.nanmean(data_array, axis=0), np.nanstd(data_array, axis=0)
+    p.line(x=timestamps, y=y_mean, color="red", line_width=1.0)
+    p.line(x=timestamps, y=y_mean + y_std, color="red", line_width=0.5, line_dash="dashed", alpha=0.8)
+    p.line(x=timestamps, y=y_mean - y_std, color="red", line_width=0.5, line_dash="dashed", alpha=0.8)
 
 def normalize_array(arr):
-    c_min = np.nanmin(arr, axis=1, keepdims=True)
-    c_max = np.nanmax(arr, axis=1, keepdims=True)
-    val_range = c_max - c_min
-    val_range[val_range == 0] = 1e-10 
-    return (arr - c_min) / val_range
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        c_min = np.nanmin(arr, axis=1, keepdims=True)
+        c_max = np.nanmax(arr, axis=1, keepdims=True)
+        val_range = c_max - c_min
+        val_range[val_range == 0] = 1e-10 
+        return (arr - c_min) / val_range
 
 def blank_plot(plot_size):
     p = figure(width=plot_size, height=plot_size, output_backend="webgl")
@@ -351,7 +332,7 @@ def blank_plot(plot_size):
     p.scatter(x=[], y=[]) 
     return p
 
-def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timestamps, processed_curves, fitting_results, indices_dict, curve_labels):
+def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timestamps, processed_curves, fitting_results, indices_dict, curve_labels, ds_step=5, precision=4):
     col_to_idx_map = {
         0: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
         1: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
@@ -364,18 +345,17 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
     }
 
     fit_key_map = {
-        0: "original", 
-        3: "cleaned_std", 
-        4: "cleaned_lowest", 
-        5: "avg", 
-        8: "avg_cleaned_std", 
-        9: "avg_cleaned_lowest"
+        0: "original", 3: "cleaned_std", 4: "cleaned_lowest", 
+        5: "avg", 8: "avg_cleaned_std", 9: "avg_cleaned_lowest"
     }
     stats_cols = {0, 3, 4, 5, 8, 9}
     group_a_cols, group_b_cols = [0, 3, 4, 5, 8, 9], [1, 2, 6, 7]
     
+    # Downsample & Round the global X-axis for extreme memory reduction
+    ts_ds = np.round(ori_timestamps[::ds_step], precision).tolist()
+    
     plot_size = 350 
-    scatter_kwargs = dict(size=4, color="grey", alpha=0.25, selection_color="red", selection_alpha=1.0, nonselection_color="grey", nonselection_alpha=0.05)
+    scatter_kwargs = dict(size=5, color="grey", alpha=0.6, selection_color="red", selection_alpha=1.0, nonselection_color="grey", nonselection_alpha=0.1)
 
     for row_idx, well in enumerate(unique_wells):
         filename = f"{exp_path}/well_{well}_sigmoid_curves.html"
@@ -385,44 +365,47 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
         hex_color = mcolors.to_hex(plt.cm.tab10(row_idx % 10))
         num_curves = np.sum(mask)
         
-        data_dict = {'xs': [ori_timestamps for _ in range(num_curves)], 'color': [hex_color] * num_curves}
+        data_dict = {'xs': [ts_ds for _ in range(num_curves)], 'color': [hex_color] * num_curves}
         
         for col_idx, curves in enumerate(processed_curves):
-            # Optimized array to list conversion
-            data_dict[f'ys_{col_idx}'] = curves[mask].tolist()
-            idx_tuple = col_to_idx_map[col_idx]
+            # 1. Downsample and round Y-values
+            y_visual = np.round(curves[mask][:, ::ds_step], precision)
+            data_dict[f'ys_{col_idx}'] = y_visual.tolist()
             
+            # 2. Extract Exact Marker Data (Do NOT downsample the index, just round value for JSON)
+            idx_tuple = col_to_idx_map[col_idx]
             idx_1 = idx_tuple[0][mask]
-            data_dict[f'mx1_{col_idx}'] = ori_timestamps[idx_1]
-            data_dict[f'my1_{col_idx}'] = curves[mask][np.arange(num_curves), idx_1]
+            data_dict[f'mx1_{col_idx}'] = np.round(ori_timestamps[idx_1], precision).tolist()
+            data_dict[f'my1_{col_idx}'] = np.round(curves[mask][np.arange(num_curves), idx_1], precision).tolist()
             
             if len(idx_tuple) > 1:
                 idx_2 = idx_tuple[1][mask]
-                data_dict[f'mx2_{col_idx}'] = ori_timestamps[idx_2]
-                data_dict[f'my2_{col_idx}'] = curves[mask][np.arange(num_curves), idx_2]
+                data_dict[f'mx2_{col_idx}'] = np.round(ori_timestamps[idx_2], precision).tolist()
+                data_dict[f'my2_{col_idx}'] = np.round(curves[mask][np.arange(num_curves), idx_2], precision).tolist()
                 
             if col_idx in stats_cols:
                 fit_key = fit_key_map[col_idx]
                 fc_mask = fitting_results[fit_key]["fitted_full"][mask] 
                 sc_mask = fitting_results[fit_key]["fitted_stretched"][mask]
-                
                 norm_fc_mask, norm_sc_mask = normalize_array(fc_mask), normalize_array(sc_mask)
                 
-                # Optimized array to list conversions
-                data_dict[f'fitted_ys_{col_idx}'] = fc_mask.tolist()
-                data_dict[f'fitted_my1_{col_idx}'] = fc_mask[np.arange(num_curves), idx_1]
-                data_dict[f'stretched_ys_{col_idx}'] = sc_mask.tolist()
-                data_dict[f'stretched_my1_{col_idx}'] = sc_mask[np.arange(num_curves), idx_1]
-                data_dict[f'norm_fitted_ys_{col_idx}'] = norm_fc_mask.tolist()
-                data_dict[f'norm_fitted_my1_{col_idx}'] = norm_fc_mask[np.arange(num_curves), idx_1]
-                data_dict[f'norm_stretched_ys_{col_idx}'] = norm_sc_mask.tolist()
-                data_dict[f'norm_stretched_my1_{col_idx}'] = norm_sc_mask[np.arange(num_curves), idx_1]
+                # Downsample & Round Fitted Lines
+                data_dict[f'fitted_ys_{col_idx}'] = np.round(fc_mask[:, ::ds_step], precision).tolist()
+                data_dict[f'stretched_ys_{col_idx}'] = np.round(sc_mask[:, ::ds_step], precision).tolist()
+                data_dict[f'norm_fitted_ys_{col_idx}'] = np.round(norm_fc_mask[:, ::ds_step], precision).tolist()
+                data_dict[f'norm_stretched_ys_{col_idx}'] = np.round(norm_sc_mask[:, ::ds_step], precision).tolist()
+                
+                # Exact Markers for Fits
+                data_dict[f'fitted_my1_{col_idx}'] = np.round(fc_mask[np.arange(num_curves), idx_1], precision).tolist()
+                data_dict[f'stretched_my1_{col_idx}'] = np.round(sc_mask[np.arange(num_curves), idx_1], precision).tolist()
+                data_dict[f'norm_fitted_my1_{col_idx}'] = np.round(norm_fc_mask[np.arange(num_curves), idx_1], precision).tolist()
+                data_dict[f'norm_stretched_my1_{col_idx}'] = np.round(norm_sc_mask[np.arange(num_curves), idx_1], precision).tolist()
                 
                 if len(idx_tuple) > 1:
-                    data_dict[f'fitted_my2_{col_idx}'] = fc_mask[np.arange(num_curves), idx_2]
-                    data_dict[f'stretched_my2_{col_idx}'] = sc_mask[np.arange(num_curves), idx_2]
-                    data_dict[f'norm_fitted_my2_{col_idx}'] = norm_fc_mask[np.arange(num_curves), idx_2]
-                    data_dict[f'norm_stretched_my2_{col_idx}'] = norm_sc_mask[np.arange(num_curves), idx_2]
+                    data_dict[f'fitted_my2_{col_idx}'] = np.round(fc_mask[np.arange(num_curves), idx_2], precision).tolist()
+                    data_dict[f'stretched_my2_{col_idx}'] = np.round(sc_mask[np.arange(num_curves), idx_2], precision).tolist()
+                    data_dict[f'norm_fitted_my2_{col_idx}'] = np.round(norm_fc_mask[np.arange(num_curves), idx_2], precision).tolist()
+                    data_dict[f'norm_stretched_my2_{col_idx}'] = np.round(norm_sc_mask[np.arange(num_curves), idx_2], precision).tolist()
                 
         source = ColumnDataSource(data=data_dict)
         r1_plots, r2_plots, r3_plots, r4_plots, r5_plots = [], [], [], [], []
@@ -432,10 +415,15 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
             
             p1 = figure(title=title, width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p1.yaxis.axis_label = f"Well {well}"
-            p1.multi_line(xs='xs', ys=f'ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.15, selection_color="red", selection_alpha=1.0, nonselection_color=hex_color, nonselection_alpha=0.05)
+            # Multi_line uses the rounded/downsampled data
+            p1.multi_line(xs='xs', ys=f'ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_color=hex_color, nonselection_alpha=0.05)
+            # Scatters use the exact (but rounded) markers
             p1.scatter(x=f'mx1_{col_idx}', y=f'my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p1.scatter(x=f'mx2_{col_idx}', y=f'my2_{col_idx}', source=source, **scatter_kwargs)
-            if col_idx in stats_cols: draw_stats(p1, processed_curves[col_idx][mask], ori_timestamps)
+            
+            # Use downsampled lines for stats overlay too
+            if col_idx in stats_cols: 
+                draw_stats(p1, np.round(processed_curves[col_idx][mask][:, ::ds_step], precision), ts_ds)
             r1_plots.append(p1)
             
             if col_idx not in stats_cols:
@@ -443,40 +431,41 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
                 continue
 
             fit_key = fit_key_map[col_idx]
-            fc_data = fitting_results[fit_key]["fitted_full"][mask]
-            sc_data = fitting_results[fit_key]["fitted_stretched"][mask]
-            norm_fc_data, norm_sc_data = normalize_array(fc_data), normalize_array(sc_data)
+            fc_data_ds = np.round(fitting_results[fit_key]["fitted_full"][mask][:, ::ds_step], precision)
+            sc_data_ds = np.round(fitting_results[fit_key]["fitted_stretched"][mask][:, ::ds_step], precision)
+            norm_fc_data_ds = np.round(normalize_array(fitting_results[fit_key]["fitted_full"][mask])[:, ::ds_step], precision)
+            norm_sc_data_ds = np.round(normalize_array(fitting_results[fit_key]["fitted_stretched"][mask])[:, ::ds_step], precision)
 
             p2 = figure(width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p2.yaxis.axis_label = "Fit"
-            p2.multi_line(xs='xs', ys=f'fitted_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.2, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
+            p2.multi_line(xs='xs', ys=f'fitted_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
             p2.scatter(x=f'mx1_{col_idx}', y=f'fitted_my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p2.scatter(x=f'mx2_{col_idx}', y=f'fitted_my2_{col_idx}', source=source, **scatter_kwargs)
-            draw_stats(p2, fc_data, ori_timestamps)
+            draw_stats(p2, fc_data_ds, ts_ds)
             r2_plots.append(p2)
 
             p3 = figure(width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p3.yaxis.axis_label = "Stretched Fit"
-            p3.multi_line(xs='xs', ys=f'stretched_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.2, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
+            p3.multi_line(xs='xs', ys=f'stretched_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
             p3.scatter(x=f'mx1_{col_idx}', y=f'stretched_my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p3.scatter(x=f'mx2_{col_idx}', y=f'stretched_my2_{col_idx}', source=source, **scatter_kwargs)
-            draw_stats(p3, sc_data, ori_timestamps)
+            draw_stats(p3, sc_data_ds, ts_ds)
             r3_plots.append(p3)
 
             p4 = figure(width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p4.yaxis.axis_label = "Norm Fit"
-            p4.multi_line(xs='xs', ys=f'norm_fitted_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.2, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
+            p4.multi_line(xs='xs', ys=f'norm_fitted_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
             p4.scatter(x=f'mx1_{col_idx}', y=f'norm_fitted_my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p4.scatter(x=f'mx2_{col_idx}', y=f'norm_fitted_my2_{col_idx}', source=source, **scatter_kwargs)
-            draw_stats(p4, norm_fc_data, ori_timestamps)
+            draw_stats(p4, norm_fc_data_ds, ts_ds)
             r4_plots.append(p4)
 
             p5 = figure(width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p5.yaxis.axis_label = "Norm Stretched"
-            p5.multi_line(xs='xs', ys=f'norm_stretched_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.2, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
+            p5.multi_line(xs='xs', ys=f'norm_stretched_ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_alpha=0.05)
             p5.scatter(x=f'mx1_{col_idx}', y=f'norm_stretched_my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p5.scatter(x=f'mx2_{col_idx}', y=f'norm_stretched_my2_{col_idx}', source=source, **scatter_kwargs)
-            draw_stats(p5, norm_sc_data, ori_timestamps)
+            draw_stats(p5, norm_sc_data_ds, ts_ds)
             r5_plots.append(p5)
             
         for c in range(len(processed_curves)):
@@ -501,10 +490,10 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
 
 
 # ==========================================
-# 7. PLOTTING MODULE 2: PIXEL VS TEMP
+# 7. PLOTTING MODULE 2: PIXEL VS TEMP (OPTIMIZED)
 # ==========================================
 
-def plot_pixel_temp_interactions(exp_data, exp_path):
+def plot_pixel_temp_interactions(exp_data, exp_path, ds_step=5, precision=4):
     output_file(f"{exp_path}/all_wells_interactive.html", title="All Wells Interaction")
     p_width, p_height = 450, 225
     all_well_layouts = []
@@ -514,6 +503,8 @@ def plot_pixel_temp_interactions(exp_data, exp_path):
         idx_end = well.idx_end
         idx_active = well.idx_active
         time_npr = well.time_npr
+        
+        time_ds = np.round(time_npr[::ds_step], precision).tolist()
 
         well_nrows, well_ncols = well.well_nrows, well.well_ncols
         well_temp_nrows, well_temp_ncols = well.well_temp_nrows, well.well_temp_ncols
@@ -543,28 +534,31 @@ def plot_pixel_temp_interactions(exp_data, exp_path):
         inactive_temp_groups = np.setdiff1d(np.arange(n_temp_groups), active_temp_groups)
 
         source_pixels = ColumnDataSource({
-            'xs': [time_npr for _ in range(n_active_pixels)],
-            'ys_lin': [well_2d_bs_active[:, i] for i in range(n_active_pixels)],
-            'ys_nl': [well_2d_nl_bs_active[:, i] for i in range(n_active_pixels)],
+            'xs': [time_ds for _ in range(n_active_pixels)],
+            'ys_lin': [np.round(well_2d_bs_active[::ds_step, i], precision).tolist() for i in range(n_active_pixels)],
+            'ys_nl': [np.round(well_2d_nl_bs_active[::ds_step, i], precision).tolist() for i in range(n_active_pixels)],
             'group_id': active_temp_mapping, 
             'pixel_id': np.where(idx_active)[0] 
         })
 
         source_temps_active = ColumnDataSource({
-            'xs': [time_npr for _ in active_temp_groups],
-            'ys_lin': [well_temp_2D_NEW[:, i] for i in active_temp_groups],
-            'ys_nl': [well_2d_temp_npr[:, i] for i in active_temp_groups],
+            'xs': [time_ds for _ in active_temp_groups],
+            'ys_lin': [np.round(well_temp_2D_NEW[::ds_step, i], precision).tolist() for i in active_temp_groups],
+            'ys_nl': [np.round(well_2d_temp_npr[::ds_step, i], precision).tolist() for i in active_temp_groups],
             'group_id': active_temp_groups 
         })
         
         source_temps_inactive = ColumnDataSource({
-            'xs': [time_npr for _ in inactive_temp_groups],
-            'ys_lin': [well_temp_2D_NEW[:, i] for i in inactive_temp_groups],
-            'ys_nl': [well_2d_temp_npr[:, i] for i in inactive_temp_groups],
+            'xs': [time_ds for _ in inactive_temp_groups],
+            'ys_lin': [np.round(well_temp_2D_NEW[::ds_step, i], precision).tolist() for i in inactive_temp_groups],
+            'ys_nl': [np.round(well_2d_temp_npr[::ds_step, i], precision).tolist() for i in inactive_temp_groups],
             'group_id': inactive_temp_groups 
         })
 
-        source_mean = ColumnDataSource({'x': time_npr, 'y': well_temp_mean_then_lin})
+        source_mean = ColumnDataSource({
+            'x': time_ds, 
+            'y': np.round(well_temp_mean_then_lin[::ds_step], precision).tolist()
+        })
 
         info_div = Div(text=f"<h3 style='color: grey;'>Well {w_idx}: Select a line to see indices here...</h3>", width=1400)
 
@@ -618,31 +612,23 @@ def plot_pixel_temp_interactions(exp_data, exp_path):
         hover_pixel_lin = HoverTool(tooltips=[("Pixel", "@pixel_id"), ("Group", "@group_id"), ("Value", "$y")], line_policy="nearest")
         linked_crosshair = CrosshairTool(dimensions="height", line_color="black", line_alpha=0.3)
 
-        p0 = figure(title=f"NL Pixels (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", "tap", hover_pixel_nl, linked_crosshair])
-        p0.multi_line(xs='xs', ys='ys_nl', source=source_pixels, color="purple", alpha=0.15, 
-                      selection_color="red", selection_alpha=1.0, selection_line_width=2,
-                      nonselection_color="purple", nonselection_alpha=0.05)
+        p0 = figure(title=f"NL Pixels (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", "tap", hover_pixel_nl, linked_crosshair], output_backend="webgl")
+        p0.multi_line(xs='xs', ys='ys_nl', source=source_pixels, color="purple", alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_color="purple", nonselection_alpha=0.05)
 
-        p1 = figure(title=f"Lin Pixels (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", "tap", hover_pixel_lin, linked_crosshair])
+        p1 = figure(title=f"Lin Pixels (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", "tap", hover_pixel_lin, linked_crosshair], output_backend="webgl")
         p1.x_range = p0.x_range 
-        p1.multi_line(xs='xs', ys='ys_lin', source=source_pixels, color="navy", alpha=0.15, 
-                      selection_color="red", selection_alpha=1.0, selection_line_width=2,
-                      nonselection_color="navy", nonselection_alpha=0.05)
+        p1.multi_line(xs='xs', ys='ys_lin', source=source_pixels, color="navy", alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_color="navy", nonselection_alpha=0.05)
 
-        p2 = figure(title=f"NL Temps (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", linked_crosshair])
+        p2 = figure(title=f"NL Temps (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", linked_crosshair], output_backend="webgl")
         p2.x_range = p0.x_range 
         p2.multi_line(xs='xs', ys='ys_nl', source=source_temps_inactive, color="lightgrey", alpha=0.3)
-        active_temp_renderer_nl = p2.multi_line(xs='xs', ys='ys_nl', source=source_temps_active, color="darkorange", alpha=0.15, 
-                                                selection_color="red", selection_alpha=1.0, selection_line_width=2,
-                                                nonselection_color="darkorange", nonselection_alpha=0.1)
+        active_temp_renderer_nl = p2.multi_line(xs='xs', ys='ys_nl', source=source_temps_active, color="darkorange", alpha=0.4, selection_color="red", selection_alpha=1.0, nonselection_color="darkorange", nonselection_alpha=0.1)
         p2.add_tools(HoverTool(tooltips=[("Group", "@group_id"), ("Val", "$y")], renderers=[active_temp_renderer_nl]), TapTool(renderers=[active_temp_renderer_nl]))
 
-        p3 = figure(title=f"Lin Temps (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", linked_crosshair])
+        p3 = figure(title=f"Lin Temps (Well {w_idx})", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", linked_crosshair], output_backend="webgl")
         p3.x_range = p0.x_range 
         p3.multi_line(xs='xs', ys='ys_lin', source=source_temps_inactive, color="lightgrey", alpha=0.3)
-        active_temp_renderer_lin = p3.multi_line(xs='xs', ys='ys_lin', source=source_temps_active, color="darkorange", alpha=0.15, 
-                                                 selection_color="red", selection_alpha=1.0, selection_line_width=2,
-                                                 nonselection_color="darkorange", nonselection_alpha=0.1)
+        active_temp_renderer_lin = p3.multi_line(xs='xs', ys='ys_lin', source=source_temps_active, color="darkorange", alpha=0.4, selection_color="red", selection_alpha=1.0, nonselection_color="darkorange", nonselection_alpha=0.1)
     
         p3.line(x='x', y='y', source=source_mean, color="black", line_width=1.5)
         p3.add_tools(HoverTool(tooltips=[("Group", "@group_id"), ("Val", "$y")], renderers=[active_temp_renderer_lin]), TapTool(renderers=[active_temp_renderer_lin]))
@@ -658,18 +644,16 @@ def plot_pixel_temp_interactions(exp_data, exp_path):
     master_layout = column(*all_well_layouts)
     save(master_layout)
 
+# ==========================================
+# 8. SAVING MODULE (RAW DATA PRESERVED)
+# ==========================================
+
 def save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
                                      indices_dict, pixel_temp_dfs, baseline_value, 
                                      Y_well, X_time, exp_data, 
                                      window_size_ori, window_size_1stder, margin):
-    """
-    Saves experiment data into a flat, queryable structure.
-    """
     
-    # Extract metadata from the Non-Linearised Pixel DF
     df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
-    
-    # Reference the first well for shared experiment indices
     well0 = exp_data.wells_list[0]
     
     save_data = {
@@ -729,7 +713,7 @@ def save_experiment_data_restructured(exp_path, fitting_results, processed_curve
     print(f"  -> Saved numerical results and metadata to {save_path}")
 
 # ==========================================
-# 8. MAIN EXECUTION LOOP
+# 9. MAIN EXECUTION LOOP
 # ==========================================
 
 if __name__ == "__main__":
@@ -737,8 +721,8 @@ if __name__ == "__main__":
     n_a_type = "v04"
 
     exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-    # exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name != ".DS_Store"]
-    exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
+    exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name != ".DS_Store"]
+    # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
     
     window_size_ori = 50
     window_size_1stder = 200
@@ -748,52 +732,48 @@ if __name__ == "__main__":
                     "Cleaned Curve (Lowest Crossing)", "Moving Avg Curve", "1st Derivative", 
                     "1st Derivative Moving Avg", "Cleaned Curve", "Cleaned Curve (Lowest Crossing)"]
 
+    # Global Plot Optimization Variables
+    PLOT_DOWNSAMPLE_STEP = 1
+    PLOT_DECIMAL_PRECISION = 4
+
     for exp_path in exp_paths:
         print(f"Processing Experiment: {exp_path}")
         
-        # 1. Load Data 
         exp = titan_load_and_preprocessing(exp_path, n_wells=n_wells, start_type="temperature",
                                             end_time_min=60, n_a_type=n_a_type,
                                             print_status=False, plt_gain_calib=False, save_gain_calib=False)
         
-        # 2. Extract DataFrames (Pixels & Temps with Metadata)
         print("  -> Generating Pixel & Temp DataFrames...")
         pixel_temp_dfs = extract_pixel_temp_dataframes(exp)
         
-        # 3. Generate the Pixel vs. Temperature Interaction Grids
-        print("  -> Building Pixel vs Temp Interactions...")
-        plot_pixel_temp_interactions(exp, exp_path)
+        print("  -> Building Pixel vs Temp Interactions (Optimized)...")
+        plot_pixel_temp_interactions(exp, exp_path, ds_step=PLOT_DOWNSAMPLE_STEP, precision=PLOT_DECIMAL_PRECISION)
         
-        # 4. Extract and Stack Arrays Natively for Curve Processing
         print("  -> Processing Sigmoid Curves...")
         X_time, Y_well, X_2d_bs_active = reconstruct_data(exp, attr_str="well_2d_bs_active")
         
-        # 5. Apply Baseline Shift (Ensuring all positive for fitting)
         baseline_value = 0
         if (np.min(X_2d_bs_active) < 0):
             baseline_value = -np.min(X_2d_bs_active) + 1e-9
             X_2d_bs_active = X_2d_bs_active + baseline_value
         
-        # 6. Process Curves & Extract Features
         processed_curves, indices_dict = process_experiment_data(
             X_2d_bs_active, X_time, window_size_ori, window_size_1stder, margin
         )
         
-        # 7. Fit Sigmoid Curves
         fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
         
-        # 8. Save Raw Data & DataFrames to Disk (Now includes baseline_value)
         save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
                                      indices_dict, pixel_temp_dfs, baseline_value, 
                                      Y_well, X_time, exp, 
                                      window_size_ori, window_size_1stder, margin)
         
-        # 9. Generate Interactive Sigmoid Visualizations
-        print("  -> Building Sigmoid Grids...")
+        print("  -> Building Sigmoid Grids (Optimized)...")
         unique_wells = np.unique(Y_well)
         plot_interactive_sigmoid_grids(
             exp_path, unique_wells, Y_well, X_time, 
-            processed_curves, fitting_results, indices_dict, curve_labels
+            processed_curves, fitting_results, indices_dict, curve_labels,
+            ds_step=PLOT_DOWNSAMPLE_STEP, precision=PLOT_DECIMAL_PRECISION
         )
         
         print("  ✓ Experiment complete!\n")
