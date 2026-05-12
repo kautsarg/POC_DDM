@@ -1,0 +1,16 @@
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scikit-learn
+tqdm
+openpyxl
+plotly
+umap-learn
+peakutils
+fastdtw
+jupyterlab
+notebook
+ipykernel
+tensorflow
