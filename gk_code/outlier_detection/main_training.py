@@ -11,9 +11,9 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 set_global_determinism(0)
 
 exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name not in [".DS_Store", "D20250828_E00_C00_F4500KHz_U_Sample_mix_3"]]
+exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name not in [".DS_Store"]]
 
-for exp_path in exp_paths:
+for exp_path in reversed(exp_paths):
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
     
     data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
@@ -41,7 +41,7 @@ for exp_path in exp_paths:
     filtered_features = []
 
     for name, data, features in zip(dataset_name, dataset, kinetic_features):
-        if not name.startswith("Avg "):
+        if not name.startswith("avg_"):
             filtered_names.append(name)
             filtered_dataset.append(data)
             filtered_features.append(features)
@@ -79,7 +79,7 @@ for exp_path in exp_paths:
             all_ml_results = pickle.load(f)
     else:
         all_ml_results = {}
-
+    
     total_datasets = len(dataset_name)
     total_samples = len(y_full)
 

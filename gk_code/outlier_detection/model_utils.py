@@ -20,6 +20,23 @@ tf.get_logger().setLevel('ERROR')
 from scikeras.wrappers import KerasClassifier
 
 # ====================================================================
+# GPU SETUP & VERIFICATION
+# ====================================================================
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"\n[*] SUCCESS: TensorFlow is utilizing the GPU -> {gpus[0].name}\n")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+else:
+    print("\n[!] WARNING: No GPU found. TensorFlow will run on the CPU.")
+    print("    Ensure you have installed: pip install tensorflow-macos tensorflow-metal\n")
+
+# ====================================================================
 # GLOBAL DETERMINISM SETUP
 # ====================================================================
 def set_global_determinism(seed=0):
