@@ -11,9 +11,9 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 set_global_determinism(0)
 
 exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name not in [".DS_Store"]]
+exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
 
-for exp_path in reversed(exp_paths):
+for exp_path in exp_paths:
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
     
     data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
@@ -67,10 +67,16 @@ for exp_path in reversed(exp_paths):
     #                     'amf_label_amf_send_abs_15', 'amf_label_amf_send_abs_20',
     #                     'amf_label_amf_send_abs_25', 'mean_std_label_env_1std',
     #                     'mean_std_label_env_2std', 'mean_std_label_env_3std']
-    outlier_filters = [None, 'msc_label_msc_linear_0.01', 'msc_label_msc_linear_0.001', 
-                       'msc_label_msc_baseline_0.01', 'msc_label_msc_baseline_0.001',
-                        'amf_label_amf_important', 'amf_label_amf_send_5',
-                        'amf_label_amf_send_15', 'amf_label_amf_send_25']
+    # outlier_filters = [None, 'msc_label_msc_linear_0.01', 'msc_label_msc_linear_0.001', 
+    #                    'msc_label_msc_baseline_0.01', 'msc_label_msc_baseline_0.001',
+    #                     'amf_label_amf_important', 'amf_label_amf_send_5',
+    #                     'amf_label_amf_send_15', 'amf_label_amf_send_25',
+    #                     'knn_top_0.8', 'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95']
+    outlier_filters = ['ae_well_label_elbow', 'ae_well_label_90', 'ae_well_label_95',
+                       'ae_label_elbow', 'ae_label_90', 'ae_label_95',
+                        'knn_top_0.8', 'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95',
+                        None, 'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.001',
+                        'amf_label_amf_important', 'amf_label_amf_send_5']
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 

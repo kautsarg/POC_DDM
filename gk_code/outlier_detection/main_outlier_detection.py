@@ -4,6 +4,7 @@ import pandas as pd
 from msc_outlier import run_msc_pipeline
 from amf_outlier import run_amf_pipeline
 from mean_std_outlier import run_meanstd_pipeline
+from knn_fingerprint_filter import run_knnfilter_pipeline
 
 exp_path = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data/D20250808_E00_C00_F4500KHz_U_Sample_7"
 save_path = os.path.join(exp_path, "curve_for_training_added_features.pkl")
@@ -53,6 +54,8 @@ mean_std_configs = [
     ("env_3std", 3)
 ]
 
+knn_filter_config = [0.25, 0.50, 0.75]
+
 # 2. Execute Pipelines & Collect DataFrames
 all_new_feature_dfs = [ [] for _ in range(len(dataset_name)) ] # Array of lists
 
@@ -70,6 +73,10 @@ print("=== RUNNING MEAN/STD PIPELINES ===")
 for exp_label, num_std in mean_std_configs:
     extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, f"{exp_path}/meanstd_outlier", dataset_name, dataset, Y_well, kinetic_features[0].index)
     for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+
+print("=== KNN FILTERING PIPELINES ===")
+extracted_dfs = run_knnfilter_pipeline(dataset, Y_well, knn_filter_config)
+for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
 # 3. Concatenate all new features into the kinetic_features
 print("=== MERGING FEATURES ===")

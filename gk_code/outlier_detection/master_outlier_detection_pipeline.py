@@ -29,7 +29,9 @@ import sigmoid_fitting as sp
 from msc_outlier import run_msc_pipeline
 from amf_outlier import run_amf_pipeline
 from mean_std_outlier import run_meanstd_pipeline
-
+from knn_fingerprint_filter import run_knnfilter_pipeline
+from autoencoder_outlier import run_autoencoder_pipeline
+from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
 
 # ====================================================================
 # GLOBAL CONSTANTS & CONFIGURATIONS
@@ -192,7 +194,7 @@ if __name__ == "__main__":
     
     # Process specific experiment or iterate over all
     # exp_paths = [Path(exp_folder, "D20250828_E00_C00_F4500KHz_U_Sample_mix_3")]
-    exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name not in [".DS_Store", "D20250828_E00_C00_F4500KHz_U_Sample_mix_3", "D20250808_E00_C00_F4500KHz_U_Sample_7"]]
+    exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
 
     for exp_path in exp_paths:
         print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
@@ -459,6 +461,22 @@ if __name__ == "__main__":
         ]
         
         mean_std_configs = [("env_1std", 1), ("env_2std", 2), ("env_3std", 3)]
+        
+        knn_filter_config = [0.80, 0.85, 0.90, 0.95]
+
+        ae_configs = ["elbow", 90, 95]
+        
+        # Run AutoEncoder Per Well
+        extracted_dfs = run_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+
+        # Run AutoEncoder
+        extracted_dfs = run_autoencoder_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+
+        # Run KNN Filter
+        extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), knn_filter_config, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
         # Run MSC
         for exp_label, p_val, feats in msc_configs:
