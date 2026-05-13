@@ -72,8 +72,9 @@ for exp_path in exp_paths:
     #                     'amf_label_amf_important', 'amf_label_amf_send_5',
     #                     'amf_label_amf_send_15', 'amf_label_amf_send_25',
     #                     'knn_top_0.8', 'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95']
-    outlier_filters = ['ae_well_label_elbow', 'ae_well_label_90', 'ae_well_label_95',
-                       'ae_label_elbow', 'ae_label_90', 'ae_label_95',
+    outlier_filters = ['cnn_ae_label_elbow', 'cnn_ae_label_90', 'cnn_ae_label_95',
+                        'ae_well_label_elbow', 'ae_well_label_90', 'ae_well_label_95',
+                        # 'lstm_ae_label_elbow', 'lstm_ae_label_90', 'lstm_ae_label_95',
                         'knn_top_0.8', 'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95',
                         None, 'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.001',
                         'amf_label_amf_important', 'amf_label_amf_send_5']

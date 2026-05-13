@@ -32,6 +32,8 @@ from mean_std_outlier import run_meanstd_pipeline
 from knn_fingerprint_filter import run_knnfilter_pipeline
 from autoencoder_outlier import run_autoencoder_pipeline
 from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
+from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipeline
+from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
 
 # ====================================================================
 # GLOBAL CONSTANTS & CONFIGURATIONS
@@ -252,6 +254,25 @@ if __name__ == "__main__":
             kinetic_features[idx] = pd.concat([features_df, meta_clean, df_new_features], axis=1)
 
         # -------------------------------------------------------------
+        # SKIP MOVING AVERAGE DATASET
+        # -------------------------------------------------------------
+
+        filtered_names = []
+        filtered_dataset = []
+        filtered_features = []
+
+        for name, data, features in zip(dataset_name, dataset, kinetic_features):
+            if not name.startswith("avg_"):
+                filtered_names.append(name)
+                filtered_dataset.append(data)
+                filtered_features.append(features)
+
+        # Reassign the filtered lists back to the original variables
+        dataset_name = filtered_names
+        dataset = filtered_dataset
+        kinetic_features = filtered_features
+
+        # -------------------------------------------------------------
         # 3. GENERATE BOXPLOTS (MSC & AMF Features)
         # -------------------------------------------------------------
         # print("\n=== GENERATING FEATURE BOXPLOTS ===")
@@ -466,12 +487,16 @@ if __name__ == "__main__":
 
         ae_configs = ["elbow", 90, 95]
         
-        # Run AutoEncoder Per Well
-        extracted_dfs = run_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        # Run CNN AutoEncoder Per Well
+        extracted_dfs = run_cnn_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
         for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
-        # Run AutoEncoder
-        extracted_dfs = run_autoencoder_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        # # Run LSTM AutoEncoder Per Well
+        # extracted_dfs = run_lstm_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        # for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        
+        # Run AutoEncoder Per Well
+        extracted_dfs = run_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
         for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
         # Run KNN Filter
@@ -516,3 +541,5 @@ if __name__ == "__main__":
             pickle.dump(save_data, f)
             
         print(f"Data saved to {updated_save_path}\nExperiment {exp_path.name} finished gracefully!")
+
+        gc.collect()
