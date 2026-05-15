@@ -95,7 +95,7 @@ def plot_flexible_grouped_bar(df, x_col, y_col, hue_col, ax, title=None, is_perc
 
 root_path = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data/"
 sample_names = [name for name in os.listdir(root_path) if name != ".DS_Store"]
-
+# sample_names = ["D20250826_E00_C00_F4500KHz_U_Sample_14_rep2"]
 EXPECTED_CLASSES = list(range(10)) 
 
 model_key_mapping = {
@@ -176,7 +176,10 @@ for sample_name in sample_names:
         baseline_value = None
 
     fig, axes = plt.subplots(1, 2, figsize=(24, 12))
-    
+    df_mask = (result_df["training_mode"] == "Reference") & \
+            (result_df["outlier_filter"].isin(["Baseline_None", "msc_label_msc_linear_0.001", "msc_label_msc_baseline_0.001", "amf_label_amf_important",  "amf_label_amf_send_5", "knn_top_0.9", "knn_top_0.95", "cnn_ae_label_95", "cnn_ae_label_elbow"]))  & \
+            (result_df["curve_name"].isin(['Ori Curves', 'Original Fitted Full', 'Cleaned Std Fitted Full', 'Cleaned Std Fitted Stretched', 'Cleaned Lowest Fitted Full', 'Cleaned Lowest Fitted Stretched']))
+    result_df = result_df[df_mask]
     # 1. Plot Accuracy
     plot_flexible_grouped_bar(
         df=result_df,

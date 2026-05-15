@@ -701,6 +701,7 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         'y_xe': y_xe,
         'y_xp1': y_xp1,
         'y_xp2': y_xp2,
+        'amplitude': np.abs(y_xe-y_xs),
         
         # First and second derivative values
         'dy_xms': dy_xms,

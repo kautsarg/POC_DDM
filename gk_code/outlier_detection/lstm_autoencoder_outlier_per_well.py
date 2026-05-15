@@ -136,7 +136,7 @@ def run_lstm_autoencoder_per_well_pipeline(dataset_names, dataset_curves, Y_well
         # --- PLOTTING BLOCK ---
         if save_plot:
             for pct in threshold_percentiles:
-                label_col = f"≈{pct}"
+                label_col = f"lstm_ae_label_{pct}"
                 if str(pct).lower() == "elbow":
                     sub_text = "Per-Well LSTM | Threshold dynamically set using the Knee/Elbow Method"
                 else:

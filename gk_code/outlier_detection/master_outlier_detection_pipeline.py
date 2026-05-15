@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg') # Prevents GUI crashes during massive loops
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -18,11 +18,11 @@ from joblib import Parallel, delayed
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
+import tensorflow as tf
 from cycler import cycler
 from matplotlib.colors import to_hex
 
 # --- CUSTOM MODULES ---
-# Ensure your custom paths are set correctly here
 sys.path.insert(0, '..')
 import chip_utilities as utils
 import sigmoid_fitting as sp
@@ -31,6 +31,8 @@ from amf_outlier import run_amf_pipeline
 from mean_std_outlier import run_meanstd_pipeline
 from knn_fingerprint_filter import run_knnfilter_pipeline
 from autoencoder_outlier import run_autoencoder_pipeline
+from lstm_autoencoder_outlier import run_lstm_autoencoder_pipeline
+from cnn_autoencoder_outlier import run_cnn_autoencoder_pipeline
 from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
 from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipeline
 from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
@@ -51,7 +53,8 @@ plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
 EXCLUDED_FEATURES = [
     'TH', 'msc_mahal_dist', 'msc_label_0.001', 'amf_label_Send', 
     'amf_label_Send_abs', 'amf_label_Send_fit', 'amf_label_Send_fit_abs', 
-    'mean_std_outlier_label_3sigma'
+    'mean_std_outlier_label_3sigma',
+    "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group", "well_temp_lin2d_mean", "well_2d_temp_npr_mean"
 ]
 
 FEATURE_GROUPS = [
@@ -72,6 +75,7 @@ FEATURE_GROUPS = [
     ['xp2', 'y_xp2', 'dy_xp2', 'd2y_xp2'],
     ['xs', 'y_xs'],
     ['xe', 'y_xe'],
+    ['amplitude', 'y_xs', 'y_xe'],
     ['y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'F_max', 'Fm', 'FFI', 'F_range']
 ]
 
@@ -195,7 +199,7 @@ if __name__ == "__main__":
     exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
     
     # Process specific experiment or iterate over all
-    # exp_paths = [Path(exp_folder, "D20250828_E00_C00_F4500KHz_U_Sample_mix_3")]
+    # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
     exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
 
     for exp_path in exp_paths:
@@ -228,10 +232,17 @@ if __name__ == "__main__":
         dataset_name = np.array(dataset_name)
         dataset = np.array(dataset)
 
+        try:
+            colors = pd.factorize(Y_well)[0]
+            cmap = 'tab10'
+        except NameError:
+            colors = '#3498db'
+            cmap = None
+
         # -------------------------------------------------------------
         # 2. EXTRACT KINETICS & APPEND ALIASES
         # -------------------------------------------------------------
-        kinetics_path = os.path.join(exp_path, "initial_kinetics.pkl")
+        kinetics_path = os.path.join(exp_path, "initial_kinetics_2.pkl")
         if os.path.exists(kinetics_path):
             print("  -> Loading cached kinetic features...")
             with open(kinetics_path, 'rb') as f:
@@ -263,6 +274,7 @@ if __name__ == "__main__":
 
         for name, data, features in zip(dataset_name, dataset, kinetic_features):
             if not name.startswith("avg_"):
+            # if name == 'ori_curves':
                 filtered_names.append(name)
                 filtered_dataset.append(data)
                 filtered_features.append(features)
@@ -420,9 +432,22 @@ if __name__ == "__main__":
             important_feature_combinations.append(selected_features)
             print(f"  -> {name.replace('_', ' ').title()}: {selected_features}")
 
-        # -------------------------------------------------------------
-        # 7. TSNE & 3D FOR TOP 5 FEATURES
-        # -------------------------------------------------------------
+        # importance_dfs_path = os.path.join(exp_path, "feature_importance_dfs.pkl")
+        # save_importance_data = {
+        #     "dataset_name": dataset_name,
+        #     "dataset": dataset,
+        #     "Y_well": Y_well,
+        #     "timestamps": timestamps,
+        #     "importance_dfs": importance_dfs,
+        #     "top_combination": important_feature_combinations,
+        # }
+
+        # with open(importance_dfs_path, 'wb') as f:
+        #     pickle.dump(save_importance_data, f)
+
+        # # -------------------------------------------------------------
+        # # 7. TSNE & 3D FOR TOP 5 FEATURES
+        # # -------------------------------------------------------------
         # print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
         # tsne_buffers = []
         # for name, top_5_features, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
@@ -456,48 +481,90 @@ if __name__ == "__main__":
         ref_curves = dataset[0]
         all_new_feature_dfs = [[] for _ in range(len(dataset_name))] 
 
+        # -------------------------------------------------------------
         # MSC Configs
+        # -------------------------------------------------------------
         msc_configs = [
-            ("msc_linear_0.05", 0.05, linear_feature_combinations),
-            ("msc_linear_0.01", 0.01, linear_feature_combinations),
+            # ("msc_linear_0.05", 0.05, linear_feature_combinations),
+            # ("msc_linear_0.01", 0.01, linear_feature_combinations),
             ("msc_linear_0.001", 0.001, linear_feature_combinations),
-            ("msc_baseline_0.05", 0.05, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
-            ("msc_baseline_0.01", 0.01, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
+            # ("msc_baseline_0.05", 0.05, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
+            # ("msc_baseline_0.01", 0.01, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
             ("msc_baseline_0.001", 0.001, [["Ct", "Cy0", "log_F0"]] * len(dataset_name))
         ]
         
+        # -------------------------------------------------------------
         # AMF Configs
+        # -------------------------------------------------------------
         amf_configs = [
             ("amf_important", important_feature_combinations),
             ("amf_send_5", [["Fm", "Fb", "Sc", "Cs", "send_5"]] * len(dataset_name)),
-            ("amf_send_10", [["Fm", "Fb", "Sc", "Cs", "send_10"]] * len(dataset_name)),
-            ("amf_send_15", [["Fm", "Fb", "Sc", "Cs", "send_15"]] * len(dataset_name)),
-            ("amf_send_20", [["Fm", "Fb", "Sc", "Cs", "send_20"]] * len(dataset_name)),
-            ("amf_send_25", [["Fm", "Fb", "Sc", "Cs", "send_25"]] * len(dataset_name)),
-            ("amf_send_abs_5", [["Fm", "Fb", "Sc", "Cs", "send_abs_5"]] * len(dataset_name)),
-            ("amf_send_abs_10", [["Fm", "Fb", "Sc", "Cs", "send_abs_10"]] * len(dataset_name)),
-            ("amf_send_abs_15", [["Fm", "Fb", "Sc", "Cs", "send_abs_15"]] * len(dataset_name)),
-            ("amf_send_abs_20", [["Fm", "Fb", "Sc", "Cs", "send_abs_20"]] * len(dataset_name)),
-            ("amf_send_abs_25", [["Fm", "Fb", "Sc", "Cs", "send_abs_25"]] * len(dataset_name))
+            # ("amf_send_10", [["Fm", "Fb", "Sc", "Cs", "send_10"]] * len(dataset_name)),
+            # ("amf_send_15", [["Fm", "Fb", "Sc", "Cs", "send_15"]] * len(dataset_name)),
+            # ("amf_send_20", [["Fm", "Fb", "Sc", "Cs", "send_20"]] * len(dataset_name)),
+            # ("amf_send_25", [["Fm", "Fb", "Sc", "Cs", "send_25"]] * len(dataset_name)),
+            # ("amf_send_abs_5", [["Fm", "Fb", "Sc", "Cs", "send_abs_5"]] * len(dataset_name)),
+            # ("amf_send_abs_10", [["Fm", "Fb", "Sc", "Cs", "send_abs_10"]] * len(dataset_name)),
+            # ("amf_send_abs_15", [["Fm", "Fb", "Sc", "Cs", "send_abs_15"]] * len(dataset_name)),
+            # ("amf_send_abs_20", [["Fm", "Fb", "Sc", "Cs", "send_abs_20"]] * len(dataset_name)),
+            # ("amf_send_abs_25", [["Fm", "Fb", "Sc", "Cs", "send_abs_25"]] * len(dataset_name))
         ]
         
-        mean_std_configs = [("env_1std", 1), ("env_2std", 2), ("env_3std", 3)]
+        # -------------------------------------------------------------
+        # Mean Std Configs
+        # -------------------------------------------------------------
+        mean_std_configs = [
+            # ("env_1std", 1), 
+            # ("env_2std", 2), 
+            # ("env_3std", 3)
+        ]
         
-        knn_filter_config = [0.80, 0.85, 0.90, 0.95]
+        # -------------------------------------------------------------
+        # KNN Fingerprint Configs
+        # -------------------------------------------------------------
+        knn_filter_config = [0.85, 0.90, 0.95]
 
-        ae_configs = ["elbow", 90, 95]
+        # -------------------------------------------------------------
+        # Autoencoder Config
+        # -------------------------------------------------------------
+        ae_configs = ["elbow", 90, 95]        
+        downsample_factor=1
+
+        # Only Original Curves for Auto Encoder
+        ae_filtered_names = []
+        ae_filtered_dataset = []
+
+        for name, data, features in zip(dataset_name, dataset, kinetic_features):
+            if name == 'ori_curves':
+                ae_filtered_names.append(name)
+                ae_filtered_dataset.append(data)
+
+        ae_dataset_name = ae_filtered_names
+        ae_dataset = ae_filtered_dataset
+        
+        # -------------------------------------------------------------
+        # -------------------------------------------------------------
+        # -------------------------------------------------------------
         
         # Run CNN AutoEncoder Per Well
-        extracted_dfs = run_cnn_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
-        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
-        # # Run LSTM AutoEncoder Per Well
-        # extracted_dfs = run_lstm_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
-        # for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # Run CNN AutoEncoder Whole Chip
+        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+
+        # Run LSTM AutoEncoder Per Well
+        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
         
-        # Run AutoEncoder Per Well
-        extracted_dfs = run_autoencoder_per_well_pipeline(dataset_name, dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
-        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # Run LSTM AutoEncoder Whole Chip
+        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        
+        # # Run AutoEncoder Per Well
+        # extracted_dfs = run_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=per_well)
+        # for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
         # Run KNN Filter
         extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), knn_filter_config, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
@@ -513,10 +580,10 @@ if __name__ == "__main__":
             extracted_dfs = run_amf_pipeline(exp_label, feats, ref_curves, os.path.join(exp_path, "amf_outlier"), dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
             for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
-        # Run Mean/Std
-        for exp_label, num_std in mean_std_configs:
-            extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
-            for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # # Run Mean/Std
+        # for exp_label, num_std in mean_std_configs:
+        #     extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
+        #     for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
         # -------------------------------------------------------------
         # 9. FINAL MERGE & SAVE
@@ -541,5 +608,10 @@ if __name__ == "__main__":
             pickle.dump(save_data, f)
             
         print(f"Data saved to {updated_save_path}\nExperiment {exp_path.name} finished gracefully!")
-
+        
+        del data, Y_well, timestamps, metadata_df, dataset, dataset_name
+        del kinetic_features, linear_feature_combinations, important_feature_combinations
+        del all_new_feature_dfs
+        
+        tf.keras.backend.clear_session()
         gc.collect()

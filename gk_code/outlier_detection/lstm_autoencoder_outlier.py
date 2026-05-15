@@ -6,40 +6,43 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from kneed import KneeLocator
 from outlier_utils import init_html_report, fig_to_base64
 
 tf.get_logger().setLevel(logging.ERROR)
 
-def build_autoencoder(input_dim):
-    inputs = layers.Input(shape=(input_dim,))
-    x = layers.Dense(64, activation='relu')(inputs)
-    x = layers.Dense(32, activation='relu')(x)
-    bottleneck = layers.Dense(16, activation='relu')(x)
+def build_lstm_autoencoder(timesteps):
+    inputs = layers.Input(shape=(timesteps, 1))
+    x = layers.LSTM(32, return_sequences=True)(inputs)
+    x = layers.Dropout(0.1)(x)
+    x = layers.LSTM(16, return_sequences=False)(x)
     
-    x = layers.Dense(32, activation='relu')(bottleneck)
-    x = layers.Dense(64, activation='relu')(x)
-    decoded = layers.Dense(input_dim, activation='linear')(x)
+    x = layers.RepeatVector(timesteps)(x)
     
+    x = layers.LSTM(16, return_sequences=True)(x)
+    x = layers.Dropout(0.1)(x)
+    x = layers.LSTM(32, return_sequences=True)(x)
+    
+    decoded = layers.TimeDistributed(layers.Dense(1))(x)
     autoencoder = models.Model(inputs, decoded)
     autoencoder.compile(optimizer='adam', loss='mse')
     return autoencoder
 
-def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=50, batch_size=256, save_plot=True, downsample_factor=1, per_well=True):
+def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True):
     os.makedirs(ae_plot_path, exist_ok=True)
     results_dfs = []
     unique_wells = np.unique(Y_well)
 
-    # Naming configuration for labels
-    prefix = "ae"
+    prefix = "lstm_ae"
     method_str = "pw" if per_well else "glb"
     ds_str = f"ds{downsample_factor}"
     base_label = f"{prefix}_{method_str}_{ds_str}"
 
     for i, (name, curves) in enumerate(zip(dataset_names, dataset_curves)):
         clean_title = name.replace("_", " ").title()
-        print(f"  -> Running {method_str.upper()} Dense Autoencoder (DS:{downsample_factor}x) for {clean_title}...")
+        print(f"  -> Running {method_str.upper()} LSTM Autoencoder (DS:{downsample_factor}x) for {clean_title}...")
 
         full_mse = np.full(len(Y_well), -1.0)
         results_filter = {f"{base_label}_mse": full_mse}
@@ -60,10 +63,16 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                 scaler = MinMaxScaler()
                 X_scaled = scaler.fit_transform(X_downsampled)
                 
-                autoencoder = build_autoencoder(X_scaled.shape[1])
-                autoencoder.fit(X_scaled, X_scaled, epochs=epochs, batch_size=batch_size, shuffle=True, verbose=0)
+                timesteps = X_scaled.shape[1]
+                X_scaled_3d = X_scaled.reshape((X_scaled.shape[0], timesteps, 1))
                 
-                X_reconstructed = autoencoder.predict(X_scaled, verbose=0)
+                autoencoder = build_lstm_autoencoder(timesteps)
+                early_stop = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+                
+                autoencoder.fit(X_scaled_3d, X_scaled_3d, epochs=epochs, batch_size=batch_size, shuffle=True, callbacks=[early_stop], verbose=0)
+                
+                X_reconstructed_3d = autoencoder.predict(X_scaled_3d, verbose=0)
+                X_reconstructed = X_reconstructed_3d.reshape(X_scaled.shape)
                 mse = np.mean(np.power(X_scaled - X_reconstructed, 2), axis=1)
                 full_mse[valid_indices] = mse
                 
@@ -88,17 +97,23 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                     scaler = MinMaxScaler()
                     X_scaled = scaler.fit_transform(X_downsampled)
                     
-                    autoencoder = build_autoencoder(X_scaled.shape[1])
-                    autoencoder.fit(X_scaled, X_scaled, epochs=epochs, batch_size=batch_size, shuffle=True, verbose=0)
+                    timesteps = X_scaled.shape[1]
+                    X_scaled_3d = X_scaled.reshape((X_scaled.shape[0], timesteps, 1))
                     
-                    X_reconstructed = autoencoder.predict(X_scaled, verbose=0)
+                    autoencoder = build_lstm_autoencoder(timesteps)
+                    early_stop = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+                    
+                    autoencoder.fit(X_scaled_3d, X_scaled_3d, epochs=epochs, batch_size=batch_size, shuffle=True, callbacks=[early_stop], verbose=0)
+                    
+                    X_reconstructed_3d = autoencoder.predict(X_scaled_3d, verbose=0)
+                    X_reconstructed = X_reconstructed_3d.reshape(X_scaled.shape)
                     mse = np.mean(np.power(X_scaled - X_reconstructed, 2), axis=1)
                     full_mse[valid_indices] = mse
                     
                     tf.keras.backend.clear_session()
                     gc.collect()
 
-            # --- THRESHOLDING (Done per well regardless of training method) ---
+            # --- THRESHOLDING ---
             well_mse = full_mse[well_mask]
             valid_well_mse = well_mse[well_mse != -1.0]
             
@@ -142,11 +157,11 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                 method_name = "Per-Well" if per_well else "Global"
                 
                 if str(pct).lower() == "elbow":
-                    sub_text = f"[{method_name} Dense | DS: {downsample_factor}x] Threshold dynamically set using Knee/Elbow Method"
+                    sub_text = f"[{method_name} LSTM | DS: {downsample_factor}x] Threshold dynamically set using Knee/Elbow Method"
                 else:
-                    sub_text = f"[{method_name} Dense | DS: {downsample_factor}x] Kept bottom {pct}% of MSE reconstruction errors"
+                    sub_text = f"[{method_name} LSTM | DS: {downsample_factor}x] Kept bottom {pct}% of MSE reconstruction errors"
                     
-                html = init_html_report(title=f"Dense Autoencoder Outliers: {clean_title}", subtitle=sub_text)
+                html = init_html_report(title=f"LSTM Autoencoder Outliers: {clean_title}", subtitle=sub_text)
                 
                 for well in unique_wells:
                     well_mask = (Y_well == well)
@@ -183,7 +198,7 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                             ax_elbow.fill_between(ed["indices"][ed["knee_idx"]:], ed["sorted_mse"][ed["knee_idx"]:], 
                                                   color="#e74c3c", alpha=0.2, label="Rejected Curves")
                             
-                        ax_elbow.set_title(f"Well {well} - {method_name} AE Error Distribution", fontweight="bold")
+                        ax_elbow.set_title(f"Well {well} - {method_name} LSTM Error Distribution", fontweight="bold")
                         ax_elbow.set_xlabel("Curves (Sorted by Lowest to Highest Error)")
                         ax_elbow.set_ylabel("Reconstruction Error (MSE)")
                         ax_elbow.grid(alpha=0.3)
