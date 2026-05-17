@@ -720,8 +720,8 @@ if __name__ == "__main__":
     n_wells = 10
     n_a_type = "v04"
 
-    exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-    exp_paths = [Path(exp_folder, name) for name in os.listdir(exp_folder) if name != ".DS_Store"]
+    exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+    exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
     # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
     
     window_size_ori = 50
@@ -763,10 +763,10 @@ if __name__ == "__main__":
         
         fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
         
-        save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
-                                     indices_dict, pixel_temp_dfs, baseline_value, 
-                                     Y_well, X_time, exp, 
-                                     window_size_ori, window_size_1stder, margin)
+        # save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
+        #                              indices_dict, pixel_temp_dfs, baseline_value, 
+        #                              Y_well, X_time, exp, 
+        #                              window_size_ori, window_size_1stder, margin)
         
         print("  -> Building Sigmoid Grids (Optimized)...")
         unique_wells = np.unique(Y_well)
