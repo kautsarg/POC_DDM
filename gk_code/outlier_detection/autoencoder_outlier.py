@@ -9,6 +9,7 @@ from tensorflow.keras import layers, models
 from sklearn.preprocessing import MinMaxScaler
 from kneed import KneeLocator
 from outlier_utils import init_html_report, fig_to_base64
+from model_utils import set_global_determinism
 
 tf.get_logger().setLevel(logging.ERROR)
 
@@ -60,6 +61,8 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                 scaler = MinMaxScaler()
                 X_scaled = scaler.fit_transform(X_downsampled)
                 
+                set_global_determinism(0)
+            
                 autoencoder = build_autoencoder(X_scaled.shape[1])
                 autoencoder.fit(X_scaled, X_scaled, epochs=epochs, batch_size=batch_size, shuffle=True, verbose=0)
                 
@@ -88,6 +91,8 @@ def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, 
                     scaler = MinMaxScaler()
                     X_scaled = scaler.fit_transform(X_downsampled)
                     
+                    set_global_determinism(0)
+            
                     autoencoder = build_autoencoder(X_scaled.shape[1])
                     autoencoder.fit(X_scaled, X_scaled, epochs=epochs, batch_size=batch_size, shuffle=True, verbose=0)
                     

@@ -10,6 +10,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from kneed import KneeLocator
 from outlier_utils import init_html_report, fig_to_base64
+from model_utils import set_global_determinism
 
 tf.get_logger().setLevel(logging.ERROR)
 
@@ -78,6 +79,8 @@ def run_lstm_autoencoder_per_well_pipeline(dataset_names, dataset_curves, Y_well
             timesteps = X_scaled.shape[1]
             X_scaled_3d = X_scaled.reshape((X_scaled.shape[0], timesteps, 1))
             
+            set_global_determinism(0)
+
             autoencoder = build_lstm_autoencoder(timesteps)
             
             # Early stopping prevents over-training on the small ~1000 sample per-well dataset
