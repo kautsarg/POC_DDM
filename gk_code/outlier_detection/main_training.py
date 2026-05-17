@@ -10,7 +10,9 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 
 set_global_determinism(0)
 
-exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
+# exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+
 exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
 # exp_paths = [Path(exp_folder, "D20250826_E00_C00_F4500KHz_U_Sample_14_rep2")]
 # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]

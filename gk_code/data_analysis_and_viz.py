@@ -720,7 +720,9 @@ if __name__ == "__main__":
     n_wells = 10
     n_a_type = "v04"
 
-    exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+    # exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+    exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+    
     exp_paths = [Path(exp_folder, name) for  name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])]
     # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
     

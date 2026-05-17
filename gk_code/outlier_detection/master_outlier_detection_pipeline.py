@@ -199,7 +199,8 @@ def save_html_report(save_path, title, subtitle, img_buffers, flex_layout=False)
 # ====================================================================
 
 if __name__ == "__main__":
-    exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+    # exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
+    exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
     
     # Process specific experiment or iterate over all
     # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
