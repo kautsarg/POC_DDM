@@ -41,6 +41,9 @@ from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeli
 # GLOBAL CONSTANTS & CONFIGURATIONS
 # ====================================================================
 
+from model_utils import set_global_determinism
+set_global_determinism(0)
+
 # Matplotlib Color Cycler Configuration
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
@@ -396,7 +399,7 @@ if __name__ == "__main__":
             
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(numeric_df)
-            rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+            rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
             rf.fit(X_scaled, Y_well)
             
             importance_df = pd.DataFrame({'feature': numeric_df.columns, 'importance': rf.feature_importances_}).sort_values(by='importance', ascending=False)
@@ -455,7 +458,7 @@ if __name__ == "__main__":
         #     top_3_features = top_5_features[:3]
         #     df_top5 = kf[top_5_features].replace([np.inf, -np.inf], np.nan).fillna(0)
             
-        #     tsne = TSNE(n_components=2, random_state=42)
+        #     tsne = TSNE(n_components=2, random_state=0)
         #     X_tsne = tsne.fit_transform(df_top5.values)
             
         #     fig = plt.figure(figsize=(22, 9))
@@ -481,6 +484,29 @@ if __name__ == "__main__":
         ref_curves = dataset[0]
         all_new_feature_dfs = [[] for _ in range(len(dataset_name))] 
 
+        # --- 8.0: LOAD PREVIOUS PROGRESS IF IT EXISTS ---
+        updated_save_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
+        if os.path.exists(updated_save_path):
+            print(f"  -> Found existing progress in {updated_save_path}. Loading to resume...")
+            with open(updated_save_path, 'rb') as f:
+                saved_data = pickle.load(f)
+            # Update kinetic_features with the one that already has computed outlier columns
+            kinetic_features = saved_data["kinetic_features"]
+
+        def save_incremental_progress():
+            save_data = {
+                "timestamps": timestamps,
+                "Y_well": Y_well,
+                "dataset_name": dataset_name,
+                "dataset": dataset,
+                "kinetic_features": kinetic_features,
+                "linear_feature_combinations": linear_feature_combinations,
+                "important_feature_combinations": important_feature_combinations
+            }
+            with open(updated_save_path, 'wb') as f:
+                pickle.dump(save_data, f)
+            print(f"    [SAVED] Progress incrementally written to disk.")
+            
         # -------------------------------------------------------------
         # MSC Configs
         # -------------------------------------------------------------
@@ -543,42 +569,116 @@ if __name__ == "__main__":
         ae_dataset = ae_filtered_dataset
         
         # -------------------------------------------------------------
-        # -------------------------------------------------------------
+        # 8.1: OUTLIER DETECTION METHODS
         # -------------------------------------------------------------
         
-        # Run CNN AutoEncoder Per Well
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
-        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # --- CNN AutoEncoder Per Well ---
+        expected_cnn_pw = [f"cnn_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+        missing_cnn_pw = [pct for pct, label in zip(ae_configs, expected_cnn_pw) if label not in kinetic_features[0].columns]
+        if missing_cnn_pw:
+            extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+            for i, name in enumerate(ae_dataset_name): 
+                master_idx = list(dataset_name).index(name)
+                kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+        else:
+            print("  -> [SKIP] CNN AutoEncoder (Per-Well): Already calculated.")
 
-        # Run CNN AutoEncoder Whole Chip
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
-        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # --- CNN AutoEncoder Whole Chip ---
+        expected_cnn_glb = [f"cnn_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+        missing_cnn_glb = [pct for pct, label in zip(ae_configs, expected_cnn_glb) if label not in kinetic_features[0].columns]
+        if missing_cnn_glb:
+            extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_glb, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+            for i, name in enumerate(ae_dataset_name): 
+                master_idx = list(dataset_name).index(name)
+                kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+        else:
+            print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
-        # Run LSTM AutoEncoder Per Well
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
-        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # --- LSTM AutoEncoder Per Well ---
+        expected_lstm_pw = [f"lstm_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+        missing_lstm_pw = [pct for pct, label in zip(ae_configs, expected_lstm_pw) if label not in kinetic_features[0].columns]
+        if missing_lstm_pw:
+            extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+            for i, name in enumerate(ae_dataset_name): 
+                master_idx = list(dataset_name).index(name)
+                kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+        else:
+            print("  -> [SKIP] LSTM AutoEncoder (Per-Well): Already calculated.")
         
-        # Run LSTM AutoEncoder Whole Chip
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
-        for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # --- LSTM AutoEncoder Whole Chip ---
+        expected_lstm_glb = [f"lstm_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+        missing_lstm_glb = [pct for pct, label in zip(ae_configs, expected_lstm_glb) if label not in kinetic_features[0].columns]
+        if missing_lstm_glb:
+            extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_glb, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+            for i, name in enumerate(ae_dataset_name): 
+                master_idx = list(dataset_name).index(name)
+                kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+        else:
+            print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
         
         # # Run AutoEncoder Per Well
         # extracted_dfs = run_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=per_well)
         # for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
-        # Run KNN Filter
-        extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), knn_filter_config, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
-        for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+        # --- KNN Filter ---
+        expected_knn = [f"knn_top_{pct}" for pct in knn_filter_config]
+        missing_knn = [pct for pct, label in zip(knn_filter_config, expected_knn) if label not in kinetic_features[0].columns]
+        if missing_knn:
+            extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), missing_knn, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+            for i in range(len(dataset_name)): 
+                kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+        else:
+            print("  -> [SKIP] KNN Filter: Already calculated.")
 
-        # Run MSC
+        # --- MSC Filter ---
+        msc_configs_to_run = []
         for exp_label, p_val, feats in msc_configs:
-            extracted_dfs = run_msc_pipeline(exp_label, p_val, ref_curves, os.path.join(exp_path, "msc_outlier"), dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
-            for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+            if f"msc_label_{exp_label}" not in kinetic_features[0].columns:
+                msc_configs_to_run.append((exp_label, p_val, feats))
+            else:
+                print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
+                
+        if msc_configs_to_run:
+            for exp_label, p_val, feats in msc_configs_to_run:
+                extracted_dfs = run_msc_pipeline(exp_label, p_val, ref_curves, os.path.join(exp_path, "msc_outlier"), dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
+                for i in range(len(dataset_name)): 
+                    kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
 
-        # Run AMF
+        # --- AMF Filter ---
+        amf_configs_to_run = []
         for exp_label, feats in amf_configs:
-            extracted_dfs = run_amf_pipeline(exp_label, feats, ref_curves, os.path.join(exp_path, "amf_outlier"), dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
-            for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+            if f"amf_label_{exp_label}" not in kinetic_features[0].columns:
+                amf_configs_to_run.append((exp_label, feats))
+            else:
+                print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
+                
+        if amf_configs_to_run:
+            for exp_label, feats in amf_configs_to_run:
+                extracted_dfs = run_amf_pipeline(exp_label, feats, ref_curves, os.path.join(exp_path, "amf_outlier"), dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
+                for i in range(len(dataset_name)): 
+                    kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
+
+        # --- Mean/Std Filter ---
+        mean_std_configs_to_run = []
+        for exp_label, num_std in mean_std_configs:
+            if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns:
+                mean_std_configs_to_run.append((exp_label, num_std))
+            else:
+                print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
+                
+        if mean_std_configs_to_run:
+            for exp_label, num_std in mean_std_configs_to_run:
+                extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
+                for i in range(len(dataset_name)): 
+                    kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
+            save_incremental_progress()
 
         # # Run Mean/Std
         # for exp_label, num_std in mean_std_configs:
@@ -588,30 +688,10 @@ if __name__ == "__main__":
         # -------------------------------------------------------------
         # 9. FINAL MERGE & SAVE
         # -------------------------------------------------------------
-        print("\n=== SAVING FINAL DATASET ===")
-        for i in range(len(dataset_name)):
-            kinetic_features[i] = pd.concat([kinetic_features[i]] + all_new_feature_dfs[i], axis=1)
-
-        updated_save_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
-        
-        save_data = {
-            "timestamps": timestamps,
-            "Y_well": Y_well,
-            "dataset_name": dataset_name,
-            "dataset": dataset,
-            "kinetic_features": kinetic_features,
-            "linear_feature_combinations": linear_feature_combinations,
-            "important_feature_combinations": important_feature_combinations
-        }
-
-        with open(updated_save_path, 'wb') as f:
-            pickle.dump(save_data, f)
-            
-        print(f"Data saved to {updated_save_path}\nExperiment {exp_path.name} finished gracefully!")
+        print(f"\nExperiment {exp_path.name} finished gracefully!")
         
         del data, Y_well, timestamps, metadata_df, dataset, dataset_name
         del kinetic_features, linear_feature_combinations, important_feature_combinations
-        del all_new_feature_dfs
         
         tf.keras.backend.clear_session()
         gc.collect()
