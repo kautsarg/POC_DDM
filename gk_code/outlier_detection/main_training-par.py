@@ -34,7 +34,7 @@ exp_path = exp_paths[task_id]
 
 print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
-data_path = os.path.join(exp_path, "curve_for_training_latest_2.pkl")
+data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
 results_file_path = os.path.join(exp_path, "classification_performances_with_proba.pkl")
 
 # Ensure the plot directory exists

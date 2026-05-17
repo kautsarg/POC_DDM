@@ -246,15 +246,24 @@ if __name__ == "__main__":
         # -------------------------------------------------------------
         # 2. EXTRACT KINETICS & APPEND ALIASES
         # -------------------------------------------------------------
-        kinetics_path = os.path.join(exp_path, "initial_kinetics_2.pkl")
+        kinetics_path = os.path.join(exp_path, "initial_kinetics.pkl")
+        generate_kinetics = True
+        
         if os.path.exists(kinetics_path):
             print("  -> Loading cached kinetic features...")
             with open(kinetics_path, 'rb') as f:
                 kinetic_features = pickle.load(f)
-        else:
+                
+            if len(kinetic_features[0]) == len(Y_well):
+                generate_kinetics = False
+            else:
+                print(f"  -> [WARNING] Cache size ({len(kinetic_features[0])}) mismatches dataset ({len(Y_well)}). Regenerating...")
+
+        if generate_kinetics:
             print("  -> Extracting initial kinetic features (CPU Bound)...")
             kinetic_features = [extract_kinetic_features(timestamps, curves) for curves in dataset]
-            with open(kinetics_path, 'wb') as f: pickle.dump(kinetic_features, f)
+            with open(kinetics_path, 'wb') as f: 
+                pickle.dump(kinetic_features, f)
 
         # Append Metadata and 'Send' Aliases
         for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
@@ -488,11 +497,15 @@ if __name__ == "__main__":
         # --- 8.0: LOAD PREVIOUS PROGRESS IF IT EXISTS ---
         updated_save_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
         if os.path.exists(updated_save_path):
-            print(f"  -> Found existing progress in {updated_save_path}. Loading to resume...")
+            print(f"  -> Found existing progress in {updated_save_path}. Validating...")
             with open(updated_save_path, 'rb') as f:
                 saved_data = pickle.load(f)
-            # Update kinetic_features with the one that already has computed outlier columns
-            kinetic_features = saved_data["kinetic_features"]
+                
+            if len(saved_data["Y_well"]) == len(Y_well):
+                kinetic_features = saved_data["kinetic_features"]
+                print("  -> Progress loaded successfully.")
+            else:
+                print("  -> [WARNING] Progress cache is stale (length mismatch). Starting from scratch.")
 
         def save_incremental_progress():
             save_data = {

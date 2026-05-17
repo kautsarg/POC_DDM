@@ -22,13 +22,13 @@ module load cuDNN/9.10.2.21-CUDA-12.6.0
 source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
 
 # Pass the magic cluster variable $PBS_ARRAY_INDEX to your Python scripts
-# export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code
-python -u gk_code/data_analysis_and_viz.py $PBS_ARRAY_INDEX
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/data_analysis_and_viz.py $PBS_ARRAY_INDEX
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/outlier_detection
-python -u gk_code/outlier_detection/master_outlier_detection_pipeline.py $PBS_ARRAY_INDEX
-python -u gk_code/outlier_detection/main_training.py $PBS_ARRAY_INDEX
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/outlier_detection/master_outlier_detection_pipeline.py $PBS_ARRAY_INDEX
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/outlier_detection/main_training.py $PBS_ARRAY_INDEX
 
 deactivate
