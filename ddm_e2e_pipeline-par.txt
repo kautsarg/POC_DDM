@@ -1,0 +1,34 @@
+#!/bin/bash
+#PBS -N ddm_parallel_array
+#PBS -l walltime=48:00:00      
+
+# Request resources for a SINGLE folder's job. 
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+
+# Launch 10 clones of this job (Indices 1 through 10)
+#PBS -J 1-10
+
+#PBS -o logs/output_^array_index^.log             
+#PBS -e logs/error_^array_index^.log              
+
+cd /rds/general/user/gk225/home/POC_DDM
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+
+# Pass the magic cluster variable $PBS_ARRAY_INDEX to your Python scripts
+# export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+
+cd /rds/general/user/gk225/home/POC_DDM/gk_code
+python -u gk_code/data_analysis_and_viz.py $PBS_ARRAY_INDEX
+
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/outlier_detection
+python -u gk_code/outlier_detection/master_outlier_detection_pipeline.py $PBS_ARRAY_INDEX
+python -u gk_code/outlier_detection/main_training.py $PBS_ARRAY_INDEX
+
+deactivate
