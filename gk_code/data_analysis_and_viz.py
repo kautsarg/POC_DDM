@@ -763,10 +763,10 @@ if __name__ == "__main__":
         
         fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
         
-        # save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
-        #                              indices_dict, pixel_temp_dfs, baseline_value, 
-        #                              Y_well, X_time, exp, 
-        #                              window_size_ori, window_size_1stder, margin)
+        save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
+                                     indices_dict, pixel_temp_dfs, baseline_value, 
+                                     Y_well, X_time, exp, 
+                                     window_size_ori, window_size_1stder, margin)
         
         print("  -> Building Sigmoid Grids (Optimized)...")
         unique_wells = np.unique(Y_well)
