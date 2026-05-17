@@ -8,8 +8,8 @@
 # Launch 10 clones of this job (Indices 1 through 10)
 #PBS -J 1-10
 
-#PBS -o logs/output_^array_index^.log             
-#PBS -e logs/error_^array_index^.log              
+#PBS -o logs/
+#PBS -e logs/              
 
 cd /rds/general/user/gk225/home/POC_DDM
 
@@ -21,7 +21,6 @@ module load cuDNN/9.10.2.21-CUDA-12.6.0
 # Activate venv
 source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
 
-# Pass the magic cluster variable $PBS_ARRAY_INDEX to your Python scripts
 export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code
