@@ -678,12 +678,6 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         'Sc': Sc_fit,
         'Cs': Cs_fit,
         'As': As_fit,
-        'Send': np.mean(dy_dx_vals[-5:]),
-        'Send_abs': np.mean(np.abs(dy_dx_vals[-5:])),
-        'Send_fit': np.mean(F_vals_dydx[-5:]),
-        'Send_fit_abs': np.mean(np.abs(F_vals_dydx[-5:])),
-        'F_max': F_max,
-        'ct_idx': ct_idx,
         "5p_sigmoid_fitted": F_vals,
         "5p_sigmoid_fitted_dydx": F_vals_dydx,
 
@@ -736,6 +730,13 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         'Cy0': Cy0,            # Y-intercept of tangent at inflection point
         'log_F0': log_F0,      # -log10(F0), where F0 = F(0)
         'F0': F0,
+        'F_max': F_max,
+        'ct_idx': ct_idx,
+        'Send': np.mean(dy_dx_vals[-5:]),
+        'Send_abs': np.mean(np.abs(dy_dx_vals[-5:])),
+        'Send_fit': np.mean(F_vals_dydx[-5:]),
+        'Send_fit_abs': np.mean(np.abs(F_vals_dydx[-5:])),
+        
     }
 # ============================================================================
 # FITTING FUNCTIONS
