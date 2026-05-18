@@ -2,10 +2,10 @@
 #PBS -N ddm_parallel_array
 #PBS -l walltime=48:00:00      
 
-# Request resources for a SINGLE folder's job. 
+# Request resources for a single job
 #PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
 
-# Launch 12 clones of this job (Indices 1 through 10)
+# Launch 12 clones of this job (PBS_ARRAY_INDEX indices 1 through 12)
 #PBS -J 1-12
 
 #PBS -o logs/
