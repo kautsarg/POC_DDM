@@ -12,13 +12,53 @@ import config
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 set_global_determinism(0)
 
+# ============================================================
+# HELPERS
+# ============================================================
+def get_exp_paths(exp_folder):
+    return sorted([
+        Path(exp_folder, name)
+        for name in os.listdir(exp_folder)
+        if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])
+    ])
+
+def load_training_data(exp_path):
+    data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
+    if not os.path.exists(data_path):
+        print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
+        sys.exit(0)
+    return joblib.load(data_path)
+
+def filter_datasets(dataset_name, dataset, kinetic_features):
+    filtered_names, filtered_dataset, filtered_features = [], [], []
+    for name, data, features in zip(dataset_name, dataset, kinetic_features):
+        if not name.startswith("avg_") and not name.startswith("original_fitted_stretched"):
+            filtered_names.append(name)
+            filtered_dataset.append(data)
+            filtered_features.append(features)
+    return filtered_names, filtered_dataset, filtered_features
+
+def load_or_init_results(results_file_path):
+    if os.path.exists(results_file_path):
+        return joblib.load(results_file_path)
+    return {}
+
+def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key):
+    def _checkpoint(updated_results):
+        all_ml_results[clean_title][mode_key] = updated_results
+        joblib.dump(all_ml_results, results_file_path, compress=3)
+    return _checkpoint
+
+# ============================================================
+# MAIN
+# ============================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Main Training Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     args = parser.parse_args()
 
-    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
+    exp_paths = get_exp_paths(args.exp_folder)
 
     if args.task_id >= len(exp_paths):
         print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
@@ -27,17 +67,11 @@ if __name__ == "__main__":
     exp_path = exp_paths[args.task_id]
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
-    data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     results_file_path = os.path.join(exp_path, config.TRAINING_RESULT_PATH)
-
     model_plot_path = os.path.join(exp_path, "model_performance")
     os.makedirs(model_plot_path, exist_ok=True)
 
-    if not os.path.exists(data_path):
-        print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
-        sys.exit(0)
-
-    training_data = joblib.load(data_path)
+    training_data = load_training_data(exp_path)
 
     dataset_name = training_data["dataset_name"]
     dataset = training_data["dataset"]
@@ -45,17 +79,7 @@ if __name__ == "__main__":
     Y_well = training_data["Y_well"]
 
     # Filter Clean data only
-    filtered_names, filtered_dataset, filtered_features = [], [], []
-
-    for name, data, features in zip(dataset_name, dataset, kinetic_features):
-        if not name.startswith("avg_") and not name.startswith("original_fitted_stretched"):
-            filtered_names.append(name)
-            filtered_dataset.append(data)
-            filtered_features.append(features)
-
-    dataset_name = filtered_names
-    dataset = filtered_dataset
-    kinetic_features = filtered_features
+    dataset_name, dataset, kinetic_features = filter_datasets(dataset_name, dataset, kinetic_features)
 
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well)
@@ -91,10 +115,7 @@ if __name__ == "__main__":
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
-    if os.path.exists(results_file_path):
-        all_ml_results = joblib.load(results_file_path)
-    else:
-        all_ml_results = {}
+    all_ml_results = load_or_init_results(results_file_path)
 
     total_datasets = len(dataset_name)
     total_samples = len(y_full)
@@ -137,9 +158,7 @@ if __name__ == "__main__":
         print(f"\n  [MODE 2/2] REFERENCE TRAINING")
         cached_ref = all_ml_results[clean_title].get("Reference", {})
 
-        def checkpoint_ref(updated_results):
-            all_ml_results[clean_title]["Reference"] = updated_results
-            joblib.dump(all_ml_results, results_file_path, compress=3)
+        checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
         
         res_ref = evaluate_outlier_filters(
             trained_curve, features_df, y_full, outlier_filters, clean_title, 

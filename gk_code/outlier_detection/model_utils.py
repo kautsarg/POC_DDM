@@ -159,27 +159,35 @@ def evaluate_outlier_filters(
     # Normalize model names to lowercase for robust matching
     models = [m.lower() for m in models]
 
+    model_key_map = {
+        "cnn": ("y_preds_AC_", "y_probs_AC_", "classes_AC_"),
+        "lstm": ("y_preds_AC_lstm_", "y_probs_AC_lstm_", "classes_AC_lstm_"),
+        "gru": ("y_preds_AC_gru_", "y_probs_AC_gru_", "classes_AC_gru_"),
+        "rnn": ("y_preds_AC_rnn_", "y_probs_AC_rnn_", "classes_AC_rnn_"),
+        "transformer": ("y_preds_AC_trans_", "y_probs_AC_trans_", "classes_AC_trans_"),
+        "rf": ("y_preds_AC_rf_", "y_probs_AC_rf_", "classes_AC_rf_"),
+        "knn": ("y_preds_AC_kNN_", "y_probs_AC_kNN_", "classes_AC_kNN_"),
+        "ffi": ("y_preds_FFI_", "y_probs_FFI_", "classes_FFI_"),
+    }
+
+    model_print_map = {
+        "cnn": "CNN (ACA)",
+        "lstm": "LSTM (ACA)",
+        "gru": "GRU (ACA)",
+        "rnn": "RNN (ACA)",
+        "transformer": "Trans (ACA)",
+        "rf": "RF (ACA)",
+        "knn": "KNN (ACA)",
+        "ffi": "LR (FFI)"
+    }
+
     for idx, f in enumerate(outlier_filters):
         filter_name = f if f else 'None (Baseline)'
         filter_pct = ((idx + 1) / total_filters) * 100
         print(f"  -> Testing Filter [{idx+1}/{total_filters} | {filter_pct:.1f}%]: {filter_name}")
         
-        # Per-model cache detection (do not skip the whole filter)
-        res_cached = results_dict.get(f, {})
-        skip_models = set()
-
-        if res_cached:
-            if "y_preds_AC_" in res_cached:        skip_models.add("cnn")
-            if "y_preds_AC_lstm_" in res_cached:   skip_models.add("lstm")
-            if "y_preds_AC_gru_" in res_cached:    skip_models.add("gru")
-            if "y_preds_AC_rnn_" in res_cached:    skip_models.add("rnn")
-            if "y_preds_AC_trans_" in res_cached:  skip_models.add("transformer")
-            if "y_preds_AC_rf_" in res_cached:     skip_models.add("rf")
-            if "y_preds_AC_kNN_" in res_cached:    skip_models.add("knn")
-            if "y_preds_FFI_" in res_cached:       skip_models.add("ffi")
-
-        if skip_models:
-            print(f"     [CACHE HIT] Skipping cached models: {sorted(skip_models)}")
+        # Load any existing progress for this filter
+        res_entry = results_dict.get(f, {})
         
         if f is None:
             mask = np.ones(len(y_encoded), dtype=bool)
@@ -227,289 +235,82 @@ def evaluate_outlier_filters(
         else:
             raise ValueError("n_splits must be 1 or greater.")
 
-        # Initialize lists
-        y_trues_ = []
-        y_preds_AC_, y_probs_AC_, classes_AC_ = [], [], []
-        y_preds_AC_lstm_, y_probs_AC_lstm_, classes_AC_lstm_ = [], [], []
-        y_preds_AC_gru_, y_probs_AC_gru_, classes_AC_gru_ = [], [], []
-        y_preds_AC_rnn_, y_probs_AC_rnn_, classes_AC_rnn_ = [], [], []
-        y_preds_AC_trans_, y_probs_AC_trans_, classes_AC_trans_ = [], [], []
-        y_preds_AC_rf_, y_probs_AC_rf_, classes_AC_rf_ = [], [], []
-        y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
-        y_preds_FFI_, y_probs_FFI_, classes_FFI_ = [], [], []
-
-        def _checkpoint_partial():
-            if checkpoint_fn is None:
-                return
-            res_entry_partial = {
-                "y_trues_": y_trues_,
-                "mask_count": np.sum(mask) 
-            }
-            if "cnn" in models:
-                res_entry_partial.update({"y_preds_AC_": y_preds_AC_, "y_probs_AC_": y_probs_AC_, "classes_AC_": classes_AC_})
-            if "lstm" in models:
-                res_entry_partial.update({"y_preds_AC_lstm_": y_preds_AC_lstm_, "y_probs_AC_lstm_": y_probs_AC_lstm_, "classes_AC_lstm_": classes_AC_lstm_})
-            if "gru" in models:
-                res_entry_partial.update({"y_preds_AC_gru_": y_preds_AC_gru_, "y_probs_AC_gru_": y_probs_AC_gru_, "classes_AC_gru_": classes_AC_gru_})
-            if "rnn" in models:
-                res_entry_partial.update({"y_preds_AC_rnn_": y_preds_AC_rnn_, "y_probs_AC_rnn_": y_probs_AC_rnn_, "classes_AC_rnn_": classes_AC_rnn_})
-            if "transformer" in models:
-                res_entry_partial.update({"y_preds_AC_trans_": y_preds_AC_trans_, "y_probs_AC_trans_": y_probs_AC_trans_, "classes_AC_trans_": classes_AC_trans_})
-            if "rf" in models:
-                res_entry_partial.update({"y_preds_AC_rf_": y_preds_AC_rf_, "y_probs_AC_rf_": y_probs_AC_rf_, "classes_AC_rf_": classes_AC_rf_})
-            if "knn" in models:
-                res_entry_partial.update({"y_preds_AC_kNN_": y_preds_AC_kNN_, "y_probs_AC_kNN_": y_probs_AC_kNN_, "classes_AC_kNN_": classes_AC_kNN_})
-            if "ffi" in models:
-                res_entry_partial.update({"y_preds_FFI_": y_preds_FFI_, "y_probs_FFI_": y_probs_FFI_, "classes_FFI_": classes_FFI_})
-            results_dict[f] = res_entry_partial
-            checkpoint_fn(results_dict)
-
-        splits = splitter.split(X_AC, y_true)
+        splits = list(splitter.split(X_AC, y_true))
         
-        for train_index, test_index in splits:
-            X_AC_train, X_AC_test = X_AC[train_index], X_AC[test_index]
-            X_FFI_train, X_FFI_test = X_FFI[train_index], X_FFI[test_index]
-            y_train, y_test = y_true[train_index], y_true[test_index]
-            y_trues_.append(y_test)
+        if "y_trues_" not in res_entry:
+            res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
+            res_entry["mask_count"] = int(np.sum(mask))
 
-            # --- Convolutional Neural Network (CNN) ---
-            if "cnn" in models and "cnn" not in skip_models:
-                start_time = time.perf_counter()
-                clf_AC = KerasModelWrapper(model=create_cnn_model,
-                                   model__input_size=X_AC.shape[1],
-                                   model__output_size=len(np.unique(y_encoded)), 
-                                   epochs=1000, 
-                                   batch_size=512, 
-                                   shuffle=True, 
-                                   verbose=False,
-                                   random_state=0)
-                clf_AC.fit(X_AC_train, y_train)
+        # Train models iteratively, checking cache before each
+        for m in models:
+            if m not in model_key_map:
+                continue
                 
-                pred_AC = clf_AC.predict(X_AC_test)
-                prob_AC = clf_AC.predict_proba(X_AC_test)
-                
-                y_preds_AC_.append(pred_AC)
-                y_probs_AC_.append(prob_AC)
-                classes_AC_.append(clf_AC.classes_)
-                
-                cnn_acc = accuracy_score(y_test, pred_AC) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA)   | {cnn_acc:5.2f}%   | Duration: {formatted_time}")
-                tf.keras.backend.clear_session()
-                _checkpoint_partial()
-                
-            # --- Long Short-Term Memory (LSTM) ---
-            if "lstm" in models and "lstm" not in skip_models:
-                start_time = time.perf_counter()
-                clf_lstm = KerasModelWrapper(model=create_lstm_model,
-                                   model__input_size=X_AC.shape[1],
-                                   model__output_size=len(np.unique(y_encoded)), 
-                                   epochs=500,
-                                   batch_size=512, 
-                                   shuffle=True, 
-                                   verbose=False,
-                                   random_state=0)
-                clf_lstm.fit(X_AC_train, y_train)
-                
-                pred_lstm = clf_lstm.predict(X_AC_test)
-                prob_lstm = clf_lstm.predict_proba(X_AC_test)
-                
-                y_preds_AC_lstm_.append(pred_lstm)
-                y_probs_AC_lstm_.append(prob_lstm)
-                classes_AC_lstm_.append(clf_lstm.classes_)
-                
-                lstm_acc = accuracy_score(y_test, pred_lstm) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LSTM (ACA)  | {lstm_acc:5.2f}%   | Duration: {formatted_time}")
-                tf.keras.backend.clear_session()
-                _checkpoint_partial()
-                
-            # --- Gated Recurrent Unit (GRU) ---
-            if "gru" in models and "gru" not in skip_models:
-                start_time = time.perf_counter()
-                clf_gru = KerasModelWrapper(model=create_gru_model,
-                                   model__input_size=X_AC.shape[1],
-                                   model__output_size=len(np.unique(y_encoded)), 
-                                   epochs=500, 
-                                   batch_size=512, 
-                                   shuffle=True, 
-                                   verbose=False,
-                                   random_state=0)
-                clf_gru.fit(X_AC_train, y_train)
-                
-                pred_gru = clf_gru.predict(X_AC_test)
-                prob_gru = clf_gru.predict_proba(X_AC_test)
-                
-                y_preds_AC_gru_.append(pred_gru)
-                y_probs_AC_gru_.append(prob_gru)
-                classes_AC_gru_.append(clf_gru.classes_)
-                
-                gru_acc = accuracy_score(y_test, pred_gru) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | GRU (ACA)   | {gru_acc:5.2f}%   | Duration: {formatted_time}")
-                tf.keras.backend.clear_session()
-                _checkpoint_partial()
-
-            # --- Simple Recurrent Neural Network (RNN) ---
-            if "rnn" in models and "rnn" not in skip_models:
-                start_time = time.perf_counter()
-                clf_rnn = KerasModelWrapper(model=create_rnn_model,
-                                   model__input_size=X_AC.shape[1],
-                                   model__output_size=len(np.unique(y_encoded)), 
-                                   epochs=500, 
-                                   batch_size=512, 
-                                   shuffle=True, 
-                                   verbose=False,
-                                   random_state=0)
-                clf_rnn.fit(X_AC_train, y_train)
-                
-                pred_rnn = clf_rnn.predict(X_AC_test)
-                prob_rnn = clf_rnn.predict_proba(X_AC_test)
-                
-                y_preds_AC_rnn_.append(pred_rnn)
-                y_probs_AC_rnn_.append(prob_rnn)
-                classes_AC_rnn_.append(clf_rnn.classes_)
-                
-                rnn_acc = accuracy_score(y_test, pred_rnn) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RNN (ACA)   | {rnn_acc:5.2f}%   | Duration: {formatted_time}")
-                tf.keras.backend.clear_session()
-                _checkpoint_partial()
-
-            # --- Transformer ---
-            if "transformer" in models and "transformer" not in skip_models:
-                start_time = time.perf_counter()
-                clf_trans = KerasModelWrapper(model=create_transformer_model,
-                                   model__input_size=X_AC.shape[1],
-                                   model__output_size=len(np.unique(y_encoded)), 
-                                   epochs=500, 
-                                   batch_size=512, 
-                                   shuffle=True, 
-                                   verbose=False,
-                                   random_state=0)
-                clf_trans.fit(X_AC_train, y_train)
-                
-                pred_trans = clf_trans.predict(X_AC_test)
-                prob_trans = clf_trans.predict_proba(X_AC_test)
-                
-                y_preds_AC_trans_.append(pred_trans)
-                y_probs_AC_trans_.append(prob_trans)
-                classes_AC_trans_.append(clf_trans.classes_)
-                
-                trans_acc = accuracy_score(y_test, pred_trans) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | Trans (ACA) | {trans_acc:5.2f}%   | Duration: {formatted_time}")
-                tf.keras.backend.clear_session()
-                _checkpoint_partial()
-
-            # --- Random Forest (AC) ---
-            if "rf" in models and "rf" not in skip_models:
-                start_time = time.perf_counter()
-                clf_AC_rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
-                clf_AC_rf.fit(X_AC_train, y_train)
-                
-                pred_rf = clf_AC_rf.predict(X_AC_test)
-                prob_rf = clf_AC_rf.predict_proba(X_AC_test) 
-                
-                y_preds_AC_rf_.append(pred_rf)
-                y_probs_AC_rf_.append(prob_rf)
-                classes_AC_rf_.append(clf_AC_rf.classes_)
-                
-                rf_acc = accuracy_score(y_test, pred_rf) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RF (ACA)    | {rf_acc:5.2f}%   | Duration: {formatted_time}")
-                _checkpoint_partial()
-
-            # --- K-Nearest Neighbors (AC) ---
-            if "knn" in models and "knn" not in skip_models:
-                start_time = time.perf_counter()
-                clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
-                clf_AC_kNN.fit(X_AC_train, y_train)
-                
-                pred_kNN = clf_AC_kNN.predict(X_AC_test)
-                prob_kNN = clf_AC_kNN.predict_proba(X_AC_test) 
-                
-                y_preds_AC_kNN_.append(pred_kNN)
-                y_probs_AC_kNN_.append(prob_kNN)
-                classes_AC_kNN_.append(clf_AC_kNN.classes_)
-                
-                knn_acc = accuracy_score(y_test, pred_kNN) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA)   | {knn_acc:5.2f}%   | Duration: {formatted_time}")
-                _checkpoint_partial()
-
-            # --- Logistic Regression (FFI) ---
-            if "ffi" in models and "ffi" not in skip_models:
-                start_time = time.perf_counter()
-                clf_FFI = LogisticRegression(max_iter=1000)
-                clf_FFI.fit(X_FFI_train, y_train)
-                
-                pred_FFI = clf_FFI.predict(X_FFI_test)
-                prob_FFI = clf_FFI.predict_proba(X_FFI_test) 
-                
-                y_preds_FFI_.append(pred_FFI)
-                y_probs_FFI_.append(prob_FFI)
-                classes_FFI_.append(clf_FFI.classes_)
-                
-                lr_acc = accuracy_score(y_test, pred_FFI) * 100
-
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
-
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)    | {lr_acc:5.2f}%")
-                _checkpoint_partial()
+            preds_key, probs_key, classes_key = model_key_map[m]
+            print_name = f"{model_print_map[m]:<11}"
             
-        # Dynamically build the results entry based on trained models
-        res_entry = {
-            "y_trues_": y_trues_,
-            "mask_count": np.sum(mask) 
-        }
-        if "cnn" in models:
-            res_entry.update({"y_preds_AC_": y_preds_AC_, "y_probs_AC_": y_probs_AC_, "classes_AC_": classes_AC_})
-        if "lstm" in models:
-            res_entry.update({"y_preds_AC_lstm_": y_preds_AC_lstm_, "y_probs_AC_lstm_": y_probs_AC_lstm_, "classes_AC_lstm_": classes_AC_lstm_})
-        if "gru" in models:
-            res_entry.update({"y_preds_AC_gru_": y_preds_AC_gru_, "y_probs_AC_gru_": y_probs_AC_gru_, "classes_AC_gru_": classes_AC_gru_})
-        if "rnn" in models:
-            res_entry.update({"y_preds_AC_rnn_": y_preds_AC_rnn_, "y_probs_AC_rnn_": y_probs_AC_rnn_, "classes_AC_rnn_": classes_AC_rnn_})
-        if "transformer" in models:
-            res_entry.update({"y_preds_AC_trans_": y_preds_AC_trans_, "y_probs_AC_trans_": y_probs_AC_trans_, "classes_AC_trans_": classes_AC_trans_})
-        if "rf" in models:
-            res_entry.update({"y_preds_AC_rf_": y_preds_AC_rf_, "y_probs_AC_rf_": y_probs_AC_rf_, "classes_AC_rf_": classes_AC_rf_})
-        if "knn" in models:
-            res_entry.update({"y_preds_AC_kNN_": y_preds_AC_kNN_, "y_probs_AC_kNN_": y_probs_AC_kNN_, "classes_AC_kNN_": classes_AC_kNN_})
-        if "ffi" in models:
-            res_entry.update({"y_preds_FFI_": y_preds_FFI_, "y_probs_FFI_": y_probs_FFI_, "classes_FFI_": classes_FFI_})
+            # --- CHECK CACHE ---
+            if preds_key in res_entry:
+                fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
+                acc = np.mean(fold_accs) * 100
+                print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}%   | Duration: Cached")
+                continue
             
+            # --- TRAIN NEW MODEL ---
+            preds, probs, classes = [], [], []
+            start_time = time.perf_counter()
+            
+            for train_idx, test_idx in splits:
+                X_train = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
+                X_test = X_FFI[test_idx] if m == 'ffi' else X_AC[test_idx]
+                y_train = y_true[train_idx]
+                
+                if m == "cnn":
+                    clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                elif m == "lstm":
+                    clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                elif m == "gru":
+                    clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                elif m == "rnn":
+                    clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                elif m == "transformer":
+                    clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                elif m == "rf":
+                    clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
+                elif m == "knn":
+                    clf = KNeighborsClassifier(n_neighbors=10)
+                elif m == "ffi":
+                    clf = LogisticRegression(max_iter=1000)
+                    
+                clf.fit(X_train, y_train)
+                
+                preds.append(clf.predict(X_test))
+                probs.append(clf.predict_proba(X_test))
+                classes.append(clf.classes_)
+                
+                if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
+                    tf.keras.backend.clear_session()
+                    
+            end_time = time.perf_counter()
+            duration = end_time - start_time
+            formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+            
+            # --- CHECKPOINT AFTER MODEL IS COMPLETELY DONE ---
+            res_entry[preds_key] = preds
+            res_entry[probs_key] = probs
+            res_entry[classes_key] = classes
+            
+            results_dict[f] = res_entry
+            if checkpoint_fn is not None:
+                checkpoint_fn(results_dict)
+                
+            fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], preds)]
+            acc = np.mean(fold_accs) * 100
+            
+            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}%   | Duration: {formatted_time}")
+
+        # Ensure dictionary is explicitly updated in the parent
         results_dict[f] = res_entry
 
     return results_dict
@@ -569,12 +370,23 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             if f not in results_dict: continue
             res = results_dict[f]
             
+            # Check if this model completed for this filter to avoid KeyErrors
+            if m_key not in res:
+                means.append(0)
+                stds.append(0)
+                continue
+
             fold_accs = [accuracy_score(yt, yp) * 100 for yt, yp in zip(res['y_trues_'], res[m_key])]
-            m_val = np.mean(fold_accs)
-            s_val = np.std(fold_accs)
-            
+            if len(fold_accs) > 0:
+                m_val = np.mean(fold_accs)
+                s_val = np.std(fold_accs)
+            else:
+                m_val = 0.0
+                s_val = 0.0
+
             means.append(m_val)
             stds.append(s_val)
+            
             if f is None:
                 base_mean = m_val
 
@@ -634,11 +446,14 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
         for f in outlier_filters:
             if f not in results_dict: continue
             res = results_dict[f]
-            fold_accs = [accuracy_score(yt, yp) * 100 for yt, yp in zip(res['y_trues_'], res[m_key])]
-            mean_acc = np.mean(fold_accs)
-            filt_name = str(f) if f is not None else "Baseline (None)"
+            if m_key not in res: continue
             
-            all_results.append((mean_acc, dataset_name, mode_name, title, filt_name))
+            fold_accs = [accuracy_score(yt, yp) * 100 for yt, yp in zip(res['y_trues_'], res[m_key])]
+    
+            if len(fold_accs) > 0:
+                mean_acc = np.mean(fold_accs)
+                filt_name = str(f) if f is not None else "Baseline (None)"
+                all_results.append((mean_acc, dataset_name, mode_name, title, filt_name))
             
     all_results.sort(key=lambda x: x[0], reverse=True)
     
