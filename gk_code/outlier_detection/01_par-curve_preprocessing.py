@@ -1,11 +1,12 @@
 import os
 import sys
-import pickle
 import warnings
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import joblib 
 from pathlib import Path
 from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
@@ -13,6 +14,8 @@ from joblib import Parallel, delayed
 from bokeh.plotting import figure, save, output_file
 from bokeh.layouts import gridplot, column, row, Spacer
 from bokeh.models import ColumnDataSource, CustomJS, Div, HoverTool, Span, CrosshairTool, TapTool
+
+import config
 
 # Add custom paths
 sys.path.insert(0, '..')
@@ -24,7 +27,6 @@ from titan.load_and_preprocessing import titan_load_and_preprocessing
 import sigmoid_fitting as sp
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-
 
 # ==========================================
 # 1. MATH & EXTRACTION MODULES
@@ -89,23 +91,19 @@ def reconstruct_data(exp_data: Experiment, attr_str: str):
         well_ids.append(temp_x.shape[0])
 
     X_time = exp_data.wells_list[0].time
-    
     Y_well = []
     for label, count in enumerate(well_ids):
         Y_well.extend([label] * count)
 
     return X_time, np.array(Y_well), vstacked
 
-
 # ==========================================
 # 2. DATAFRAME GENERATION (PIXELS & TEMPS)
 # ==========================================
 
 def extract_pixel_temp_dataframes(exp_data):
-    df_pix_lin_list = []
-    df_pix_nl_list = []
-    df_temp_lin_list = []
-    df_temp_nl_list = []
+    df_pix_lin_list, df_pix_nl_list = [], []
+    df_temp_lin_list, df_temp_nl_list = [], []
 
     for w_idx, well in enumerate(exp_data.wells_list):
         idx_settled = well.idx_settled
@@ -186,24 +184,17 @@ def extract_pixel_temp_dataframes(exp_data):
         "well_2d_temp_npr_df": pd.concat(df_temp_nl_list, ignore_index=True)
     }
 
-
 # ==========================================
 # 3. DATA PROCESSING PIPELINE
 # ==========================================
 
 def process_experiment_data(ori_curves, ori_timestamps, window_size_ori, window_size_1stder, margin):
-    # ori_curves_avg = moving_average_vec(ori_curves, window_size_ori)
     ori_curve_dydx = np.array(get_derivatives(ori_curves, ori_timestamps))
-    # ori_avg_dydx = np.array(get_derivatives(ori_curves_avg, ori_timestamps))
-    
     ori_dydx_avg = moving_average_vec(ori_curve_dydx, window_size_1stder)
-    # ori_avg_dydx_avg = moving_average_vec(ori_avg_dydx, window_size_1stder)
 
     cleaning_tasks = [
         ("std", ori_dydx_avg, first_pos_zero_crossing_vec),
         ("low", ori_dydx_avg, lowest_integral_to_next_crossing_vec),
-        # ("avg_std", ori_avg_dydx_avg, first_pos_zero_crossing_vec),
-        # ("avg_low", ori_avg_dydx_avg, lowest_integral_to_next_crossing_vec)
     ]
 
     results = {}
@@ -215,15 +206,11 @@ def process_experiment_data(ori_curves, ori_timestamps, window_size_ori, window_
     indices_dict = {
         "cleaned_idx": results["std"][1],
         "cleaned_lowest_idx": results["low"][1],
-        # "avg_cleaned_idx": results["avg_std"][1],
-        # "avg_cleaned_lowest_idx": results["avg_low"][1]
     }
 
     processed_curves = [
         ori_curves, ori_curve_dydx, ori_dydx_avg, 
         results["std"][0], results["low"][0], 
-        # ori_curves_avg, ori_avg_dydx, ori_avg_dydx_avg, 
-        # results["avg_std"][0], results["avg_low"][0]
     ]
 
     return processed_curves, indices_dict
@@ -272,9 +259,6 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
         "original": sigmoid_fitting_5p(processed_curves[0], ori_timestamps, None),
         "cleaned_std": sigmoid_fitting_5p(processed_curves[3], ori_timestamps, indices_dict["cleaned_idx"]),
         "cleaned_lowest": sigmoid_fitting_5p(processed_curves[4], ori_timestamps, indices_dict["cleaned_lowest_idx"]),
-        # "avg": sigmoid_fitting_5p(processed_curves[5], ori_timestamps, None),
-        # "avg_cleaned_std": sigmoid_fitting_5p(processed_curves[8], ori_timestamps, indices_dict["avg_cleaned_idx"]),
-        # "avg_cleaned_lowest": sigmoid_fitting_5p(processed_curves[9], ori_timestamps, indices_dict["avg_cleaned_lowest_idx"])
     }
     
     structured_fits = {}
@@ -290,24 +274,61 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
 
 
 # ==========================================
-# 5. SAVING MODULE (UPDATED WITH BASELINE)
+# 5. SAVING MODULE
 # ==========================================
 
-def save_experiment_data(exp_path, fitting_results, processed_curves, indices_dict, pixel_temp_dfs, baseline_value):
+def save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
+                                     indices_dict, pixel_temp_dfs, baseline_value, 
+                                     Y_well, X_time, exp_data, 
+                                     window_size_ori, window_size_1stder, margin):
+    
+    df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
+    well0 = exp_data.wells_list[0]
+    
     save_data = {
-        "fitting_results": fitting_results,
-        "processed_curves": processed_curves,
-        "cleaning_indices": indices_dict,
-        "pixel_temp_dfs": pixel_temp_dfs,
-        "baseline_value": baseline_value
+        "curves": {
+            "well_2d_bs_active": pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values,
+            "well_2d_nl_bs_active": pixel_temp_dfs["well_2d_nl_bs_active_df"].filter(like="Cycle_").values,
+            "well_temp_lin2d": pixel_temp_dfs["well_temp_lin2d_df"].filter(like="Cycle_").values,
+            "well_2d_temp_npr": pixel_temp_dfs["well_2d_temp_npr_df"].filter(like="Cycle_").values,
+            "well_temp_mean_then_lin": well0.well_temp_mean_then_lin,
+            "ori_curves": processed_curves[0],
+            "ori_curve_dydx": processed_curves[1],
+            "ori_dydx_avg": processed_curves[2],
+            "cleaned_std": processed_curves[3],
+            "cleaned_lowest": processed_curves[4],
+        },
+        "sigmoid_curves": fitting_results,
+        "idxs": {
+            "idx_start": well0.idx_start,
+            "idx_settled": well0.idx_settled,
+            "idx_end": well0.idx_end,
+            "idx_active": well0.idx_active,
+            "cleaned_idx": indices_dict["cleaned_idx"],
+            "cleaned_lowest_idx": indices_dict["cleaned_lowest_idx"],
+        },
+        "timestamps": X_time,
+        "well_labels": Y_well,
+        "metadata": {
+            "pixel_row_idx": df_meta['pixel_row_idx'].values,
+            "pixel_col_idx": df_meta['pixel_col_idx'].values,
+            "temp_group_idx": df_meta['temp_group_idx'].values,
+            "num_active_pixels_in_temp_group": df_meta['num_active_pixels_in_temp_group'].values,
+            "well_temp_lin2d_mean": df_meta['well_temp_lin2d_mean'].values,
+            "well_2d_temp_npr_mean": df_meta['well_2d_temp_npr_mean'].values
+        },
+        "baseline_value": baseline_value,
+        "window_size_1stder": window_size_1stder,
+        "margin": margin
     }
-    save_path = os.path.join(exp_path, "processed_curve_results.pkl")
-    with open(save_path, 'wb') as f:
-        pickle.dump(save_data, f)
+
+    save_path = os.path.join(exp_path, "preprocessed_curves_data.joblib")
+    joblib.dump(save_data, save_path, compress=3)
+    print(f"  -> Saved numerical results and metadata to {save_path}")
 
 
 # ==========================================
-# 6. PLOTTING MODULE 1: SIGMOID GRIDS (OPTIMIZED)
+# 6. PLOTTING MODULE 1: SIGMOID GRIDS 
 # ==========================================
 
 def draw_stats(p, data_array, timestamps):
@@ -339,20 +360,14 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
         1: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
         2: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
         3: (indices_dict["cleaned_idx"],), 4: (indices_dict["cleaned_lowest_idx"],),
-        # 5: (indices_dict["avg_cleaned_idx"], indices_dict["avg_cleaned_lowest_idx"]), 
-        # 6: (indices_dict["avg_cleaned_idx"], indices_dict["avg_cleaned_lowest_idx"]), 
-        # 7: (indices_dict["avg_cleaned_idx"], indices_dict["avg_cleaned_lowest_idx"]), 
-        # 8: (indices_dict["avg_cleaned_idx"],), 9: (indices_dict["avg_cleaned_lowest_idx"],)
     }
 
     fit_key_map = {
         0: "original", 3: "cleaned_std", 4: "cleaned_lowest", 
-        # 5: "avg", 8: "avg_cleaned_std", 9: "avg_cleaned_lowest"
     }
-    stats_cols = {0, 3, 4} #, 5, 8, 9}
-    group_a_cols, group_b_cols = [0, 3, 4], [1, 2] # [0, 3, 4, 5, 8, 9], [1, 2, 6, 7]
+    stats_cols = {0, 3, 4}
+    group_a_cols, group_b_cols = [0, 3, 4], [1, 2]
     
-    # Downsample & Round the global X-axis for extreme memory reduction
     ts_ds = np.round(ori_timestamps[::ds_step], precision).tolist()
     
     plot_size = 350 
@@ -369,11 +384,9 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
         data_dict = {'xs': [ts_ds for _ in range(num_curves)], 'color': [hex_color] * num_curves}
         
         for col_idx, curves in enumerate(processed_curves):
-            # 1. Downsample and round Y-values
             y_visual = np.round(curves[mask][:, ::ds_step], precision)
             data_dict[f'ys_{col_idx}'] = y_visual.tolist()
             
-            # 2. Extract Exact Marker Data (Do NOT downsample the index, just round value for JSON)
             idx_tuple = col_to_idx_map[col_idx]
             idx_1 = idx_tuple[0][mask]
             data_dict[f'mx1_{col_idx}'] = np.round(ori_timestamps[idx_1], precision).tolist()
@@ -390,13 +403,11 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
                 sc_mask = fitting_results[fit_key]["fitted_stretched"][mask]
                 norm_fc_mask, norm_sc_mask = normalize_array(fc_mask), normalize_array(sc_mask)
                 
-                # Downsample & Round Fitted Lines
                 data_dict[f'fitted_ys_{col_idx}'] = np.round(fc_mask[:, ::ds_step], precision).tolist()
                 data_dict[f'stretched_ys_{col_idx}'] = np.round(sc_mask[:, ::ds_step], precision).tolist()
                 data_dict[f'norm_fitted_ys_{col_idx}'] = np.round(norm_fc_mask[:, ::ds_step], precision).tolist()
                 data_dict[f'norm_stretched_ys_{col_idx}'] = np.round(norm_sc_mask[:, ::ds_step], precision).tolist()
                 
-                # Exact Markers for Fits
                 data_dict[f'fitted_my1_{col_idx}'] = np.round(fc_mask[np.arange(num_curves), idx_1], precision).tolist()
                 data_dict[f'stretched_my1_{col_idx}'] = np.round(sc_mask[np.arange(num_curves), idx_1], precision).tolist()
                 data_dict[f'norm_fitted_my1_{col_idx}'] = np.round(norm_fc_mask[np.arange(num_curves), idx_1], precision).tolist()
@@ -416,13 +427,10 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
             
             p1 = figure(title=title, width=plot_size, height=plot_size, tools="pan,wheel_zoom,box_zoom,reset,tap", output_backend="webgl")
             if col_idx == 0: p1.yaxis.axis_label = f"Well {well}"
-            # Multi_line uses the rounded/downsampled data
             p1.multi_line(xs='xs', ys=f'ys_{col_idx}', color='color', source=source, line_width=1.0, alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_color=hex_color, nonselection_alpha=0.05)
-            # Scatters use the exact (but rounded) markers
             p1.scatter(x=f'mx1_{col_idx}', y=f'my1_{col_idx}', source=source, **scatter_kwargs)
             if len(col_to_idx_map[col_idx]) > 1: p1.scatter(x=f'mx2_{col_idx}', y=f'my2_{col_idx}', source=source, **scatter_kwargs)
             
-            # Use downsampled lines for stats overlay too
             if col_idx in stats_cols: 
                 draw_stats(p1, np.round(processed_curves[col_idx][mask][:, ::ds_step], precision), ts_ds)
             r1_plots.append(p1)
@@ -491,7 +499,7 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
 
 
 # ==========================================
-# 7. PLOTTING MODULE 2: PIXEL VS TEMP (OPTIMIZED)
+# 7. PLOTTING MODULE 2: PIXEL VS TEMP
 # ==========================================
 
 def plot_pixel_temp_interactions(exp_data, exp_path, ds_step=5, precision=4):
@@ -646,123 +654,39 @@ def plot_pixel_temp_interactions(exp_data, exp_path, ds_step=5, precision=4):
     save(master_layout)
 
 # ==========================================
-# 8. SAVING MODULE (RAW DATA PRESERVED)
-# ==========================================
-
-def save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
-                                     indices_dict, pixel_temp_dfs, baseline_value, 
-                                     Y_well, X_time, exp_data, 
-                                     window_size_ori, window_size_1stder, margin):
-    
-    df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
-    well0 = exp_data.wells_list[0]
-    
-    save_data = {
-        "curves": {
-            "well_2d_bs_active": pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values,
-            "well_2d_nl_bs_active": pixel_temp_dfs["well_2d_nl_bs_active_df"].filter(like="Cycle_").values,
-            "well_temp_lin2d": pixel_temp_dfs["well_temp_lin2d_df"].filter(like="Cycle_").values,
-            "well_2d_temp_npr": pixel_temp_dfs["well_2d_temp_npr_df"].filter(like="Cycle_").values,
-            "well_temp_mean_then_lin": well0.well_temp_mean_then_lin,
-            "ori_curves": processed_curves[0],
-            "ori_curve_dydx": processed_curves[1],
-            "ori_dydx_avg": processed_curves[2],
-            "cleaned_std": processed_curves[3],
-            "cleaned_lowest": processed_curves[4],
-            # "ori_curves_avg": processed_curves[5],
-            # "ori_avg_dydx": processed_curves[6],
-            # "ori_avg_dydx_avg": processed_curves[7],
-            # "avg_cleaned_std": processed_curves[8],
-            # "avg_cleaned_lowest": processed_curves[9],
-        },
-
-        "sigmoid_curves": fitting_results,
-
-        "idxs": {
-            "idx_start": well0.idx_start,
-            "idx_settled": well0.idx_settled,
-            "idx_end": well0.idx_end,
-            "idx_active": well0.idx_active,
-            "cleaned_idx": indices_dict["cleaned_idx"],
-            "cleaned_lowest_idx": indices_dict["cleaned_lowest_idx"],
-            # "avg_cleaned_idx": indices_dict["avg_cleaned_idx"],
-            # "avg_cleaned_lowest_idx": indices_dict["avg_cleaned_lowest_idx"]
-        },
-
-        "timestamps": X_time,
-        "well_labels": Y_well,
-
-        "metadata": {
-            "pixel_row_idx": df_meta['pixel_row_idx'].values,
-            "pixel_col_idx": df_meta['pixel_col_idx'].values,
-            "temp_group_idx": df_meta['temp_group_idx'].values,
-            "num_active_pixels_in_temp_group": df_meta['num_active_pixels_in_temp_group'].values,
-            "well_temp_lin2d_mean": df_meta['well_temp_lin2d_mean'].values,
-            "well_2d_temp_npr_mean": df_meta['well_2d_temp_npr_mean'].values
-        },
-
-        "baseline_value": baseline_value,
-        # "window_size_ori": window_size_ori,
-        "window_size_1stder": window_size_1stder,
-        "margin": margin
-    }
-
-    save_path = os.path.join(exp_path, "preprocessed_curves_data.pkl")
-    with open(save_path, 'wb') as f:
-        pickle.dump(save_data, f)
-    
-    print(f"  -> Saved numerical results and metadata to {save_path}")
-
-# ==========================================
 # 9. MAIN EXECUTION LOOP
 # ==========================================
 
 if __name__ == "__main__":
-    n_wells = 10
-    n_a_type = "v04"
+    parser = argparse.ArgumentParser(description="Curve Preprocessing Pipeline")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
+    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
+    args = parser.parse_args()
 
-    # exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
-    exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
-    
-    exp_paths = sorted([Path(exp_folder, name) for name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])])
-    # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
-    
-    window_size_ori = 50
-    window_size_1stder = 200
-    margin = (window_size_1stder - 1) // 2
+    margin = (config.WINDOW_SIZE_1STDER - 1) // 2
 
+    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) 
+                        if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
+    
     curve_labels = ["Original Curve", "1st Derivative", "1st Derivative Moving Avg", "Cleaned Curve", 
-                    "Cleaned Curve (Lowest Crossing)"] # , "Moving Avg Curve", "1st Derivative", 
-                    # "1st Derivative Moving Avg", "Cleaned Curve", "Cleaned Curve (Lowest Crossing)"]
+                    "Cleaned Curve (Lowest Crossing)"] 
 
-    # Global Plot Optimization Variables
-    PLOT_DOWNSAMPLE_STEP = 1
-    PLOT_DECIMAL_PRECISION = 4
-
-    if len(sys.argv) > 1:
-        task_id = int(sys.argv[1]) - 1 
-    else:
-        # Fallback for local testing
-        task_id = 0 
-
-    if task_id >= len(exp_paths):
-        print(f"Task ID {task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
         sys.exit(0)
 
-    # Pick ONLY the specific folder for this specific node
-    exp_path = exp_paths[task_id]
-
+    exp_path = exp_paths[args.task_id]
     print(f"Processing Experiment: {exp_path}")
     
-    exp = titan_load_and_preprocessing(exp_path, n_wells=n_wells, start_type="temperature",
-                                        end_time_min=60, n_a_type=n_a_type,
+    exp = titan_load_and_preprocessing(exp_path, n_wells=config.N_WELLS, start_type="temperature",
+                                        end_time_min=60, n_a_type=config.N_A_TYPE,
                                         print_status=False, plt_gain_calib=False, save_gain_calib=False)
     
     print("  -> Generating Pixel & Temp DataFrames...")
     pixel_temp_dfs = extract_pixel_temp_dataframes(exp)
     
     print("  -> Building Pixel vs Temp Interactions (Optimized)...")
-    plot_pixel_temp_interactions(exp, exp_path, ds_step=PLOT_DOWNSAMPLE_STEP, precision=PLOT_DECIMAL_PRECISION)
+    plot_pixel_temp_interactions(exp, exp_path, ds_step=config.PLOT_DOWNSAMPLE_STEP, precision=config.PLOT_DECIMAL_PRECISION)
     
     print("  -> Processing Sigmoid Curves...")
     X_time, Y_well, X_2d_bs_active = reconstruct_data(exp, attr_str="well_2d_bs_active")
@@ -773,7 +697,7 @@ if __name__ == "__main__":
         X_2d_bs_active = X_2d_bs_active + baseline_value
     
     processed_curves, indices_dict = process_experiment_data(
-        X_2d_bs_active, X_time, window_size_ori, window_size_1stder, margin
+        X_2d_bs_active, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin
     )
     
     fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
@@ -781,14 +705,14 @@ if __name__ == "__main__":
     save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
                                     indices_dict, pixel_temp_dfs, baseline_value, 
                                     Y_well, X_time, exp, 
-                                    window_size_ori, window_size_1stder, margin)
+                                    config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin)
     
     print("  -> Building Sigmoid Grids (Optimized)...")
     unique_wells = np.unique(Y_well)
     plot_interactive_sigmoid_grids(
         exp_path, unique_wells, Y_well, X_time, 
         processed_curves, fitting_results, indices_dict, curve_labels,
-        ds_step=PLOT_DOWNSAMPLE_STEP, precision=PLOT_DECIMAL_PRECISION
+        ds_step=config.PLOT_DOWNSAMPLE_STEP, precision=config.PLOT_DECIMAL_PRECISION
     )
     
     print("  ✓ Experiment complete!\n")

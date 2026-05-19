@@ -3,7 +3,8 @@ import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import gc
 import base64
-import pickle
+import argparse
+import joblib 
 import itertools
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +23,9 @@ from sklearn.manifold import TSNE
 import tensorflow as tf
 from cycler import cycler
 from matplotlib.colors import to_hex
+
+# Import centralized config
+import config
 
 # --- CUSTOM MODULES ---
 sys.path.insert(0, '..')
@@ -52,36 +56,6 @@ mpl_colors = [
     (0.20, 0.13, 0.53), (0.87, 0.80, 0.47), (0.27, 0.67, 0.60), (0.65, 0.65, 0.65)
 ]
 plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
-
-# Feature Exclusions and Groups for Correlation Logic
-EXCLUDED_FEATURES = [
-    'TH', 'msc_mahal_dist', 'msc_label_0.001', 'amf_label_Send', 
-    'amf_label_Send_abs', 'amf_label_Send_fit', 'amf_label_Send_fit_abs', 
-    'mean_std_outlier_label_3sigma',
-    "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group", "well_temp_lin2d_mean", "well_2d_temp_npr_mean"
-]
-
-FEATURE_GROUPS = [
-    ['F0', 'log_F0'],
-    ['send_5', 'send_10', 'send_15', 'send_20', 'send_25', 'send_abs_5', 'send_abs_10', 'send_abs_15', 'send_abs_20', 'send_abs_25', 'Send', 'Send_abs', 'Send_fit', 'Send_fit_abs'],
-    ['F_max', 'Fm', 'FFI', 'F_range'],
-    ['Ct', 'ct_idx'],
-    ['Cy0', 'Cs', 'As', 'Sc'],
-    ['first_half_distance', 'A1', 'xs', 'xms'],
-    ['second_half_distance', 'A2', 'xms', 'xe'],
-    ['threshold_distance', 'xs', 'xe'],
-    ['peak_shifting_distance', 'xp1', 'xp2'],
-    ['distance_asymmetry_index', 'first_half_distance', 'second_half_distance'],
-    ['area_asymmetry_index', 'A1', 'A2'],
-    ['peak_asymmetry_index', 'd2y_xp1', 'd2y_xp2'],
-    ['xms', 'y_xms', 'dy_xms'],
-    ['xp1', 'y_xp1', 'dy_xp1', 'd2y_xp1'],
-    ['xp2', 'y_xp2', 'dy_xp2', 'd2y_xp2'],
-    ['xs', 'y_xs'],
-    ['xe', 'y_xe'],
-    ['amplitude', 'y_xs', 'y_xe'],
-    ['y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'F_max', 'Fm', 'FFI', 'F_range']
-]
 
 
 # ====================================================================
@@ -123,7 +97,7 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
     
     if not valid_features:
         print(f"Skipping {title}: None of the requested features exist.")
-        return
+        return None
 
     n_features = len(valid_features)
     
@@ -161,8 +135,16 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
     fig.suptitle(title, fontweight='bold', fontsize=14, y=1.02)
     plt.tight_layout()
     
-    if save_path: plt.savefig(save_path, bbox_inches='tight', dpi=300, facecolor='white')
-    plt.close(fig)
+    if save_path: 
+        plt.savefig(save_path, bbox_inches='tight', dpi=300, facecolor='white')
+        plt.close(fig)
+        return None
+    else:
+        buf = BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor='white')
+        plt.close(fig)
+        buf.seek(0)
+        return buf
 
 def save_html_report(save_path, title, subtitle, img_buffers, flex_layout=False):
     """Wrapper to generate and save standard HTML reports."""
@@ -187,6 +169,7 @@ def save_html_report(save_path, title, subtitle, img_buffers, flex_layout=False)
             <img src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto;">
         </div>
         '''
+        buf.close() # Memory efficiency: free buffer
         
     if flex_layout: html_content += "</div>"
     html_content += "</body></html>"
@@ -200,46 +183,42 @@ def save_html_report(save_path, title, subtitle, img_buffers, flex_layout=False)
 # ====================================================================
 
 if __name__ == "__main__":
-    # exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
-    exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
-    
-    # Process specific experiment or iterate over all
-    # exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
-    exp_paths = sorted([Path(exp_folder, name) for name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])])
+    parser = argparse.ArgumentParser(description="Outlier Detection Pipeline")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
+    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
+    args = parser.parse_args()
 
-    if len(sys.argv) > 1:
-        # PBS_ARRAY_INDEX starts at 1, so we subtract 1 for Python's 0-based indexing
-        task_id = int(sys.argv[1]) - 1 
-    else:
-        # Fallback for local testing
-        task_id = 0 
+    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
 
-    if task_id >= len(exp_paths):
-        print(f"Task ID {task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
         sys.exit(0)
 
     # Pick ONLY the specific folder for this specific node
-    exp_path = exp_paths[task_id]
+    exp_path = exp_paths[args.task_id]
+    save_plot_flag = ("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path))
 
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
     
     # -------------------------------------------------------------
     # 1. LOAD PREPROCESSED CURVES & METADATA
     # -------------------------------------------------------------
-    curve_path = Path(exp_path, "preprocessed_curves_data.pkl")
+    curve_path = Path(exp_path, "preprocessed_curves_data.joblib")
     if not curve_path.exists():
-        print(f"Skipping {exp_path.name} - 'preprocessed_curves_data.pkl' not found.")
-        sys.exit(0)
+        # Fallback for old .pkl files during transition
+        curve_path = Path(exp_path, "preprocessed_curves_data.pkl")
+        if not curve_path.exists():
+            print(f"Skipping {exp_path.name} - 'preprocessed_curves_data' not found.")
+            sys.exit(0)
         
-    with open(curve_path, 'rb') as f:
-        data = pickle.load(f)
+    data = joblib.load(curve_path) # Joblib natively loads pickels too if needed
 
     Y_well = data["well_labels"]
     timestamps = data["timestamps"]
     metadata_df = pd.DataFrame(data["metadata"])
     
-    dataset_name = ["ori_curves"] #, "ori_curves_avg"]
-    dataset = [data["curves"]["ori_curves"]] #, data["curves"]["ori_curves_avg"]]
+    dataset_name = ["ori_curves"]
+    dataset = [data["curves"]["ori_curves"]] 
     
     for k, v in data["sigmoid_curves"].items():
         dataset_name.append(f"{k}_fitted_full")
@@ -260,13 +239,12 @@ if __name__ == "__main__":
     # -------------------------------------------------------------
     # 2. EXTRACT KINETICS & APPEND ALIASES
     # -------------------------------------------------------------
-    kinetics_path = os.path.join(exp_path, "initial_kinetics.pkl")
+    kinetics_path = os.path.join(exp_path, "initial_kinetics.joblib")
     generate_kinetics = True
     
     if os.path.exists(kinetics_path):
         print("  -> Loading cached kinetic features...")
-        with open(kinetics_path, 'rb') as f:
-            kinetic_features = pickle.load(f)
+        kinetic_features = joblib.load(kinetics_path)
             
         if len(kinetic_features[0]) == len(Y_well):
             generate_kinetics = False
@@ -276,8 +254,7 @@ if __name__ == "__main__":
     if generate_kinetics:
         print("  -> Extracting initial kinetic features (CPU Bound)...")
         kinetic_features = [extract_kinetic_features(timestamps, curves) for curves in dataset]
-        with open(kinetics_path, 'wb') as f: 
-            pickle.dump(kinetic_features, f)
+        joblib.dump(kinetic_features, kinetics_path, compress=3)
 
     # Append Metadata and 'Send' Aliases
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
@@ -301,12 +278,10 @@ if __name__ == "__main__":
 
     for name, data, features in zip(dataset_name, dataset, kinetic_features):
         if not name.startswith("avg_"):
-        # if name == 'ori_curves':
             filtered_names.append(name)
             filtered_dataset.append(data)
             filtered_features.append(features)
 
-    # Reassign the filtered lists back to the original variables
     dataset_name = filtered_names
     dataset = filtered_dataset
     kinetic_features = filtered_features
@@ -326,13 +301,10 @@ if __name__ == "__main__":
     for name, features_df in zip(dataset_name, kinetic_features):
         clean_title = name.replace("_", " ").title()
         
-        # MSC Boxplot
         feature_boxplot(
             features_df=features_df, well_labels=Y_well, feature_columns=msc_features, 
             title=f"MSC Features: {clean_title}", save_path=os.path.join(msc_plot_path, f"{name}_msc_features.png")
         )
-        
-        # AMF Boxplot
         feature_boxplot(
             features_df=features_df, well_labels=Y_well, feature_columns=amf_features_all, 
             title=f"AMF Features: {clean_title}", save_path=os.path.join(amf_plot_path, f"{name}_amf_features_boxplot.png")
@@ -351,10 +323,10 @@ if __name__ == "__main__":
         corr = numeric_df.corr()
         corr_matrix = corr.abs() 
         
-        valid_features = [f for f in corr_matrix.columns if f not in EXCLUDED_FEATURES]
+        valid_features = [f for f in corr_matrix.columns if f not in config.EXCLUDED_FEATURES]
         cannot_pair_with = {f: set() for f in valid_features}
         for f in valid_features:
-            for group in FEATURE_GROUPS:
+            for group in config.FEATURE_GROUPS:
                 if f in group: cannot_pair_with[f].update(group)
                     
         best_triplet, max_score = [], -1
@@ -369,7 +341,6 @@ if __name__ == "__main__":
         linear_feature_combinations.append(best_triplet.copy() if best_triplet else [])
         print(f"  -> {clean_title} Best Triplet: {best_triplet} (Avg Inter-Corr: {max_score/3:.3f})")
 
-        # Generate Heatmap Buffer
         fig, ax = plt.subplots(figsize=(24, 20))
         sns.heatmap(corr.mask(corr.abs() < 0.5, 0), cmap="coolwarm", center=0, linewidths=0.5, cbar_kws={"shrink": .75}, ax=ax)
         ax.tick_params(axis='x', rotation=90, labelsize=8); ax.tick_params(axis='y', rotation=0, labelsize=8)
@@ -386,7 +357,6 @@ if __name__ == "__main__":
     # 5. GENERATE 3D FEATURE COMBINATIONS
     # -------------------------------------------------------------
     print("\n=== GENERATING 3D COMBINATION PLOTS ===")
-    colors = pd.factorize(Y_well)[0]
     plot_3d_buffers = []
     
     for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
@@ -444,10 +414,10 @@ if __name__ == "__main__":
     # Greedy Top 5 Selection
     important_feature_combinations = []
     for name, imp_df in zip(dataset_name, importance_dfs):
-        valid_df = imp_df[~imp_df['feature'].isin(EXCLUDED_FEATURES)].copy()
+        valid_df = imp_df[~imp_df['feature'].isin(config.EXCLUDED_FEATURES)].copy()
         cannot_pair_with = {f: set() for f in valid_df['feature']}
         for f in valid_df['feature']:
-            for group in FEATURE_GROUPS:
+            for group in config.FEATURE_GROUPS:
                 if f in group: cannot_pair_with[f].update(group)
                     
         selected_features = []
@@ -459,7 +429,7 @@ if __name__ == "__main__":
         important_feature_combinations.append(selected_features)
         print(f"  -> {name.replace('_', ' ').title()}: {selected_features}")
 
-    importance_dfs_path = os.path.join(exp_path, "feature_importance_dfs.pkl")
+    importance_dfs_path = os.path.join(exp_path, "feature_importance_dfs.joblib")
     save_importance_data = {
         "dataset_name": dataset_name,
         "dataset": dataset,
@@ -468,9 +438,7 @@ if __name__ == "__main__":
         "importance_dfs": importance_dfs,
         "top_combination": important_feature_combinations,
     }
-
-    with open(importance_dfs_path, 'wb') as f:
-        pickle.dump(save_importance_data, f)
+    joblib.dump(save_importance_data, importance_dfs_path, compress=3)
 
     # -------------------------------------------------------------
     # 7. TSNE & 3D FOR TOP 5 FEATURES
@@ -507,12 +475,10 @@ if __name__ == "__main__":
     print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
     ref_curves = dataset[0]
 
-    # --- 8.0: LOAD PREVIOUS PROGRESS IF IT EXISTS ---
-    updated_save_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
+    updated_save_path = os.path.join(exp_path, "curve_for_training_latest.joblib")
     if os.path.exists(updated_save_path):
         print(f"  -> Found existing progress in {updated_save_path}. Validating...")
-        with open(updated_save_path, 'rb') as f:
-            saved_data = pickle.load(f)
+        saved_data = joblib.load(updated_save_path)
             
         if len(saved_data["Y_well"]) == len(Y_well):
             kinetic_features = saved_data["kinetic_features"]
@@ -520,74 +486,54 @@ if __name__ == "__main__":
         else:
             print("  -> [WARNING] Progress cache is stale (length mismatch). Starting from scratch.")
 
-    def save_incremental_progress():
-        save_data = {
-            "timestamps": timestamps,
-            "Y_well": Y_well,
-            "dataset_name": dataset_name,
-            "dataset": dataset,
-            "kinetic_features": kinetic_features,
-            "linear_feature_combinations": linear_feature_combinations,
-            "important_feature_combinations": important_feature_combinations
-        }
-        with open(updated_save_path, 'wb') as f:
-            pickle.dump(save_data, f)
-        print(f"    [SAVED] Progress incrementally written to disk.")
-        
-    # -------------------------------------------------------------
-    # MSC Configs
-    # -------------------------------------------------------------
+    # Memory Optimization: Buffer new dataframes instead of concatting in loops
+    features_to_concat = [[] for _ in range(len(dataset_name))]
+
+    def flush_and_save_progress():
+        """Applies buffered concatenations and writes to disk efficiently."""
+        merged_any = False
+        for i in range(len(dataset_name)):
+            if features_to_concat[i]:
+                kinetic_features[i] = pd.concat([kinetic_features[i]] + features_to_concat[i], axis=1)
+                features_to_concat[i] = [] # Reset buffer
+                merged_any = True
+                
+        if merged_any or not os.path.exists(updated_save_path):
+            save_data = {
+                "timestamps": timestamps,
+                "Y_well": Y_well,
+                "dataset_name": dataset_name,
+                "dataset": dataset,
+                "kinetic_features": kinetic_features,
+                "linear_feature_combinations": linear_feature_combinations,
+                "important_feature_combinations": important_feature_combinations
+            }
+            joblib.dump(save_data, updated_save_path, compress=3)
+            print(f"    [SAVED] Progress incrementally written to disk.")
+
+    # Configs
     msc_configs = [
-        # ("msc_linear_0.05", 0.05, linear_feature_combinations),
-        # ("msc_linear_0.01", 0.01, linear_feature_combinations),
         ("msc_linear_0.001", 0.001, linear_feature_combinations),
-        # ("msc_baseline_0.05", 0.05, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
-        # ("msc_baseline_0.01", 0.01, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
         ("msc_baseline_0.001", 0.001, [["Ct", "Cy0", "log_F0"]] * len(dataset_name))
     ]
     
-    # -------------------------------------------------------------
-    # AMF Configs
-    # -------------------------------------------------------------
     amf_configs = [
         ("amf_important", important_feature_combinations),
         ("amf_send_5", [["Fm", "Fb", "Sc", "Cs", "send_5"]] * len(dataset_name)),
-        # ("amf_send_10", [["Fm", "Fb", "Sc", "Cs", "send_10"]] * len(dataset_name)),
-        # ("amf_send_15", [["Fm", "Fb", "Sc", "Cs", "send_15"]] * len(dataset_name)),
-        # ("amf_send_20", [["Fm", "Fb", "Sc", "Cs", "send_20"]] * len(dataset_name)),
-        # ("amf_send_25", [["Fm", "Fb", "Sc", "Cs", "send_25"]] * len(dataset_name)),
-        # ("amf_send_abs_5", [["Fm", "Fb", "Sc", "Cs", "send_abs_5"]] * len(dataset_name)),
-        # ("amf_send_abs_10", [["Fm", "Fb", "Sc", "Cs", "send_abs_10"]] * len(dataset_name)),
-        # ("amf_send_abs_15", [["Fm", "Fb", "Sc", "Cs", "send_abs_15"]] * len(dataset_name)),
-        # ("amf_send_abs_20", [["Fm", "Fb", "Sc", "Cs", "send_abs_20"]] * len(dataset_name)),
-        # ("amf_send_abs_25", [["Fm", "Fb", "Sc", "Cs", "send_abs_25"]] * len(dataset_name))
     ]
     
-    # -------------------------------------------------------------
-    # Mean Std Configs
-    # -------------------------------------------------------------
     mean_std_configs = [
         # ("env_1std", 1), 
         # ("env_2std", 2), 
         # ("env_3std", 3)
     ]
     
-    # -------------------------------------------------------------
-    # KNN Fingerprint Configs
-    # -------------------------------------------------------------
     knn_filter_config = [0.85, 0.90, 0.95]
-
-    # -------------------------------------------------------------
-    # Autoencoder Config
-    # -------------------------------------------------------------
     ae_configs = ["elbow", 90, 95]        
-    downsample_factor=1
+    downsample_factor = config.AE_DOWNSAMPLE_FACTOR
 
-    # Only Original Curves for Auto Encoder
-    ae_filtered_names = []
-    ae_filtered_dataset = []
-
-    for name, data, features in zip(dataset_name, dataset, kinetic_features):
+    ae_filtered_names, ae_filtered_dataset = [], []
+    for name, data in zip(dataset_name, dataset):
         if name == 'ori_curves':
             ae_filtered_names.append(name)
             ae_filtered_dataset.append(data)
@@ -603,11 +549,11 @@ if __name__ == "__main__":
     expected_cnn_pw = [f"cnn_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
     missing_cnn_pw = [pct for pct, label in zip(ae_configs, expected_cnn_pw) if label not in kinetic_features[0].columns]
     if missing_cnn_pw:
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
         for i, name in enumerate(ae_dataset_name): 
             master_idx = list(dataset_name).index(name)
-            kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+            features_to_concat[master_idx].append(extracted_dfs[i])
+        flush_and_save_progress()
     else:
         print("  -> [SKIP] CNN AutoEncoder (Per-Well): Already calculated.")
 
@@ -615,11 +561,11 @@ if __name__ == "__main__":
     expected_cnn_glb = [f"cnn_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
     missing_cnn_glb = [pct for pct, label in zip(ae_configs, expected_cnn_glb) if label not in kinetic_features[0].columns]
     if missing_cnn_glb:
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_glb, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
         for i, name in enumerate(ae_dataset_name): 
             master_idx = list(dataset_name).index(name)
-            kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+            features_to_concat[master_idx].append(extracted_dfs[i])
+        flush_and_save_progress()
     else:
         print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
@@ -627,11 +573,11 @@ if __name__ == "__main__":
     expected_lstm_pw = [f"lstm_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
     missing_lstm_pw = [pct for pct, label in zip(ae_configs, expected_lstm_pw) if label not in kinetic_features[0].columns]
     if missing_lstm_pw:
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=True)
+        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
         for i, name in enumerate(ae_dataset_name): 
             master_idx = list(dataset_name).index(name)
-            kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+            features_to_concat[master_idx].append(extracted_dfs[i])
+        flush_and_save_progress()
     else:
         print("  -> [SKIP] LSTM AutoEncoder (Per-Well): Already calculated.")
     
@@ -639,26 +585,22 @@ if __name__ == "__main__":
     expected_lstm_glb = [f"lstm_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
     missing_lstm_glb = [pct for pct, label in zip(ae_configs, expected_lstm_glb) if label not in kinetic_features[0].columns]
     if missing_lstm_glb:
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_glb, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=False)
+        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
         for i, name in enumerate(ae_dataset_name): 
             master_idx = list(dataset_name).index(name)
-            kinetic_features[master_idx] = pd.concat([kinetic_features[master_idx], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+            features_to_concat[master_idx].append(extracted_dfs[i])
+        flush_and_save_progress()
     else:
         print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
-    
-    # # Run AutoEncoder Per Well
-    # extracted_dfs = run_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", ae_configs, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)), downsample_factor=downsample_factor, per_well=per_well)
-    # for i in range(len(ae_dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
 
     # --- KNN Filter ---
     expected_knn = [f"knn_top_{pct}" for pct in knn_filter_config]
     missing_knn = [pct for pct, label in zip(knn_filter_config, expected_knn) if label not in kinetic_features[0].columns]
     if missing_knn:
-        extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), missing_knn, save_plot=("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path)))
+        extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
         for i in range(len(dataset_name)): 
-            kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+            features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
     else:
         print("  -> [SKIP] KNN Filter: Already calculated.")
 
@@ -674,8 +616,8 @@ if __name__ == "__main__":
         for exp_label, p_val, feats in msc_configs_to_run:
             extracted_dfs = run_msc_pipeline(exp_label, p_val, ref_curves, os.path.join(exp_path, "msc_outlier"), dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
             for i in range(len(dataset_name)): 
-                kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+                features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
 
     # --- AMF Filter ---
     amf_configs_to_run = []
@@ -689,8 +631,8 @@ if __name__ == "__main__":
         for exp_label, feats in amf_configs_to_run:
             extracted_dfs = run_amf_pipeline(exp_label, feats, ref_curves, os.path.join(exp_path, "amf_outlier"), dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
             for i in range(len(dataset_name)): 
-                kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
+                features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
 
     # --- Mean/Std Filter ---
     mean_std_configs_to_run = []
@@ -704,17 +646,15 @@ if __name__ == "__main__":
         for exp_label, num_std in mean_std_configs_to_run:
             extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
             for i in range(len(dataset_name)): 
-                kinetic_features[i] = pd.concat([kinetic_features[i], extracted_dfs[i]], axis=1)
-        save_incremental_progress()
-
-    # # Run Mean/Std
-    # for exp_label, num_std in mean_std_configs:
-    #     extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
-    #     for i in range(len(dataset_name)): all_new_feature_dfs[i].append(extracted_dfs[i])
+                features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
 
     # -------------------------------------------------------------
     # 9. FINAL MERGE & SAVE
     # -------------------------------------------------------------
+    # Final flush just in case any configuration bypassed incremental saves
+    flush_and_save_progress()
+    
     print(f"\nExperiment {exp_path.name} finished gracefully!")
     
     del data, Y_well, timestamps, metadata_df, dataset, dataset_name
