@@ -60,9 +60,9 @@ EXCLUDED_FEATURES = [
 FEATURE_GROUPS = [
     ['F0', 'log_F0'],
     ['send_5', 'send_10', 'send_15', 'send_20', 'send_25', 'send_abs_5', 'send_abs_10', 'send_abs_15', 'send_abs_20', 'send_abs_25', 'Send', 'Send_abs', 'Send_fit', 'Send_fit_abs'],
-    ['F_max', 'Fm', 'FFI', 'F_range'],
-    ['Ct', 'ct_idx'],
-    ['Cy0', 'Cs', 'As', 'Sc'],
+    ['F_max_ori', 'F_max', 'Fm', 'FFI', 'F_range'],
+    ['Ct_ori', 'Ct', 'ct_idx_ori', 'ct_idx'],
+    ['Cy0_ori', 'Cy0', 'Cs', 'As', 'Sc'],
     ['first_half_distance', 'A1', 'xs', 'xms'],
     ['second_half_distance', 'A2', 'xms', 'xe'],
     ['threshold_distance', 'xs', 'xe'],
