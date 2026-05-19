@@ -7,7 +7,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=INFO, 1=WARN, 2=ERROR, 3=FATAL
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -195,7 +195,19 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             continue
 
         calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
-        sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=calculated_test_size, random_state=0)
+
+        if n_splits == 1:
+            splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+        elif n_splits > 1:
+            min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
+            actual_splits = min(n_splits, min_class_count)
+            
+            if actual_splits < n_splits:
+                print(f"     [Warning] Reduced n_splits from {n_splits} to {actual_splits} due to class imbalance.")
+                
+            splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
+        else:
+            raise ValueError("n_splits must be 1 or greater.")
 
         # Initialize lists
         y_trues_ = []
@@ -208,7 +220,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
         y_preds_FFI_, y_probs_FFI_, classes_FFI_ = [], [], []
 
-        splits = sss.split(X_AC, y_true)
+        splits = splitter.split(X_AC, y_true)
         
         for train_index, test_index in splits:
             X_AC_train, X_AC_test = X_AC[train_index], X_AC[test_index]
