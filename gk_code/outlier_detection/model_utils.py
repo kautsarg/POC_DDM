@@ -4,6 +4,7 @@ import os
 # ====================================================================
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=INFO, 1=WARN, 2=ERROR, 3=FATAL
 
+import time
 import random
 import numpy as np
 import matplotlib.pyplot as plt
@@ -230,6 +231,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
             # --- Convolutional Neural Network (CNN) ---
             if "cnn" in models:
+                start_time = time.perf_counter()
                 clf_AC = KerasModelWrapper(model=create_cnn_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
@@ -248,11 +250,17 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_.append(clf_AC.classes_)
                 
                 cnn_acc = accuracy_score(y_test, pred_AC) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA)   | {cnn_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA)   | {cnn_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
                 
             # --- Long Short-Term Memory (LSTM) ---
             if "lstm" in models:
+                start_time = time.perf_counter()
                 clf_lstm = KerasModelWrapper(model=create_lstm_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
@@ -271,11 +279,17 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_lstm_.append(clf_lstm.classes_)
                 
                 lstm_acc = accuracy_score(y_test, pred_lstm) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LSTM (ACA)  | {lstm_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LSTM (ACA)  | {lstm_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
                 
             # --- Gated Recurrent Unit (GRU) ---
             if "gru" in models:
+                start_time = time.perf_counter()
                 clf_gru = KerasModelWrapper(model=create_gru_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
@@ -294,11 +308,17 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_gru_.append(clf_gru.classes_)
                 
                 gru_acc = accuracy_score(y_test, pred_gru) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | GRU (ACA)   | {gru_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | GRU (ACA)   | {gru_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
 
             # --- Simple Recurrent Neural Network (RNN) ---
             if "rnn" in models:
+                start_time = time.perf_counter()
                 clf_rnn = KerasModelWrapper(model=create_rnn_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
@@ -317,11 +337,17 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_rnn_.append(clf_rnn.classes_)
                 
                 rnn_acc = accuracy_score(y_test, pred_rnn) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RNN (ACA)   | {rnn_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RNN (ACA)   | {rnn_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
 
             # --- Transformer ---
             if "transformer" in models:
+                start_time = time.perf_counter()
                 clf_trans = KerasModelWrapper(model=create_transformer_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
@@ -340,11 +366,17 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_trans_.append(clf_trans.classes_)
                 
                 trans_acc = accuracy_score(y_test, pred_trans) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | Trans (ACA) | {trans_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | Trans (ACA) | {trans_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
 
             # --- Random Forest (AC) ---
             if "rf" in models:
+                start_time = time.perf_counter()
                 clf_AC_rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
                 clf_AC_rf.fit(X_AC_train, y_train)
                 
@@ -356,10 +388,16 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_rf_.append(clf_AC_rf.classes_)
                 
                 rf_acc = accuracy_score(y_test, pred_rf) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RF (ACA)    | {rf_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RF (ACA)    | {rf_acc:5.2f}%   | Duration: {formatted_time}")
 
             # --- K-Nearest Neighbors (AC) ---
             if "knn" in models:
+                start_time = time.perf_counter()
                 clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
                 clf_AC_kNN.fit(X_AC_train, y_train)
                 
@@ -371,10 +409,16 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_kNN_.append(clf_AC_kNN.classes_)
                 
                 knn_acc = accuracy_score(y_test, pred_kNN) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA)   | {knn_acc:5.2f}%")
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA)   | {knn_acc:5.2f}%   | Duration: {formatted_time}")
 
             # --- Logistic Regression (FFI) ---
             if "ffi" in models:
+                start_time = time.perf_counter()
                 clf_FFI = LogisticRegression(max_iter=1000)
                 clf_FFI.fit(X_FFI_train, y_train)
                 
@@ -386,6 +430,11 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_FFI_.append(clf_FFI.classes_)
                 
                 lr_acc = accuracy_score(y_test, pred_FFI) * 100
+
+                end_time = time.perf_counter()
+                duration = end_time - start_time
+                formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
+
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)    | {lr_acc:5.2f}%")
             
         # Dynamically build the results entry based on trained models

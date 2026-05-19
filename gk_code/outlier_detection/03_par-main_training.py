@@ -48,7 +48,7 @@ if __name__ == "__main__":
     filtered_names, filtered_dataset, filtered_features = [], [], []
 
     for name, data, features in zip(dataset_name, dataset, kinetic_features):
-        if not name.startswith("avg_"):
+        if not name.startswith("avg_") and not name.startswith("original_fitted_stretched"):
             filtered_names.append(name)
             filtered_dataset.append(data)
             filtered_features.append(features)
@@ -62,21 +62,31 @@ if __name__ == "__main__":
 
     outlier_filters = [
         None, 
-        'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.001',
-        'amf_label_amf_important', 'amf_label_amf_send_5',
-        'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95',
-        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+        # 'msc_label_msc_linear_0.001'
+        # 'msc_label_msc_baseline_0.001',
+
+        # 'amf_label_amf_important'
+        # 'amf_label_amf_send_5',
+
+        # 'knn_top_0.95',
+        # 'knn_top_0.9',
+        # # 'knn_top_0.85', 
+        
+        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        
+        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
+        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
+
+        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+
+        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
     ]
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
@@ -88,6 +98,7 @@ if __name__ == "__main__":
 
     total_datasets = len(dataset_name)
     total_samples = len(y_full)
+    trained_curve = dataset[0].copy()
 
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
         clean_title = name.replace("_", " ").title()
@@ -105,7 +116,7 @@ if __name__ == "__main__":
         # cached_native = all_ml_results[clean_title].get("Native", {})
         
         # res_native = evaluate_outlier_filters(
-        #     dataset[0], features_df, y_full, outlier_filters, clean_title, 
+        #     curves_2d, features_df, y_full, outlier_filters, clean_title, 
         #     mode_name="Native", cached_results=cached_native, models=["cnn"]
         # )
         # all_ml_results[clean_title]["Native"] = res_ref
@@ -127,8 +138,8 @@ if __name__ == "__main__":
         cached_ref = all_ml_results[clean_title].get("Reference", {})
         
         res_ref = evaluate_outlier_filters(
-            dataset[0], features_df, y_full, outlier_filters, clean_title, 
-            mode_name="Reference", cached_results=cached_ref, models=["cnn"]
+            trained_curve, features_df, y_full, outlier_filters, clean_title, 
+            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf"]
         )
         all_ml_results[clean_title]["Reference"] = res_ref
         
