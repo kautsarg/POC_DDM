@@ -49,7 +49,6 @@ from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeli
 from model_utils import set_global_determinism
 set_global_determinism(0)
 
-# Matplotlib Color Cycler Configuration
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
     (0.00, 0.60, 0.50), (0.95, 0.90, 0.25), (0.80, 0.40, 0.70), 
@@ -210,7 +209,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"  -> [WARNING] Failed to load state ({e}). Starting fresh.")
 
-    # Base data extraction (Runs only if not already in state)
     if "dataset" not in pipeline_state:
         curve_path = Path(exp_path, "preprocessed_curves_data.joblib")
         if not curve_path.exists():
@@ -238,7 +236,6 @@ if __name__ == "__main__":
         pipeline_state["timestamps"] = timestamps
         pipeline_state["metadata_df"] = metadata_df
         
-        # Free memory of loaded raw data early
         del data 
     else:
         dataset_name = pipeline_state["dataset_name"]
@@ -266,7 +263,6 @@ if __name__ == "__main__":
         print("  -> Extracting initial kinetic features (CPU Bound)...")
         kinetic_features = [extract_kinetic_features(timestamps, curves) for curves in dataset]
 
-        # Append Metadata and 'Send' Aliases
         for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
             features_df = features_df.reset_index(drop=True)
             meta_clean = metadata_df.reset_index(drop=True)
@@ -278,7 +274,6 @@ if __name__ == "__main__":
             df_new_features = pd.DataFrame(add_features).reset_index(drop=True)
             kinetic_features[idx] = pd.concat([features_df, meta_clean, df_new_features], axis=1)
 
-        # Filter out "avg_" datasets
         filtered_names, filtered_dataset, filtered_features = [], [], []
         for name, data, features in zip(dataset_name, dataset, kinetic_features):
             if not name.startswith("avg_"):
@@ -290,7 +285,6 @@ if __name__ == "__main__":
         dataset = np.array(filtered_dataset)
         kinetic_features = filtered_features
 
-        # Update and save unified state
         pipeline_state["dataset_name"] = dataset_name
         pipeline_state["dataset"] = dataset
         pipeline_state["kinetic_features"] = kinetic_features
@@ -298,7 +292,32 @@ if __name__ == "__main__":
 
 
     # -------------------------------------------------------------
-    # 3. CORRELATION & FEATURE IMPORTANCES
+    # 3. GENERATE BOXPLOTS (MSC & AMF Features)
+    # -------------------------------------------------------------
+    print("\n=== GENERATING FEATURE BOXPLOTS ===")
+    msc_features = ["Ct", "Cy0", "log_F0"]
+    amf_features_all = ["Fm", "Fb", "Sc", "Cs", "Send", "Send_abs", "Send_fit", "Send_fit_abs"]
+    
+    msc_plot_path = os.path.join(exp_path, "msc_outlier")
+    amf_plot_path = os.path.join(exp_path, "amf_outlier")
+    os.makedirs(msc_plot_path, exist_ok=True)
+    os.makedirs(amf_plot_path, exist_ok=True)
+    
+    for name, features_df in zip(dataset_name, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        
+        feature_boxplot(
+            features_df=features_df, well_labels=Y_well, feature_columns=msc_features, 
+            title=f"MSC Features: {clean_title}", save_path=os.path.join(msc_plot_path, f"{name}_msc_features.png")
+        )
+        feature_boxplot(
+            features_df=features_df, well_labels=Y_well, feature_columns=amf_features_all, 
+            title=f"AMF Features: {clean_title}", save_path=os.path.join(amf_plot_path, f"{name}_amf_features_boxplot.png")
+        )
+
+
+    # -------------------------------------------------------------
+    # 4. CORRELATION & FEATURE IMPORTANCES
     # -------------------------------------------------------------
     if "linear_feature_combinations" in pipeline_state and "important_feature_combinations" in pipeline_state:
         print("  -> Using cached feature combinations and importance data from unified state.")
@@ -344,6 +363,31 @@ if __name__ == "__main__":
             plt.close(fig); gc.collect()
 
         save_html_report(os.path.join(reports_dir, "all_correlation_heatmaps.html"), "Experiment Correlation Heatmaps", None, heatmap_buffers)
+
+        print("\n=== GENERATING 3D COMBINATION PLOTS ===")
+        plot_3d_buffers = []
+        
+        for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
+            if not dataset_combs: continue
+                
+            clean_title = name.replace("_", " ").title()
+            x_feat, y_feat, z_feat = dataset_combs[:3]
+            
+            corr_matrix = kf[[x_feat, y_feat, z_feat]].corr(method='pearson').abs()
+            avg_corr = (corr_matrix.loc[x_feat, y_feat] + corr_matrix.loc[x_feat, z_feat] + corr_matrix.loc[y_feat, z_feat]) / 3
+            X_vals = kf[[x_feat, y_feat, z_feat]].replace([np.inf, -np.inf], np.nan).fillna(-9999).values
+            
+            fig = plt.figure(figsize=(8, 6))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap='tab10', s=30, alpha=0.8, edgecolor='k')
+            ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\nAvg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
+            ax.set_xlabel(x_feat, fontweight='bold', labelpad=10); ax.set_ylabel(y_feat, fontweight='bold', labelpad=10); ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
+            
+            buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+            buf.seek(0); plot_3d_buffers.append(buf)
+            plt.close(fig); gc.collect()
+
+        save_html_report(os.path.join(reports_dir, "best_feature_combinations_3D.html"), "Best 3D Feature Combinations", "Highest inter-correlated valid feature triplet for each experiment.", plot_3d_buffers, flex_layout=True)
 
         print("\n=== EXTRACTING TOP 5 INDEPENDENT FEATURES (RANDOM FOREST) ===")
         importance_dfs, rf_buffers = [], []
@@ -397,7 +441,37 @@ if __name__ == "__main__":
 
 
     # -------------------------------------------------------------
-    # 4. OUTLIER DETECTION PIPELINES
+    # 5. TSNE & 3D FOR TOP 5 FEATURES
+    # -------------------------------------------------------------
+    print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
+    tsne_buffers = []
+    for name, top_5_features, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        top_3_features = top_5_features[:3]
+        df_top5 = kf[top_5_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+        
+        tsne = TSNE(n_components=2, random_state=0)
+        X_tsne = tsne.fit_transform(df_top5.values)
+        
+        fig = plt.figure(figsize=(22, 9))
+        ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+        ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+        ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3_features)})", fontsize=14, fontweight='bold', pad=15)
+        
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+        ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5_features)})", fontsize=14, fontweight='bold', pad=15)
+        ax2.grid(True, linestyle='--', alpha=0.6)
+        
+        buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+        buf.seek(0); tsne_buffers.append(buf)
+        plt.close(fig); gc.collect()
+
+    save_html_report(os.path.join(reports_dir, "independent_features_tsne_and_3d.html"), "Top 5 Independent Features Dimensionality Reduction", "Visualizing the highest importance features after removing mathematical redundancies.", tsne_buffers)
+
+
+    # -------------------------------------------------------------
+    # 6. OUTLIER DETECTION PIPELINES
     # -------------------------------------------------------------
     print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
     ref_curves = dataset[0]
@@ -445,7 +519,7 @@ if __name__ == "__main__":
     ae_dataset = ae_filtered_dataset
     
     # -------------------------------------------------------------
-    # 4.1: OUTLIER DETECTION METHODS
+    # 6.1: OUTLIER DETECTION METHODS
     # -------------------------------------------------------------
     
     # --- CNN AutoEncoder Per Well ---
@@ -553,7 +627,7 @@ if __name__ == "__main__":
         flush_and_save_progress()
 
     # -------------------------------------------------------------
-    # 5. FINAL FLUSH
+    # 7. FINAL FLUSH
     # -------------------------------------------------------------
     flush_and_save_progress()
     
