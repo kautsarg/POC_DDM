@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 
 import tensorflow as tf
@@ -55,10 +56,11 @@ def set_global_determinism(seed=0):
 # ====================================================================
 # NEURAL NETWORK SETUP
 # ====================================================================
-class myWrapper(KerasClassifier):
+class KerasModelWrapper(KerasClassifier):
     pass
 
-def create_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3): 
+# 1. 1D CNN
+def create_cnn_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3): 
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
     x = tf.keras.layers.Conv1D(16, kernel_size_1, activation='relu')(inputs)
     x = tf.keras.layers.Conv1D(8, kernel_size_2, activation='relu')(x)
@@ -71,11 +73,79 @@ def create_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
                   metrics=['accuracy'])
     return model
 
+# 2. LSTM (Long Short-Term Memory)
+def create_lstm_model(input_size, output_size):
+    inputs = tf.keras.layers.Input(shape=(input_size, 1))
+    x = tf.keras.layers.LSTM(32, return_sequences=True)(inputs)
+    x = tf.keras.layers.LSTM(16)(x)
+    x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
+    
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    model.compile(optimizer='adam', 
+                  loss='sparse_categorical_crossentropy', 
+                  metrics=['accuracy'])
+    return model
+
+# 3. GRU (Gated Recurrent Unit)
+def create_gru_model(input_size, output_size):
+    inputs = tf.keras.layers.Input(shape=(input_size, 1))
+    x = tf.keras.layers.GRU(32, return_sequences=True)(inputs)
+    x = tf.keras.layers.GRU(16)(x)
+    x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
+    
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    model.compile(optimizer='adam', 
+                  loss='sparse_categorical_crossentropy', 
+                  metrics=['accuracy'])
+    return model
+
+# 4. Simple RNN
+def create_rnn_model(input_size, output_size):
+    inputs = tf.keras.layers.Input(shape=(input_size, 1))
+    x = tf.keras.layers.SimpleRNN(32, return_sequences=True)(inputs)
+    x = tf.keras.layers.SimpleRNN(16)(x)
+    x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
+    
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    model.compile(optimizer='adam', 
+                  loss='sparse_categorical_crossentropy', 
+                  metrics=['accuracy'])
+    return model
+
+# 5. Transformer (1D Time Series Encoder)
+def create_transformer_model(input_size, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    inputs = tf.keras.layers.Input(shape=(input_size, 1))
+    x = inputs
+    
+    for _ in range(num_blocks):
+        # Multi-Head Attention Block
+        attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
+        attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn_output)
+
+        # Feed Forward Block
+        ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(x)
+        ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
+        ffn_output = tf.keras.layers.Dense(inputs.shape[-1])(ffn_output)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn_output)
+
+    # Global average pooling over the sequence dimension
+    x = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
+    x = tf.keras.layers.Dense(16, activation="relu")(x)
+    x = tf.keras.layers.Dropout(dropout)(x)
+    outputs = tf.keras.layers.Dense(output_size, activation="softmax")(x)
+
+    model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
+    model.compile(optimizer='adam', 
+                  loss='sparse_categorical_crossentropy', 
+                  metrics=['accuracy'])
+    return model
+
 
 # ====================================================================
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
-def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None, models=["cnn", "knn", "ffi"]):
+def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf", "knn", "ffi"], n_splits=1):
     X_FFI_full = X_curves[:, [-1]]
     
     results_dict = cached_results.copy() if cached_results is not None else {}
@@ -125,11 +195,16 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             continue
 
         calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
-        sss = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+        sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=calculated_test_size, random_state=0)
 
         # Initialize lists
         y_trues_ = []
         y_preds_AC_, y_probs_AC_, classes_AC_ = [], [], []
+        y_preds_AC_lstm_, y_probs_AC_lstm_, classes_AC_lstm_ = [], [], []
+        y_preds_AC_gru_, y_probs_AC_gru_, classes_AC_gru_ = [], [], []
+        y_preds_AC_rnn_, y_probs_AC_rnn_, classes_AC_rnn_ = [], [], []
+        y_preds_AC_trans_, y_probs_AC_trans_, classes_AC_trans_ = [], [], []
+        y_preds_AC_rf_, y_probs_AC_rf_, classes_AC_rf_ = [], [], []
         y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
         y_preds_FFI_, y_probs_FFI_, classes_FFI_ = [], [], []
 
@@ -141,9 +216,9 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             y_train, y_test = y_true[train_index], y_true[test_index]
             y_trues_.append(y_test)
 
-            # --- Neural Network (AC) ---
+            # --- Convolutional Neural Network (CNN) ---
             if "cnn" in models:
-                clf_AC = myWrapper(model=create_model,
+                clf_AC = KerasModelWrapper(model=create_cnn_model,
                                    model__input_size=X_AC.shape[1],
                                    model__output_size=len(np.unique(y_encoded)), 
                                    epochs=1000, 
@@ -161,8 +236,115 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_.append(clf_AC.classes_)
                 
                 cnn_acc = accuracy_score(y_test, pred_AC) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA) | {cnn_acc:5.2f}%")
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA)   | {cnn_acc:5.2f}%")
                 tf.keras.backend.clear_session()
+                
+            # --- Long Short-Term Memory (LSTM) ---
+            if "lstm" in models:
+                clf_lstm = KerasModelWrapper(model=create_lstm_model,
+                                   model__input_size=X_AC.shape[1],
+                                   model__output_size=len(np.unique(y_encoded)), 
+                                   epochs=500,
+                                   batch_size=512, 
+                                   shuffle=True, 
+                                   verbose=False,
+                                   random_state=0)
+                clf_lstm.fit(X_AC_train, y_train)
+                
+                pred_lstm = clf_lstm.predict(X_AC_test)
+                prob_lstm = clf_lstm.predict_proba(X_AC_test)
+                
+                y_preds_AC_lstm_.append(pred_lstm)
+                y_probs_AC_lstm_.append(prob_lstm)
+                classes_AC_lstm_.append(clf_lstm.classes_)
+                
+                lstm_acc = accuracy_score(y_test, pred_lstm) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LSTM (ACA)  | {lstm_acc:5.2f}%")
+                tf.keras.backend.clear_session()
+                
+            # --- Gated Recurrent Unit (GRU) ---
+            if "gru" in models:
+                clf_gru = KerasModelWrapper(model=create_gru_model,
+                                   model__input_size=X_AC.shape[1],
+                                   model__output_size=len(np.unique(y_encoded)), 
+                                   epochs=500, 
+                                   batch_size=512, 
+                                   shuffle=True, 
+                                   verbose=False,
+                                   random_state=0)
+                clf_gru.fit(X_AC_train, y_train)
+                
+                pred_gru = clf_gru.predict(X_AC_test)
+                prob_gru = clf_gru.predict_proba(X_AC_test)
+                
+                y_preds_AC_gru_.append(pred_gru)
+                y_probs_AC_gru_.append(prob_gru)
+                classes_AC_gru_.append(clf_gru.classes_)
+                
+                gru_acc = accuracy_score(y_test, pred_gru) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | GRU (ACA)   | {gru_acc:5.2f}%")
+                tf.keras.backend.clear_session()
+
+            # --- Simple Recurrent Neural Network (RNN) ---
+            if "rnn" in models:
+                clf_rnn = KerasModelWrapper(model=create_rnn_model,
+                                   model__input_size=X_AC.shape[1],
+                                   model__output_size=len(np.unique(y_encoded)), 
+                                   epochs=500, 
+                                   batch_size=512, 
+                                   shuffle=True, 
+                                   verbose=False,
+                                   random_state=0)
+                clf_rnn.fit(X_AC_train, y_train)
+                
+                pred_rnn = clf_rnn.predict(X_AC_test)
+                prob_rnn = clf_rnn.predict_proba(X_AC_test)
+                
+                y_preds_AC_rnn_.append(pred_rnn)
+                y_probs_AC_rnn_.append(prob_rnn)
+                classes_AC_rnn_.append(clf_rnn.classes_)
+                
+                rnn_acc = accuracy_score(y_test, pred_rnn) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RNN (ACA)   | {rnn_acc:5.2f}%")
+                tf.keras.backend.clear_session()
+
+            # --- Transformer ---
+            if "transformer" in models:
+                clf_trans = KerasModelWrapper(model=create_transformer_model,
+                                   model__input_size=X_AC.shape[1],
+                                   model__output_size=len(np.unique(y_encoded)), 
+                                   epochs=500, 
+                                   batch_size=512, 
+                                   shuffle=True, 
+                                   verbose=False,
+                                   random_state=0)
+                clf_trans.fit(X_AC_train, y_train)
+                
+                pred_trans = clf_trans.predict(X_AC_test)
+                prob_trans = clf_trans.predict_proba(X_AC_test)
+                
+                y_preds_AC_trans_.append(pred_trans)
+                y_probs_AC_trans_.append(prob_trans)
+                classes_AC_trans_.append(clf_trans.classes_)
+                
+                trans_acc = accuracy_score(y_test, pred_trans) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | Trans (ACA) | {trans_acc:5.2f}%")
+                tf.keras.backend.clear_session()
+
+            # --- Random Forest (AC) ---
+            if "rf" in models:
+                clf_AC_rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
+                clf_AC_rf.fit(X_AC_train, y_train)
+                
+                pred_rf = clf_AC_rf.predict(X_AC_test)
+                prob_rf = clf_AC_rf.predict_proba(X_AC_test) 
+                
+                y_preds_AC_rf_.append(pred_rf)
+                y_probs_AC_rf_.append(prob_rf)
+                classes_AC_rf_.append(clf_AC_rf.classes_)
+                
+                rf_acc = accuracy_score(y_test, pred_rf) * 100
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RF (ACA)    | {rf_acc:5.2f}%")
 
             # --- K-Nearest Neighbors (AC) ---
             if "knn" in models:
@@ -177,7 +359,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_AC_kNN_.append(clf_AC_kNN.classes_)
                 
                 knn_acc = accuracy_score(y_test, pred_kNN) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA) | {knn_acc:5.2f}%")
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA)   | {knn_acc:5.2f}%")
 
             # --- Logistic Regression (FFI) ---
             if "ffi" in models:
@@ -192,7 +374,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 classes_FFI_.append(clf_FFI.classes_)
                 
                 lr_acc = accuracy_score(y_test, pred_FFI) * 100
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)  | {lr_acc:5.2f}%")
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)    | {lr_acc:5.2f}%")
             
         # Dynamically build the results entry based on trained models
         res_entry = {
@@ -200,23 +382,21 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
             "mask_count": np.sum(mask) 
         }
         if "cnn" in models:
-            res_entry.update({
-                "y_preds_AC_": y_preds_AC_,
-                "y_probs_AC_": y_probs_AC_,
-                "classes_AC_": classes_AC_,
-            })
+            res_entry.update({"y_preds_AC_": y_preds_AC_, "y_probs_AC_": y_probs_AC_, "classes_AC_": classes_AC_})
+        if "lstm" in models:
+            res_entry.update({"y_preds_AC_lstm_": y_preds_AC_lstm_, "y_probs_AC_lstm_": y_probs_AC_lstm_, "classes_AC_lstm_": classes_AC_lstm_})
+        if "gru" in models:
+            res_entry.update({"y_preds_AC_gru_": y_preds_AC_gru_, "y_probs_AC_gru_": y_probs_AC_gru_, "classes_AC_gru_": classes_AC_gru_})
+        if "rnn" in models:
+            res_entry.update({"y_preds_AC_rnn_": y_preds_AC_rnn_, "y_probs_AC_rnn_": y_probs_AC_rnn_, "classes_AC_rnn_": classes_AC_rnn_})
+        if "transformer" in models:
+            res_entry.update({"y_preds_AC_trans_": y_preds_AC_trans_, "y_probs_AC_trans_": y_probs_AC_trans_, "classes_AC_trans_": classes_AC_trans_})
+        if "rf" in models:
+            res_entry.update({"y_preds_AC_rf_": y_preds_AC_rf_, "y_probs_AC_rf_": y_probs_AC_rf_, "classes_AC_rf_": classes_AC_rf_})
         if "knn" in models:
-            res_entry.update({
-                "y_preds_AC_kNN_": y_preds_AC_kNN_,
-                "y_probs_AC_kNN_": y_probs_AC_kNN_,
-                "classes_AC_kNN_": classes_AC_kNN_,
-            })
+            res_entry.update({"y_preds_AC_kNN_": y_preds_AC_kNN_, "y_probs_AC_kNN_": y_probs_AC_kNN_, "classes_AC_kNN_": classes_AC_kNN_})
         if "ffi" in models:
-            res_entry.update({
-                "y_preds_FFI_": y_preds_FFI_,
-                "y_probs_FFI_": y_probs_FFI_,
-                "classes_FFI_": classes_FFI_,
-            })
+            res_entry.update({"y_preds_FFI_": y_preds_FFI_, "y_probs_FFI_": y_probs_FFI_, "classes_FFI_": classes_FFI_})
             
         results_dict[f] = res_entry
 
@@ -246,6 +426,16 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('Logistic Regression (FFI)', 'y_preds_FFI_'))
         if 'y_preds_AC_kNN_' in sample_res:
             method_info.append(('kNN (ACA)', 'y_preds_AC_kNN_'))
+        if 'y_preds_AC_rf_' in sample_res:
+            method_info.append(('Random Forest (ACA)', 'y_preds_AC_rf_'))
+        if 'y_preds_AC_trans_' in sample_res:
+            method_info.append(('Transformer (ACA)', 'y_preds_AC_trans_'))
+        if 'y_preds_AC_rnn_' in sample_res:
+            method_info.append(('Simple RNN (ACA)', 'y_preds_AC_rnn_'))
+        if 'y_preds_AC_gru_' in sample_res:
+            method_info.append(('Gated Recurrent Unit (ACA)', 'y_preds_AC_gru_'))
+        if 'y_preds_AC_lstm_' in sample_res:
+            method_info.append(('Long Short-Term Memory (ACA)', 'y_preds_AC_lstm_'))
         if 'y_preds_AC_' in sample_res:
             method_info.append(('Convolutional Neural Network (ACA)', 'y_preds_AC_'))
 
