@@ -86,30 +86,31 @@ if __name__ == "__main__":
 
     outlier_filters = [
         None, 
-        # 'msc_label_msc_linear_0.001'
-        # 'msc_label_msc_baseline_0.001',
-
-        # 'amf_label_amf_important'
-        # 'amf_label_amf_send_5',
-
-        # 'knn_top_0.95',
-        # 'knn_top_0.9',
-        # # 'knn_top_0.85', 
         
-        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        'msc_label_msc_linear_0.001'
+        'msc_label_msc_baseline_0.001',
+
+        'amf_label_amf_important'
+        'amf_label_amf_send_5',
+
+        'knn_top_0.95',
+        'knn_top_0.9',
+        # 'knn_top_0.85', 
         
-        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
-        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
+        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        
+        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
+        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
 
-        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
 
-        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
         # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
     ]
 
