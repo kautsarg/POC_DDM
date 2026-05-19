@@ -12,7 +12,8 @@ from cycler import cycler
 # ==========================================
 
 # Default path for the HPC cluster
-DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+# DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -58,25 +59,46 @@ EXCLUDED_FEATURES = [
 ]
 
 FEATURE_GROUPS = [
-    ['F0', 'log_F0'],
-    ['send_5', 'send_10', 'send_15', 'send_20', 'send_25', 'send_abs_5', 'send_abs_10', 'send_abs_15', 'send_abs_20', 'send_abs_25', 'Send', 'Send_abs', 'Send_fit', 'Send_fit_abs'],
-    ['F_max_ori', 'F_max', 'Fm', 'FFI', 'F_range'],
-    ['Ct_ori', 'Ct', 'ct_idx_ori', 'ct_idx'],
-    ['Cy0_ori', 'Cy0', 'Cs', 'As', 'Sc'],
-    ['first_half_distance', 'A1', 'xs', 'xms'],
-    ['second_half_distance', 'A2', 'xms', 'xe'],
-    ['threshold_distance', 'xs', 'xe'],
-    ['peak_shifting_distance', 'xp1', 'xp2'],
-    ['distance_asymmetry_index', 'first_half_distance', 'second_half_distance'],
-    ['area_asymmetry_index', 'A1', 'A2'],
-    ['peak_asymmetry_index', 'd2y_xp1', 'd2y_xp2'],
-    ['xms', 'y_xms', 'dy_xms'],
-    ['xp1', 'y_xp1', 'dy_xp1', 'd2y_xp1'],
-    ['xp2', 'y_xp2', 'dy_xp2', 'd2y_xp2'],
-    ['xs', 'y_xs'],
-    ['xe', 'y_xe'],
-    ['amplitude', 'y_xs', 'y_xe'],
-    ['y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'F_max', 'Fm', 'FFI', 'F_range']
+    # A. Baseline / Noise
+    ['F0', 'log_F0', 'baseline_mean', 'baseline_std', 'baseline_slope', 'snr_peak', 'snr_xms'],
+
+    # B. End / Plateau behavior
+    ['F_max', 'F_max_ori', 'Fm', 'FFI', 'F_range', 'plateau_mean', 'plateau_std', 'plateau_slope', 'overshoot_index'],
+
+    # C. Early kinetic onset
+    ['Ct', 'Ct_ori', 'ct_idx', 'ct_idx_ori', 'lag_time', 't10'],
+
+    # D. Mid-rise timing
+    ['t50', 'xms'],
+
+    # E. Rise dynamics
+    ['dy_xms', 'max_accel', 'accel_fwhm', 'rise_time_10_90', 'rise_time_20_80'],
+
+    # F. Threshold window
+    ['xs', 'xe', 'threshold_distance'],
+
+    # G. First-half kinetics
+    ['first_half_distance', 'A1'],
+
+    # H. Second-half kinetics
+    ['second_half_distance', 'A2'],
+
+    # I. Asymmetry
+    ['distance_asymmetry_index', 'area_asymmetry_index', 'peak_asymmetry_index'],
+
+    # J. Inflection geometry (fit)
+    ['Cy0', 'Cy0_ori', 'Cs', 'Sc', 'As'],
+
+    # K. Peak-shift & curvature
+    ['xp1', 'xp2', 'peak_shifting_distance', 'd2y_xp1', 'd2y_xp2'],
+
+    # L. Signal amplitude / critical Y values
+    ['amplitude', 'y_xs', 'y_xe', 'y_xms', 'y_xp1', 'y_xp2'],
+
+    # M. Tail slope / drift
+    ['send_5', 'send_10', 'send_15', 'send_20', 'send_25',
+     'send_abs_5', 'send_abs_10', 'send_abs_15', 'send_abs_20', 'send_abs_25',
+     'Send', 'Send_abs', 'Send_fit', 'Send_fit_abs'],
 ]
 
 CURVE_SPLIT = {

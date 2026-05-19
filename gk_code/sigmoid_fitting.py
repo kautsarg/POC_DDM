@@ -451,39 +451,56 @@ def extract_kinetic_parameters(x, y, params, threshold=0.1):
     }
 
 
-def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradient'):
+def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradient',
+                                        baseline_frac=0.1, plateau_frac=0.1):
     """
-    Extract kinetic parameters from ORIGINAL (unfitted) curve
+    Extract kinetic parameters from ORIGINAL (unfitted) curve.
     """
+
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-    
-    # ========================================================================
-    # 1. CALCULATE DERIVATIVES FROM ORIGINAL CURVE
-    # ========================================================================
+
+    # ------------------------------------------------------------------------
+    # 0) BASELINE / PLATEAU WINDOWS
+    # ------------------------------------------------------------------------
+    n = len(x)
+    n_base = max(3, int(n * baseline_frac))
+    n_plateau = max(3, int(n * plateau_frac))
+
+    base_x = x[:n_base]
+    base_y = y[:n_base]
+    plat_x = x[-n_plateau:]
+    plat_y = y[-n_plateau:]
+
+    baseline_mean = np.mean(base_y)
+    baseline_std = np.std(base_y)
+    baseline_slope = np.polyfit(base_x, base_y, 1)[0] if len(base_x) >= 2 else np.nan
+
+    plateau_mean = np.mean(plat_y)
+    plateau_std = np.std(plat_y)
+    plateau_slope = np.polyfit(plat_x, plat_y, 1)[0] if len(plat_x) >= 2 else np.nan
+
+    # ------------------------------------------------------------------------
+    # 1) DERIVATIVES
+    # ------------------------------------------------------------------------
     dy_dx_vals = calculate_first_derivative(x, y, method=deriv_method)
     d2y_dx2_vals = calculate_second_derivative(x, y, method=deriv_method)
-    
-    # ========================================================================
-    # 2. FIND xms (maximum slope)
-    # ========================================================================
+
+    # ------------------------------------------------------------------------
+    # 2) xms (max slope)
+    # ------------------------------------------------------------------------
     max_slope_idx = np.argmax(dy_dx_vals)
     xms = x[max_slope_idx]
     dy_xms = dy_dx_vals[max_slope_idx]
     y_xms = y[max_slope_idx]
-    
-    # ========================================================================
-    # 3. FIND xs, xe (threshold crossing points)
-    # ========================================================================
-    if threshold < 1:
-        TH = threshold * dy_xms
-    else:
-        TH = threshold
-    
+
+    # ------------------------------------------------------------------------
+    # 3) xs, xe threshold crossings
+    # ------------------------------------------------------------------------
+    TH = threshold * dy_xms if threshold < 1 else threshold
     above_threshold = dy_dx_vals > TH
     rising_indices = np.where(above_threshold)[0]
-    
-    # xs: first crossing
+
     if len(rising_indices) > 0:
         xs_idx = rising_indices[0]
         if xs_idx > 0:
@@ -494,8 +511,7 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
             xs = x[xs_idx]
     else:
         xs = np.nan
-    
-    # xe: last crossing
+
     if len(rising_indices) > 0:
         xe_idx = rising_indices[-1]
         if xe_idx < len(x) - 1:
@@ -506,12 +522,10 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
             xe = x[xe_idx]
     else:
         xe = np.nan
-    
-    # ========================================================================
-    # 4. FIND xp1, xp2 (peaks of 2nd derivative)
-    # ========================================================================
-    from scipy.signal import find_peaks
-    
+
+    # ------------------------------------------------------------------------
+    # 4) xp1, xp2 (2nd derivative peaks)
+    # ------------------------------------------------------------------------
     peaks_pos, _ = find_peaks(d2y_dx2_vals)
     if len(peaks_pos) > 0:
         xp1_idx = peaks_pos[np.argmax(d2y_dx2_vals[peaks_pos])]
@@ -520,7 +534,7 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         d2y_xp1 = d2y_dx2_vals[xp1_idx]
     else:
         xp1, dy_xp1, d2y_xp1 = np.nan, np.nan, np.nan
-    
+
     peaks_neg, _ = find_peaks(-d2y_dx2_vals)
     if len(peaks_neg) > 0:
         xp2_idx = peaks_neg[np.argmin(d2y_dx2_vals[peaks_neg])]
@@ -529,181 +543,224 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         d2y_xp2 = d2y_dx2_vals[xp2_idx]
     else:
         xp2, dy_xp2, d2y_xp2 = np.nan, np.nan, np.nan
-    
-    # ========================================================================
-    # 5. Y-VALUES AT CRITICAL POINTS
-    # ========================================================================
+
+    # ------------------------------------------------------------------------
+    # 5) Y-values at critical points
+    # ------------------------------------------------------------------------
     y_xs = y[np.argmin(np.abs(x - xs))] if not np.isnan(xs) else np.nan
     y_xe = y[np.argmin(np.abs(x - xe))] if not np.isnan(xe) else np.nan
     y_xp1 = y[np.argmin(np.abs(x - xp1))] if not np.isnan(xp1) else np.nan
     y_xp2 = y[np.argmin(np.abs(x - xp2))] if not np.isnan(xp2) else np.nan
-    
-    # ========================================================================
-    # 6-16. TABLE S2 FEATURES
-    # ========================================================================
+
+    # ------------------------------------------------------------------------
+    # 6) Table S2 features
+    # ------------------------------------------------------------------------
     threshold_distance = xe - xs if (not np.isnan(xs) and not np.isnan(xe)) else np.nan
     first_half_distance = xms - xs if not np.isnan(xs) else np.nan
     second_half_distance = xe - xms if not np.isnan(xe) else np.nan
-    
     distance_asymmetry_index = second_half_distance / first_half_distance if (not np.isnan(first_half_distance) and first_half_distance != 0) else np.nan
     peak_shifting_distance = xp2 - xp1 if (not np.isnan(xp1) and not np.isnan(xp2)) else np.nan
-    
-    # Area under curve
+
     if not np.isnan(xs) and not np.isnan(xms):
         xs_idx = np.argmin(np.abs(x - xs))
         xms_idx = np.argmin(np.abs(x - xms))
         A1 = np.trapz(dy_dx_vals[xs_idx:xms_idx+1], x[xs_idx:xms_idx+1])
     else:
         A1 = np.nan
-    
+
     if not np.isnan(xms) and not np.isnan(xe):
         xms_idx = np.argmin(np.abs(x - xms))
         xe_idx = np.argmin(np.abs(x - xe))
         A2 = np.trapz(dy_dx_vals[xms_idx:xe_idx+1], x[xms_idx:xe_idx+1])
     else:
         A2 = np.nan
-    
+
     area_asymmetry_index = A2 / A1 if (not np.isnan(A1) and A1 != 0) else np.nan
-    
+
     positive_second_deriv_peak = d2y_xp1
     negative_second_deriv_peak = np.abs(d2y_xp2) if not np.isnan(d2y_xp2) else np.nan
-    
     if not np.isnan(positive_second_deriv_peak) and not np.isnan(negative_second_deriv_peak) and negative_second_deriv_peak != 0:
         peak_asymmetry_index = positive_second_deriv_peak / negative_second_deriv_peak
     else:
         peak_asymmetry_index = np.nan
-        
-    # ========================================================================
-    # NEW FEATURE 1: Ct - Time where F(t) exceeds 20% of maximum
-    # ========================================================================
+
+    # ------------------------------------------------------------------------
+    # 7) FIT-BASED Ct / Cy0
+    # ------------------------------------------------------------------------
     params, _ = fit_5p(x, y, normalize=True)
     Fm_fit, Fb_fit, Sc_fit, Cs_fit, As_fit = params
-    
+
     F_vals = sigmoid_5p(x, *params)
     F_vals_dydx = sigmoid_5p_first_derivative(x, *params)
-    
-    # ---------- FIT CURVE Ct ----------
+
+    # Ct (fit)
     F_min, F_max = np.min(F_vals), np.max(F_vals)
     F_norm = (F_vals - F_min) / (F_max - F_min) if F_max > F_min else np.zeros_like(F_vals)
-    
     above_20pct = F_norm > 0.2
     crossing_indices = np.where(above_20pct)[0]
-    
     if len(crossing_indices) > 0:
         ct_idx = crossing_indices[0]
         if ct_idx > 0:
             x1, x2 = x[ct_idx-1], x[ct_idx]
-            y1, y2 = F_norm[ct_idx-1], F_norm[ct_idx] 
+            y1, y2 = F_norm[ct_idx-1], F_norm[ct_idx]
             Ct = x1 + (0.2 - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x[ct_idx]
         else:
             Ct = x[ct_idx]
     else:
         Ct, ct_idx = np.nan, np.nan
 
-    # ---------- ORIGINAL CURVE Ct ----------
+    # Ct (original)
     F_min_ori, F_max_ori = np.min(y), np.max(y)
     F_norm_ori = (y - F_min_ori) / (F_max_ori - F_min_ori) if F_max_ori > F_min_ori else np.zeros_like(y)
-    
     above_20pct_ori = F_norm_ori > 0.2
     crossing_indices_ori = np.where(above_20pct_ori)[0]
-    
     if len(crossing_indices_ori) > 0:
         ct_idx_ori = crossing_indices_ori[0]
         if ct_idx_ori > 0:
             x1, x2 = x[ct_idx_ori-1], x[ct_idx_ori]
-            y1, y2 = F_norm_ori[ct_idx_ori-1], F_norm_ori[ct_idx_ori] 
+            y1, y2 = F_norm_ori[ct_idx_ori-1], F_norm_ori[ct_idx_ori]
             Ct_ori = x1 + (0.2 - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x[ct_idx_ori]
         else:
             Ct_ori = x[ct_idx_ori]
     else:
         Ct_ori, ct_idx_ori = np.nan, np.nan
 
-    # ========================================================================
-    # NEW FEATURE 2: Cy0 - X-intercept of tangent at inflection point
-    # ========================================================================
-    
-    # ---------- FIT CURVE Cy0 ----------
+    # Cy0
     x_inflection = Cs_fit + (np.log(As_fit) / Sc_fit)
     y_inflection = sigmoid_5p(x_inflection, *params)
     dy_inflection = sigmoid_5p_first_derivative(x_inflection, *params)
-    
     Cy0 = x_inflection - (y_inflection / dy_inflection) if dy_inflection != 0 else np.nan
-    
-    # ---------- ORIGINAL CURVE Cy0 ----------
-    # The inflection point of the original curve is where the slope is steepest (xms)
     Cy0_ori = xms - (y_xms / dy_xms) if (dy_xms != 0 and not np.isnan(dy_xms)) else np.nan
 
-    # ========================================================================
-    # NEW FEATURE 3: -log10(F0)
-    # ========================================================================
-    F0 = y[0]
-    log_F0 = -np.log10(F0) if F0 > 0 else np.nan
-    
-    # ========================================================================
-    # RETURN ALL PARAMETERS
-    # ========================================================================
-    return {
-        'Fm': Fm_fit,
-        'Fb': Fb_fit,
-        'Sc': Sc_fit,
-        'Cs': Cs_fit,
-        'As': As_fit,
-        "5p_sigmoid_fitted": F_vals,
-        "5p_sigmoid_fitted_dydx": F_vals_dydx,
+    # ------------------------------------------------------------------------
+    # 8) EXTRA FEATURES (NEW)
+    # ------------------------------------------------------------------------
+    # Timing: 10/50/90% crossings (original normalized)
+    def crossing_time(norm_y, level):
+        idx = np.where(norm_y >= level)[0]
+        if len(idx) == 0:
+            return np.nan
+        i = idx[0]
+        if i == 0:
+            return x[0]
+        x1, x2 = x[i-1], x[i]
+        y1, y2 = norm_y[i-1], norm_y[i]
+        return x1 + (level - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x[i]
 
-        # Basic critical points
-        'xms': xms,
-        'xs': xs,
-        'xe': xe,
-        'xp1': xp1,
-        'xp2': xp2,
-        'TH': TH,
-        
+    t10 = crossing_time(F_norm_ori, 0.1)
+    t50 = crossing_time(F_norm_ori, 0.5)
+    t90 = crossing_time(F_norm_ori, 0.9)
+    rise_time_10_90 = t90 - t10 if (not np.isnan(t10) and not np.isnan(t90)) else np.nan
+    rise_time_20_80 = crossing_time(F_norm_ori, 0.8) - crossing_time(F_norm_ori, 0.2)
+
+    # Lag time: first time signal exceeds baseline + 3σ
+    lag_idx = np.where(y >= (baseline_mean + 3*baseline_std))[0]
+    lag_time = x[lag_idx[0]] if len(lag_idx) > 0 else np.nan
+
+    # SNR
+    snr_peak = (np.max(y) - baseline_mean) / baseline_std if baseline_std > 0 else np.nan
+    snr_xms = (y_xms - baseline_mean) / baseline_std if baseline_std > 0 else np.nan
+
+    # AUC
+    auc = np.trapz(y, x)
+    auc_norm = auc / (x[-1] - x[0]) if (x[-1] - x[0]) != 0 else np.nan
+
+    # Derivative dynamics
+    max_accel = np.max(d2y_dx2_vals)
+    min_accel = np.min(d2y_dx2_vals)
+
+    # FWHM of positive accel peak
+    accel_fwhm = np.nan
+    if not np.isnan(max_accel) and max_accel > 0:
+        half = max_accel / 2
+        above = np.where(d2y_dx2_vals >= half)[0]
+        if len(above) > 1:
+            accel_fwhm = x[above[-1]] - x[above[0]]
+
+    # Fit quality
+    residuals = y - F_vals
+    fit_rmse = np.sqrt(np.mean(residuals**2))
+    ss_res = np.sum(residuals**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+    fit_r2 = 1 - ss_res/ss_tot if ss_tot != 0 else np.nan
+
+    # Overshoot (if signal drops after max)
+    max_idx = np.argmax(y)
+    post_max = y[max_idx:]
+    overshoot_index = (np.max(y) - np.mean(post_max[-n_plateau:])) / np.max(y) if len(post_max) >= n_plateau else np.nan
+
+    # ------------------------------------------------------------------------
+    # RETURN
+    # ------------------------------------------------------------------------
+    return {
+        # 5p sigmoid
+        'Fm': Fm_fit, 'Fb': Fb_fit, 'Sc': Sc_fit, 'Cs': Cs_fit, 'As': As_fit,
+        '5p_sigmoid_fitted': F_vals, '5p_sigmoid_fitted_dydx': F_vals_dydx,
+
+        # critical points
+        'xms': xms, 'xs': xs, 'xe': xe, 'xp1': xp1, 'xp2': xp2, 'TH': TH,
+
         # Y-values at critical points
-        'y_xms': y_xms,
-        'y_xs': y_xs,
-        'y_xe': y_xe,
-        'y_xp1': y_xp1,
-        'y_xp2': y_xp2,
-        'amplitude': np.abs(y_xe-y_xs),
-        
-        # First and second derivative values
-        'dy_xms': dy_xms,
-        'dy_xp1': dy_xp1,
-        'dy_xp2': dy_xp2,
-        'd2y_xp1': d2y_xp1,
-        'd2y_xp2': d2y_xp2,
-        
+        'y_xms': y_xms, 'y_xs': y_xs, 'y_xe': y_xe, 'y_xp1': y_xp1, 'y_xp2': y_xp2,
+        'amplitude': np.abs(y_xe - y_xs),
+
+        # derivatives
+        'dy_xms': dy_xms, 'dy_xp1': dy_xp1, 'dy_xp2': dy_xp2,
+        'd2y_xp1': d2y_xp1, 'd2y_xp2': d2y_xp2,
+
         # Table S2
         'threshold_distance': threshold_distance,
         'first_half_distance': first_half_distance,
         'second_half_distance': second_half_distance,
         'distance_asymmetry_index': distance_asymmetry_index,
         'peak_shifting_distance': peak_shifting_distance,
-        'A1': A1,
-        'A2': A2,
+        'A1': A1, 'A2': A2,
         'area_asymmetry_index': area_asymmetry_index,
         'peak_asymmetry_index': peak_asymmetry_index,
-        
+
         # Extracted Features
-        'Ct': Ct,
-        'Cy0': Cy0,
-        'F_max': F_max,
-        'ct_idx': ct_idx,
-        
-        # ORIGINAL Extracted Features
-        'Ct_ori': Ct_ori,
-        'Cy0_ori': Cy0_ori,
-        'F_max_ori': F_max_ori,
-        'ct_idx_ori': ct_idx_ori,
-        
-        # Base Signals
-        'log_F0': log_F0,
-        'F0': F0,
+        'Ct': Ct, 'Cy0': Cy0, 'F_max': F_max, 'ct_idx': ct_idx,
+        'Ct_ori': Ct_ori, 'Cy0_ori': Cy0_ori, 'F_max_ori': F_max_ori, 'ct_idx_ori': ct_idx_ori,
+        'log_F0': -np.log10(y[0]) if y[0] > 0 else np.nan, 'F0': y[0],
+
         'Send': np.mean(dy_dx_vals[-5:]),
         'Send_abs': np.mean(np.abs(dy_dx_vals[-5:])),
         'Send_fit': np.mean(F_vals_dydx[-5:]),
         'Send_fit_abs': np.mean(np.abs(F_vals_dydx[-5:])),
+
+        # NEW: baseline / plateau
+        'baseline_mean': baseline_mean,
+        'baseline_std': baseline_std,
+        'baseline_slope': baseline_slope,
+        'plateau_mean': plateau_mean,
+        'plateau_std': plateau_std,
+        'plateau_slope': plateau_slope,
+
+        # NEW: timing
+        't10': t10, 't50': t50, 't90': t90,
+        'rise_time_10_90': rise_time_10_90,
+        'rise_time_20_80': rise_time_20_80,
+        'lag_time': lag_time,
+
+        # NEW: SNR
+        'snr_peak': snr_peak,
+        'snr_xms': snr_xms,
+
+        # NEW: integrals
+        'auc': auc,
+        'auc_norm': auc_norm,
+
+        # NEW: derivative dynamics
+        'max_accel': max_accel,
+        'min_accel': min_accel,
+        'accel_fwhm': accel_fwhm,
+
+        # NEW: fit quality
+        'fit_rmse': fit_rmse,
+        'fit_r2': fit_r2,
+
+        # NEW: overshoot
+        'overshoot_index': overshoot_index,
     }
 
 # ============================================================================
