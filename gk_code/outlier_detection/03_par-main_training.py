@@ -1,151 +1,147 @@
 import os
 import sys
-# Silencing TF warnings at the main level as well
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-
-import pickle
 import gc
+import argparse
+import joblib 
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 
+import config
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 set_global_determinism(0)
 
-# exp_folder = "/Users/kautsarg/Documents/Final Project/Run Data/POC_DDM_dataset"
-exp_folder = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Main Training Pipeline")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
+    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
+    args = parser.parse_args()
 
-exp_paths = sorted([Path(exp_folder, name) for name in os.listdir(exp_folder) if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])])
-# exp_paths = [Path(exp_folder, "D20250826_E00_C00_F4500KHz_U_Sample_14_rep2")]
-# exp_paths = [Path(exp_folder, "D20250808_E00_C00_F4500KHz_U_Sample_7")]
+    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
 
-if len(sys.argv) > 1:
-    # PBS_ARRAY_INDEX starts at 1, so we subtract 1 for Python's 0-based indexing
-    task_id = int(sys.argv[1]) - 1 
-else:
-    # Fallback for local testing
-    task_id = 0 
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+        sys.exit(0)
 
-if task_id >= len(exp_paths):
-    print(f"Task ID {task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
-    sys.exit(0)
+    exp_path = exp_paths[args.task_id]
+    print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
-# Pick ONLY the specific folder for this specific node
-exp_path = exp_paths[task_id]
+    data_path = os.path.join(exp_path, "curve_for_training_latest.joblib")
+    results_file_path = os.path.join(exp_path, "classification_performances_with_proba.joblib")
 
-print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
+    model_plot_path = os.path.join(exp_path, "model_performance")
+    os.makedirs(model_plot_path, exist_ok=True)
 
-data_path = os.path.join(exp_path, "curve_for_training_latest.pkl")
-results_file_path = os.path.join(exp_path, "classification_performances_with_proba.pkl")
+    if not os.path.exists(data_path):
+        print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
+        sys.exit(0)
 
-# Ensure the plot directory exists
-model_plot_path = os.path.join(exp_path, "model_performance")
-os.makedirs(model_plot_path, exist_ok=True)
+    training_data = joblib.load(data_path)
 
-if not os.path.exists(data_path):
-    print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
-    sys.exit(0)
+    dataset_name = training_data["dataset_name"]
+    dataset = training_data["dataset"]
+    kinetic_features = training_data["kinetic_features"]
+    Y_well = training_data["Y_well"]
 
-with open(data_path, 'rb') as f:
-    training_data = pickle.load(f)
+    # Filter Clean data only
+    filtered_names, filtered_dataset, filtered_features = [], [], []
 
-dataset_name = training_data["dataset_name"]
-dataset = training_data["dataset"]
-kinetic_features = training_data["kinetic_features"]
-Y_well = training_data["Y_well"]
+    for name, data, features in zip(dataset_name, dataset, kinetic_features):
+        if not name.startswith("avg_"):
+            filtered_names.append(name)
+            filtered_dataset.append(data)
+            filtered_features.append(features)
 
-## Filter Clean data only
-filtered_names = []
-filtered_dataset = []
-filtered_features = []
+    dataset_name = filtered_names
+    dataset = filtered_dataset
+    kinetic_features = filtered_features
 
-for name, data, features in zip(dataset_name, dataset, kinetic_features):
-    if not name.startswith("avg_"):
-        filtered_names.append(name)
-        filtered_dataset.append(data)
-        filtered_features.append(features)
+    encoder = LabelEncoder()
+    y_full = encoder.fit_transform(Y_well)
 
-# Reassign the filtered lists back to the original variables
-dataset_name = filtered_names
-dataset = filtered_dataset
-kinetic_features = filtered_features
+    outlier_filters = [
+        None, 
+        'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.001',
+        'amf_label_amf_important', 'amf_label_amf_send_5',
+        'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95',
+        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+    ]
 
-encoder = LabelEncoder()
-y_full = encoder.fit_transform(Y_well)
+    print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
-# 1. Dynamically gather all filter columns
-all_columns = kinetic_features[0].columns.tolist()
-outlier_filters = [
-    None, 
-    'msc_label_msc_linear_0.001', 'msc_label_msc_baseline_0.001',
-    'amf_label_amf_important', 'amf_label_amf_send_5',
-    'knn_top_0.85', 'knn_top_0.9', 'knn_top_0.95',
-    'cnn_ae_pw_ds1_label_elbow', 'cnn_ae_pw_ds1_label_90', 'cnn_ae_pw_ds1_label_95',
-    'cnn_ae_glb_ds1_label_elbow', 'cnn_ae_glb_ds1_label_90', 'cnn_ae_glb_ds1_label_95',
-    'lstm_ae_pw_ds1_label_elbow', 'lstm_ae_pw_ds1_label_90', 'lstm_ae_pw_ds1_label_95',
-    'lstm_ae_glb_ds1_label_elbow', 'lstm_ae_glb_ds1_label_90', 'lstm_ae_glb_ds1_label_95'
-]
+    if os.path.exists(results_file_path):
+        all_ml_results = joblib.load(results_file_path)
+    else:
+        all_ml_results = {}
 
-print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
+    total_datasets = len(dataset_name)
+    total_samples = len(y_full)
 
-if os.path.exists(results_file_path):
-    with open(results_file_path, 'rb') as f:
-        all_ml_results = pickle.load(f)
-else:
-    all_ml_results = {}
-
-total_datasets = len(dataset_name)
-total_samples = len(y_full)
-
-for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-    clean_title = name.replace("_", " ").title()
-    progress_pct = ((idx + 1) / total_datasets) * 100
-    
-    print(f"\n{'='*75}")
-    print(f"[{idx+1}/{total_datasets} | {progress_pct:.1f}%] Processing Dataset: {clean_title}")
-    print(f"{'='*75}")
-
-    if clean_title not in all_ml_results: 
-        all_ml_results[clean_title] = {}
-    
-    # --- NATIVE TRAINING ---
-    # print(f"  [MODE 1/2] NATIVE TRAINING")
-    # cached_native = all_ml_results[clean_title].get("Native", {})
-    
-    # res_native = evaluate_outlier_filters(
-    #     curves_2d, features_df, y_full, outlier_filters, clean_title, "Native", cached_results=cached_native
-    # )
-    # all_ml_results[clean_title]["Native"] = res_native
-    # with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
+    for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
+        clean_title = name.replace("_", " ").title()
+        progress_pct = ((idx + 1) / total_datasets) * 100
         
-    # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
-    # plot_ml_results(
-    #     results_dict=all_ml_results[clean_title]["Native"], 
-    #     outlier_filters=outlier_filters, 
-    #     dataset_name=clean_title, 
-    #     mode_name="Native Training", 
-    #     total_count=total_samples, 
-    #     save_prefix=prefix_native
-    # )
+        print(f"\n{'='*75}")
+        print(f"[{idx+1}/{total_datasets} | {progress_pct:.1f}%] Processing Dataset: {clean_title}")
+        print(f"{'='*75}")
+
+        if clean_title not in all_ml_results: 
+            all_ml_results[clean_title] = {}
+
+        # # --- NATIVE TRAINING ---
+        # print(f"\n  [MODE 1/2] NATIVE TRAINING")
+        # cached_native = all_ml_results[clean_title].get("Native", {})
         
-    # --- REFERENCE TRAINING ---
-    print(f"\n  [MODE 2/2] REFERENCE TRAINING")
-    cached_ref = all_ml_results[clean_title].get("Reference", {})
-    
-    res_ref = evaluate_outlier_filters(
-        dataset[0], features_df, y_full, outlier_filters, clean_title, 
-        mode_name="Reference", cached_results=cached_ref, models=["cnn"]
-    )
-    all_ml_results[clean_title]["Reference"] = res_ref
-    with open(results_file_path, 'wb') as f: pickle.dump(all_ml_results, f)
+        # res_native = evaluate_outlier_filters(
+        #     dataset[0], features_df, y_full, outlier_filters, clean_title, 
+        #     mode_name="Native", cached_results=cached_native, models=["cnn"]
+        # )
+        # all_ml_results[clean_title]["Native"] = res_ref
         
-    prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
-    plot_ml_results(
-        results_dict=all_ml_results[clean_title]["Reference"], 
-        outlier_filters=outlier_filters, 
-        dataset_name=clean_title, 
-        mode_name="Reference Training", 
-        total_count=total_samples, 
-        save_prefix=prefix_ref
-    )
-    
-gc.collect()
+        # joblib.dump(all_ml_results, results_file_path, compress=3)
+            
+        # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
+        # plot_ml_results(
+        #     results_dict=all_ml_results[clean_title]["Native"], 
+        #     outlier_filters=outlier_filters, 
+        #     dataset_name=clean_title, 
+        #     mode_name="Native Training", 
+        #     total_count=total_samples, 
+        #     save_prefix=prefix_native
+        # )
+
+        # --- REFERENCE TRAINING ---
+        print(f"\n  [MODE 2/2] REFERENCE TRAINING")
+        cached_ref = all_ml_results[clean_title].get("Reference", {})
+        
+        res_ref = evaluate_outlier_filters(
+            dataset[0], features_df, y_full, outlier_filters, clean_title, 
+            mode_name="Reference", cached_results=cached_ref, models=["cnn"]
+        )
+        all_ml_results[clean_title]["Reference"] = res_ref
+        
+        joblib.dump(all_ml_results, results_file_path, compress=3)
+            
+        prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
+        plot_ml_results(
+            results_dict=all_ml_results[clean_title]["Reference"], 
+            outlier_filters=outlier_filters, 
+            dataset_name=clean_title, 
+            mode_name="Reference Training", 
+            total_count=total_samples, 
+            save_prefix=prefix_ref
+        )
+        
+    gc.collect()
