@@ -547,10 +547,10 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     # ------------------------------------------------------------------------
     # 5) Y-values at critical points
     # ------------------------------------------------------------------------
-    y_xs = y[np.argmin(np.abs(x - xs))] if not np.isnan(xs) else np.nan
-    y_xe = y[np.argmin(np.abs(x - xe))] if not np.isnan(xe) else np.nan
-    y_xp1 = y[np.argmin(np.abs(x - xp1))] if not np.isnan(xp1) else np.nan
-    y_xp2 = y[np.argmin(np.abs(x - xp2))] if not np.isnan(xp2) else np.nan
+    y_xs = np.interp(xs, x, y) if not np.isnan(xs) else np.nan
+    y_xe = np.interp(xe, x, y) if not np.isnan(xe) else np.nan
+    y_xp1 = np.interp(xp1, x, y) if not np.isnan(xp1) else np.nan
+    y_xp2 = np.interp(xp2, x, y) if not np.isnan(xp2) else np.nan
 
     # ------------------------------------------------------------------------
     # 6) Table S2 features
@@ -673,9 +673,16 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     accel_fwhm = np.nan
     if not np.isnan(max_accel) and max_accel > 0:
         half = max_accel / 2
-        above = np.where(d2y_dx2_vals >= half)[0]
-        if len(above) > 1:
-            accel_fwhm = x[above[-1]] - x[above[0]]
+        # Start at the peak and walk left
+        left_idx = xp1_idx
+        while left_idx > 0 and d2y_dx2_vals[left_idx] > half:
+            left_idx -= 1
+        # Start at the peak and walk right
+        right_idx = xp1_idx
+        while right_idx < len(d2y_dx2_vals) - 1 and d2y_dx2_vals[right_idx] > half:
+            right_idx += 1
+            
+        accel_fwhm = x[right_idx] - x[left_idx]
 
     # Fit quality
     residuals = y - F_vals
@@ -687,7 +694,12 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     # Overshoot (if signal drops after max)
     max_idx = np.argmax(y)
     post_max = y[max_idx:]
-    overshoot_index = (np.max(y) - np.mean(post_max[-n_plateau:])) / np.max(y) if len(post_max) >= n_plateau else np.nan
+    
+    max_y_val = np.max(y)
+    if max_y_val != 0 and len(post_max) >= n_plateau:
+        overshoot_index = (max_y_val - np.mean(post_max[-n_plateau:])) / max_y_val
+    else:
+        overshoot_index = np.nan
 
     # ------------------------------------------------------------------------
     # RETURN
