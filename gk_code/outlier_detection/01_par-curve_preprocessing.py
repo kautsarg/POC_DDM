@@ -668,10 +668,7 @@ if __name__ == "__main__":
     exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) 
                         if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
 
-    save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
-    if os.path.exists(save_path):
-        sys.exit(0)
-        
+
     curve_labels = ["Original Curve", "1st Derivative", "1st Derivative Moving Avg", "Cleaned Curve", 
                     "Cleaned Curve (Lowest Crossing)"] 
 
@@ -680,6 +677,10 @@ if __name__ == "__main__":
         sys.exit(0)
 
     exp_path = exp_paths[args.task_id]
+    save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
+    if os.path.exists(save_path):
+        sys.exit(0)
+        
     print(f"Processing Experiment: {exp_path}")
         
     exp = titan_load_and_preprocessing(exp_path, n_wells=config.N_WELLS, start_type="temperature",
