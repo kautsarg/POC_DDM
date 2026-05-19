@@ -30,9 +30,9 @@ PLOT_DECIMAL_PRECISION = 4
 AE_DOWNSAMPLE_FACTOR = 1
 
 # File paths
-PREPROCESSED_CURVES_PATH = 'preprocessed_curves_data.joblib'
-TRAINING_DATA_PATH = 'curve_for_training_latest.joblib'
-TRAINING_RESULT_PATH = 'classification_performances_with_proba.joblib'
+PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
+TRAINING_DATA_PATH = 'curve_for_training.joblib'
+TRAINING_RESULT_PATH = 'classification_performances.joblib'
 
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
