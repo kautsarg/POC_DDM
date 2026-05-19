@@ -164,9 +164,22 @@ def evaluate_outlier_filters(
         filter_pct = ((idx + 1) / total_filters) * 100
         print(f"  -> Testing Filter [{idx+1}/{total_filters} | {filter_pct:.1f}%]: {filter_name}")
         
-        if f in results_dict:
-            print(f"     [CACHE HIT] Model already trained for this filter. Skipping.")
-            continue
+        # Per-model cache detection (do not skip the whole filter)
+        res_cached = results_dict.get(f, {})
+        skip_models = set()
+
+        if res_cached:
+            if "y_preds_AC_" in res_cached:        skip_models.add("cnn")
+            if "y_preds_AC_lstm_" in res_cached:   skip_models.add("lstm")
+            if "y_preds_AC_gru_" in res_cached:    skip_models.add("gru")
+            if "y_preds_AC_rnn_" in res_cached:    skip_models.add("rnn")
+            if "y_preds_AC_trans_" in res_cached:  skip_models.add("transformer")
+            if "y_preds_AC_rf_" in res_cached:     skip_models.add("rf")
+            if "y_preds_AC_kNN_" in res_cached:    skip_models.add("knn")
+            if "y_preds_FFI_" in res_cached:       skip_models.add("ffi")
+
+        if skip_models:
+            print(f"     [CACHE HIT] Skipping cached models: {sorted(skip_models)}")
         
         if f is None:
             mask = np.ones(len(y_encoded), dtype=bool)
@@ -260,7 +273,7 @@ def evaluate_outlier_filters(
             y_trues_.append(y_test)
 
             # --- Convolutional Neural Network (CNN) ---
-            if "cnn" in models:
+            if "cnn" in models and "cnn" not in skip_models:
                 start_time = time.perf_counter()
                 clf_AC = KerasModelWrapper(model=create_cnn_model,
                                    model__input_size=X_AC.shape[1],
@@ -290,7 +303,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
                 
             # --- Long Short-Term Memory (LSTM) ---
-            if "lstm" in models:
+            if "lstm" in models and "lstm" not in skip_models:
                 start_time = time.perf_counter()
                 clf_lstm = KerasModelWrapper(model=create_lstm_model,
                                    model__input_size=X_AC.shape[1],
@@ -320,7 +333,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
                 
             # --- Gated Recurrent Unit (GRU) ---
-            if "gru" in models:
+            if "gru" in models and "gru" not in skip_models:
                 start_time = time.perf_counter()
                 clf_gru = KerasModelWrapper(model=create_gru_model,
                                    model__input_size=X_AC.shape[1],
@@ -350,7 +363,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
 
             # --- Simple Recurrent Neural Network (RNN) ---
-            if "rnn" in models:
+            if "rnn" in models and "rnn" not in skip_models:
                 start_time = time.perf_counter()
                 clf_rnn = KerasModelWrapper(model=create_rnn_model,
                                    model__input_size=X_AC.shape[1],
@@ -380,7 +393,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
 
             # --- Transformer ---
-            if "transformer" in models:
+            if "transformer" in models and "transformer" not in skip_models:
                 start_time = time.perf_counter()
                 clf_trans = KerasModelWrapper(model=create_transformer_model,
                                    model__input_size=X_AC.shape[1],
@@ -410,7 +423,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
 
             # --- Random Forest (AC) ---
-            if "rf" in models:
+            if "rf" in models and "rf" not in skip_models:
                 start_time = time.perf_counter()
                 clf_AC_rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
                 clf_AC_rf.fit(X_AC_train, y_train)
@@ -432,7 +445,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
 
             # --- K-Nearest Neighbors (AC) ---
-            if "knn" in models:
+            if "knn" in models and "knn" not in skip_models:
                 start_time = time.perf_counter()
                 clf_AC_kNN = KNeighborsClassifier(n_neighbors=10)
                 clf_AC_kNN.fit(X_AC_train, y_train)
@@ -454,7 +467,7 @@ def evaluate_outlier_filters(
                 _checkpoint_partial()
 
             # --- Logistic Regression (FFI) ---
-            if "ffi" in models:
+            if "ffi" in models and "ffi" not in skip_models:
                 start_time = time.perf_counter()
                 clf_FFI = LogisticRegression(max_iter=1000)
                 clf_FFI.fit(X_FFI_train, y_train)
