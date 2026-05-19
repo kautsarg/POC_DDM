@@ -13,7 +13,8 @@ def sigmoid_5p(x, Fm, Fb, Sc, Cs, As):
     y = Fm / (1 + exp(-Sc * (x - Cs)))^As + Fb
     Parameters: Fm (max), Fb (min), Sc (slope), Cs (center), As (asymmetry)
     """
-    return Fm / (1.0 + np.exp(-Sc * (x - Cs)))**As + Fb
+    with np.errstate(over='ignore', under='ignore', invalid='ignore'):
+        return Fm / (1.0 + np.exp(-Sc * (x - Cs)))**As + Fb
 
 # ============================================================================
 # DERIVATIONS

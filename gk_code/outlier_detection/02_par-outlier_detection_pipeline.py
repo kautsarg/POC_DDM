@@ -79,9 +79,12 @@ def get_send(timestamps, curves_2d, send_n=[5, 10, 15, 20, 25]):
     )
     dy_dx = np.array(dy_dx_list) 
     send_dict = {}
-    for n in send_n:
-        send_dict[f"send_{n}"] = np.nanmean(dy_dx[:, -n:], axis=1)
-        send_dict[f"send_abs_{n}"] = np.nanmean(np.abs(dy_dx[:, -n:]), axis=1)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Mean of empty slice")
+        for n in send_n:
+            send_dict[f"send_{n}"] = np.nanmean(dy_dx[:, -n:], axis=1)
+            send_dict[f"send_abs_{n}"] = np.nanmean(np.abs(dy_dx[:, -n:]), axis=1)
     return send_dict
 
 def feature_boxplot(features_df, well_labels, feature_columns, target="well", title="", save_path=None):
