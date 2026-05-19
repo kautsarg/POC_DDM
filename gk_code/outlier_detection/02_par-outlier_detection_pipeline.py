@@ -188,7 +188,10 @@ if __name__ == "__main__":
 
     # Pick ONLY the specific folder for this specific node
     exp_path = exp_paths[args.task_id]
-    save_plot_flag = ("D20250808_E00_C00_F4500KHz_U_Sample_7" in str(exp_path))
+
+    # Safe save_plot_flag
+    saved_viz = getattr(config, "SAVED_VIZ", [])
+    save_plot_flag = bool(saved_viz) and np.any([saved in str(exp_path) for saved in saved_viz])
 
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
     
@@ -244,10 +247,15 @@ if __name__ == "__main__":
         timestamps = pipeline_state["timestamps"]
         metadata_df = pipeline_state["metadata_df"]
 
+    # Ensure aligned lengths
+    assert len(dataset_name) == len(dataset), "dataset_name and dataset length mismatch"
+
     try:
         colors = pd.factorize(Y_well)[0]
+        if len(colors) != len(Y_well):
+            raise ValueError("Color length mismatch")
         cmap = 'tab10'
-    except NameError:
+    except Exception:
         colors = '#3498db'
         cmap = None
 
@@ -294,26 +302,27 @@ if __name__ == "__main__":
     # -------------------------------------------------------------
     # 3. GENERATE BOXPLOTS (MSC & AMF Features)
     # -------------------------------------------------------------
-    print("\n=== GENERATING FEATURE BOXPLOTS ===")
-    msc_features = ["Ct", "Cy0", "log_F0"]
-    amf_features_all = ["Fm", "Fb", "Sc", "Cs", "Send", "Send_abs", "Send_fit", "Send_fit_abs"]
-    
-    msc_plot_path = os.path.join(exp_path, "msc_outlier")
-    amf_plot_path = os.path.join(exp_path, "amf_outlier")
-    os.makedirs(msc_plot_path, exist_ok=True)
-    os.makedirs(amf_plot_path, exist_ok=True)
-    
-    for name, features_df in zip(dataset_name, kinetic_features):
-        clean_title = name.replace("_", " ").title()
+    if(save_plot_flag):
+        print("\n=== GENERATING FEATURE BOXPLOTS ===")
+        msc_features = ["Ct", "Cy0", "log_F0"]
+        amf_features_all = ["Fm", "Fb", "Sc", "Cs", "Send", "Send_abs", "Send_fit", "Send_fit_abs"]
         
-        feature_boxplot(
-            features_df=features_df, well_labels=Y_well, feature_columns=msc_features, 
-            title=f"MSC Features: {clean_title}", save_path=os.path.join(msc_plot_path, f"{name}_msc_features.png")
-        )
-        feature_boxplot(
-            features_df=features_df, well_labels=Y_well, feature_columns=amf_features_all, 
-            title=f"AMF Features: {clean_title}", save_path=os.path.join(amf_plot_path, f"{name}_amf_features_boxplot.png")
-        )
+        msc_plot_path = os.path.join(exp_path, "msc_outlier")
+        amf_plot_path = os.path.join(exp_path, "amf_outlier")
+        os.makedirs(msc_plot_path, exist_ok=True)
+        os.makedirs(amf_plot_path, exist_ok=True)
+        
+        for name, features_df in zip(dataset_name, kinetic_features):
+            clean_title = name.replace("_", " ").title()
+            
+            feature_boxplot(
+                features_df=features_df, well_labels=Y_well, feature_columns=msc_features, 
+                title=f"MSC Features: {clean_title}", save_path=os.path.join(msc_plot_path, f"{name}_msc_features.png")
+            )
+            feature_boxplot(
+                features_df=features_df, well_labels=Y_well, feature_columns=amf_features_all, 
+                title=f"AMF Features: {clean_title}", save_path=os.path.join(amf_plot_path, f"{name}_amf_features_boxplot.png")
+            )
 
 
     # -------------------------------------------------------------
@@ -332,7 +341,17 @@ if __name__ == "__main__":
         for name, features_df in zip(dataset_name, kinetic_features):
             clean_title = name.replace("_", " ").title()
             numeric_df = features_df.select_dtypes(include=['number', 'float', 'int'])
+            if numeric_df.shape[1] == 0:
+                print(f"  -> [SKIP] No numeric features for {clean_title}")
+                linear_feature_combinations.append([])
+                continue
+
             corr = numeric_df.corr()
+            if corr.empty:
+                print(f"  -> [SKIP] Empty correlation matrix for {clean_title}")
+                linear_feature_combinations.append([])
+                continue
+
             corr_matrix = corr.abs() 
             
             valid_features = [f for f in corr_matrix.columns if f not in config.EXCLUDED_FEATURES]
@@ -352,42 +371,43 @@ if __name__ == "__main__":
                     
             linear_feature_combinations.append(best_triplet.copy() if best_triplet else [])
             print(f"  -> {clean_title} Best Triplet: {best_triplet} (Avg Inter-Corr: {max_score/3:.3f})")
-
-            fig, ax = plt.subplots(figsize=(24, 20))
-            sns.heatmap(corr.mask(corr.abs() < 0.5, 0), cmap="coolwarm", center=0, linewidths=0.5, cbar_kws={"shrink": .75}, ax=ax)
-            ax.tick_params(axis='x', rotation=90, labelsize=8); ax.tick_params(axis='y', rotation=0, labelsize=8)
-            plt.title(f"Correlation Matrix: {clean_title}", fontsize=22, fontweight='bold', pad=20)
-            
-            buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
-            buf.seek(0); heatmap_buffers.append(buf)
-            plt.close(fig); gc.collect()
-
-        save_html_report(os.path.join(reports_dir, "all_correlation_heatmaps.html"), "Experiment Correlation Heatmaps", None, heatmap_buffers)
-
-        print("\n=== GENERATING 3D COMBINATION PLOTS ===")
-        plot_3d_buffers = []
-        
-        for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
-            if not dataset_combs: continue
+            if(save_plot_flag):
+                fig, ax = plt.subplots(figsize=(24, 20))
+                sns.heatmap(corr.mask(corr.abs() < 0.5, 0), cmap="coolwarm", center=0, linewidths=0.5, cbar_kws={"shrink": .75}, ax=ax)
+                ax.tick_params(axis='x', rotation=90, labelsize=8); ax.tick_params(axis='y', rotation=0, labelsize=8)
+                plt.title(f"Correlation Matrix: {clean_title}", fontsize=22, fontweight='bold', pad=20)
                 
-            clean_title = name.replace("_", " ").title()
-            x_feat, y_feat, z_feat = dataset_combs[:3]
-            
-            corr_matrix = kf[[x_feat, y_feat, z_feat]].corr(method='pearson').abs()
-            avg_corr = (corr_matrix.loc[x_feat, y_feat] + corr_matrix.loc[x_feat, z_feat] + corr_matrix.loc[y_feat, z_feat]) / 3
-            X_vals = kf[[x_feat, y_feat, z_feat]].replace([np.inf, -np.inf], np.nan).fillna(-9999).values
-            
-            fig = plt.figure(figsize=(8, 6))
-            ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap='tab10', s=30, alpha=0.8, edgecolor='k')
-            ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\nAvg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
-            ax.set_xlabel(x_feat, fontweight='bold', labelpad=10); ax.set_ylabel(y_feat, fontweight='bold', labelpad=10); ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
-            
-            buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-            buf.seek(0); plot_3d_buffers.append(buf)
-            plt.close(fig); gc.collect()
+                buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
+                buf.seek(0); heatmap_buffers.append(buf)
+                plt.close(fig); gc.collect()
+        
+        if(save_plot_flag):
+            save_html_report(os.path.join(reports_dir, "all_correlation_heatmaps.html"), "Experiment Correlation Heatmaps", None, heatmap_buffers)
 
-        save_html_report(os.path.join(reports_dir, "best_feature_combinations_3D.html"), "Best 3D Feature Combinations", "Highest inter-correlated valid feature triplet for each experiment.", plot_3d_buffers, flex_layout=True)
+            print("\n=== GENERATING 3D COMBINATION PLOTS ===")
+            plot_3d_buffers = []
+            
+            for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
+                if not dataset_combs: continue
+                    
+                clean_title = name.replace("_", " ").title()
+                x_feat, y_feat, z_feat = dataset_combs[:3]
+                
+                corr_matrix = kf[[x_feat, y_feat, z_feat]].corr(method='pearson').abs()
+                avg_corr = (corr_matrix.loc[x_feat, y_feat] + corr_matrix.loc[x_feat, z_feat] + corr_matrix.loc[y_feat, z_feat]) / 3
+                X_vals = kf[[x_feat, y_feat, z_feat]].replace([np.inf, -np.inf], np.nan).fillna(-9999).values
+                
+                fig = plt.figure(figsize=(8, 6))
+                ax = fig.add_subplot(111, projection='3d')
+                ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap='tab10', s=30, alpha=0.8, edgecolor='k')
+                ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\nAvg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
+                ax.set_xlabel(x_feat, fontweight='bold', labelpad=10); ax.set_ylabel(y_feat, fontweight='bold', labelpad=10); ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
+                
+                buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+                buf.seek(0); plot_3d_buffers.append(buf)
+                plt.close(fig); gc.collect()
+
+            save_html_report(os.path.join(reports_dir, "best_feature_combinations_3D.html"), "Best 3D Feature Combinations", "Highest inter-correlated valid feature triplet for each experiment.", plot_3d_buffers, flex_layout=True)
 
         print("\n=== EXTRACTING TOP 5 INDEPENDENT FEATURES (RANDOM FOREST) ===")
         importance_dfs, rf_buffers = [], []
@@ -405,15 +425,16 @@ if __name__ == "__main__":
             importance_df = pd.DataFrame({'feature': numeric_df.columns, 'importance': rf.feature_importances_}).sort_values(by='importance', ascending=False)
             importance_dfs.append(importance_df)
             
-            fig, ax = plt.subplots(figsize=(12, 18))
-            sns.barplot(data=importance_df.head(40), x='importance', y='feature', palette='viridis', ax=ax)
-            ax.set_title(f"Random Forest Importances: {clean_title}", fontsize=18, fontweight='bold', pad=20)
-            ax.set_xlabel("Importance Score", fontweight='bold'); ax.set_ylabel("Features", fontweight='bold')
-            ax.grid(axis='x', linestyle='--', alpha=0.6)
-            
-            buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
-            buf.seek(0); rf_buffers.append(buf)
-            plt.close(fig); gc.collect()
+            if(save_plot_flag):
+                fig, ax = plt.subplots(figsize=(12, 18))
+                sns.barplot(data=importance_df.head(40), x='importance', y='feature', palette='viridis', ax=ax)
+                ax.set_title(f"Random Forest Importances: {clean_title}", fontsize=18, fontweight='bold', pad=20)
+                ax.set_xlabel("Importance Score", fontweight='bold'); ax.set_ylabel("Features", fontweight='bold')
+                ax.grid(axis='x', linestyle='--', alpha=0.6)
+                
+                buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
+                buf.seek(0); rf_buffers.append(buf)
+                plt.close(fig); gc.collect()
 
             # Greedy Top 5 Selection
             valid_df = importance_df[~importance_df['feature'].isin(config.EXCLUDED_FEATURES)].copy()
@@ -430,8 +451,9 @@ if __name__ == "__main__":
                     
             important_feature_combinations.append(selected_features)
             print(f"  -> {clean_title}: {selected_features}")
-
-        save_html_report(os.path.join(reports_dir, "all_feature_importances.html"), "Feature Importance Analysis", None, rf_buffers)
+        
+        if(save_plot_flag):
+            save_html_report(os.path.join(reports_dir, "all_feature_importances.html"), "Feature Importance Analysis", None, rf_buffers)
 
         # Update and save unified state
         pipeline_state["linear_feature_combinations"] = linear_feature_combinations
@@ -443,31 +465,32 @@ if __name__ == "__main__":
     # -------------------------------------------------------------
     # 5. TSNE & 3D FOR TOP 5 FEATURES
     # -------------------------------------------------------------
-    print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
-    tsne_buffers = []
-    for name, top_5_features, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
-        clean_title = name.replace("_", " ").title()
-        top_3_features = top_5_features[:3]
-        df_top5 = kf[top_5_features].replace([np.inf, -np.inf], np.nan).fillna(0)
-        
-        tsne = TSNE(n_components=2, random_state=0)
-        X_tsne = tsne.fit_transform(df_top5.values)
-        
-        fig = plt.figure(figsize=(22, 9))
-        ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-        ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
-        ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3_features)})", fontsize=14, fontweight='bold', pad=15)
-        
-        ax2 = fig.add_subplot(1, 2, 2)
-        ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
-        ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5_features)})", fontsize=14, fontweight='bold', pad=15)
-        ax2.grid(True, linestyle='--', alpha=0.6)
-        
-        buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-        buf.seek(0); tsne_buffers.append(buf)
-        plt.close(fig); gc.collect()
+    if(save_plot_flag):
+        print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
+        tsne_buffers = []
+        for name, top_5_features, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
+            clean_title = name.replace("_", " ").title()
+            top_3_features = top_5_features[:3]
+            df_top5 = kf[top_5_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+            
+            tsne = TSNE(n_components=2, random_state=0)
+            X_tsne = tsne.fit_transform(df_top5.values)
+            
+            fig = plt.figure(figsize=(22, 9))
+            ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+            ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+            ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3_features)})", fontsize=14, fontweight='bold', pad=15)
+            
+            ax2 = fig.add_subplot(1, 2, 2)
+            ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+            ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5_features)})", fontsize=14, fontweight='bold', pad=15)
+            ax2.grid(True, linestyle='--', alpha=0.6)
+            
+            buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+            buf.seek(0); tsne_buffers.append(buf)
+            plt.close(fig); gc.collect()
 
-    save_html_report(os.path.join(reports_dir, "independent_features_tsne_and_3d.html"), "Top 5 Independent Features Dimensionality Reduction", "Visualizing the highest importance features after removing mathematical redundancies.", tsne_buffers)
+        save_html_report(os.path.join(reports_dir, "independent_features_tsne_and_3d.html"), "Top 5 Independent Features Dimensionality Reduction", "Visualizing the highest importance features after removing mathematical redundancies.", tsne_buffers)
 
 
     # -------------------------------------------------------------
@@ -494,6 +517,11 @@ if __name__ == "__main__":
 
     # Active kinetic features reference (modifying this modifies the state dict via reference)
     kinetic_features = pipeline_state["kinetic_features"]
+
+    # Guard missing kinetic_features
+    if "kinetic_features" not in pipeline_state:
+        print("  -> [ERROR] kinetic_features missing from pipeline_state. Aborting.")
+        sys.exit(1)
 
     # Configs
     msc_configs = [
