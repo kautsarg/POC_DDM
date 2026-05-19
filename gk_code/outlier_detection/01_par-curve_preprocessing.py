@@ -322,7 +322,7 @@ def save_experiment_data_restructured(exp_path, fitting_results, processed_curve
         "margin": margin
     }
 
-    save_path = os.path.join(exp_path, "preprocessed_curves_data.joblib")
+    save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
     joblib.dump(save_data, save_path, compress=3)
     print(f"  -> Saved numerical results and metadata to {save_path}")
 

@@ -198,7 +198,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------
     # 1. LOAD OR INITIALIZE UNIFIED STATE
     # -------------------------------------------------------------
-    unified_save_path = os.path.join(exp_path, "curve_for_training_latest.joblib")
+    unified_save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     pipeline_state = {}
 
     if os.path.exists(unified_save_path):
@@ -210,9 +210,9 @@ if __name__ == "__main__":
             print(f"  -> [WARNING] Failed to load state ({e}). Starting fresh.")
 
     if "dataset" not in pipeline_state:
-        curve_path = Path(exp_path, "preprocessed_curves_data.joblib")
+        curve_path = Path(exp_path, config.PREPROCESSED_CURVES_PATH)
         if not curve_path.exists():
-            print(f"Skipping {exp_path.name} - 'preprocessed_curves_data.joblib' not found.")
+            print(f"Skipping {exp_path.name} - '{config.PREPROCESSED_CURVES_PATH}' not found.")
             sys.exit(0)
             
         data = joblib.load(curve_path)

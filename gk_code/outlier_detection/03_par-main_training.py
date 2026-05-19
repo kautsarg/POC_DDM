@@ -27,8 +27,8 @@ if __name__ == "__main__":
     exp_path = exp_paths[args.task_id]
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
-    data_path = os.path.join(exp_path, "curve_for_training_latest.joblib")
-    results_file_path = os.path.join(exp_path, "classification_performances_with_proba.joblib")
+    data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
+    results_file_path = os.path.join(exp_path, config.TRAINING_RESULT_PATH)
 
     model_plot_path = os.path.join(exp_path, "model_performance")
     os.makedirs(model_plot_path, exist_ok=True)
