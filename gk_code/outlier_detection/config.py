@@ -41,11 +41,20 @@ mpl_colors = [
 ]
 plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
 
-EXCLUDED_FEATURES = [
-    'TH', 'msc_mahal_dist', 'msc_label_0.001', 'amf_label_Send', 
-    'amf_label_Send_abs', 'amf_label_Send_fit', 'amf_label_Send_fit_abs', 
-    'mean_std_outlier_label_3sigma',
-    "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group", "well_temp_lin2d_mean", "well_2d_temp_npr_mean"
+EXCLUDED_FEATURES = [    
+    "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group",
+    "well_temp_lin2d_mean", "well_2d_temp_npr_mean",
+    "5p_sigmoid_fitted", "5p_sigmoid_fitted_dydx",
+    "Send", "Send_abs", "Send_fit", "Send_fit_abs",
+    "cnn_ae_pw_ds1_label_elbow", "cnn_ae_pw_ds1_label_90", "cnn_ae_pw_ds1_label_95",
+    "cnn_ae_glb_ds1_label_elbow", "cnn_ae_glb_ds1_label_90", "cnn_ae_glb_ds1_label_95",
+    "lstm_ae_pw_ds1_label_elbow", "lstm_ae_pw_ds1_label_90", "lstm_ae_pw_ds1_label_95",
+    "lstm_ae_glb_ds1_label_elbow", "lstm_ae_glb_ds1_label_90", "lstm_ae_glb_ds1_label_95",
+    "knn_top_0.85", "knn_top_0.9", "knn_top_0.95",
+    "msc_mahal_dist",
+    "msc_mahal_dist_msc_linear_0.001", "msc_label_msc_linear_0.001",
+    "msc_mahal_dist_msc_baseline_0.001", "msc_label_msc_baseline_0.001",
+    "amf_label_amf_important", "amf_label_amf_send_5"
 ]
 
 FEATURE_GROUPS = [
@@ -68,4 +77,19 @@ FEATURE_GROUPS = [
     ['xe', 'y_xe'],
     ['amplitude', 'y_xs', 'y_xe'],
     ['y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'F_max', 'Fm', 'FFI', 'F_range']
+]
+
+CURVE_SPLIT = {
+    'original_curves': ['ori_curves'],
+    'fitted_curves': ['original_fitted_full', 'original_fitted_stretched'],
+    'preprocessed_curves': ['cleaned_std_fitted_full', 'cleaned_std_fitted_stretched'],
+    'preprocessed_stretched_curves': ['cleaned_lowest_fitted_full', 'cleaned_lowest_fitted_stretched'],
+}
+
+IMPORTANCE_METRICS = [
+    "rf_importance", 
+    "anova_score", 
+    "silhouette_score", 
+    "mutual_info_score", 
+    "kruskal_wallis_score"
 ]
