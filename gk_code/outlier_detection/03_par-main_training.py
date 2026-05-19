@@ -136,10 +136,15 @@ if __name__ == "__main__":
         # --- REFERENCE TRAINING ---
         print(f"\n  [MODE 2/2] REFERENCE TRAINING")
         cached_ref = all_ml_results[clean_title].get("Reference", {})
+
+        def checkpoint_ref(updated_results):
+            all_ml_results[clean_title]["Reference"] = updated_results
+            joblib.dump(all_ml_results, results_file_path, compress=3)
         
         res_ref = evaluate_outlier_filters(
             trained_curve, features_df, y_full, outlier_filters, clean_title, 
-            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf"]
+            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf"],
+            checkpoint_fn=checkpoint_ref
         )
         all_ml_results[clean_title]["Reference"] = res_ref
         

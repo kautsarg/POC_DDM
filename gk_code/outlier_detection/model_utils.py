@@ -146,7 +146,11 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
 # ====================================================================
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
-def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name, cached_results=None, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf", "knn", "ffi"], n_splits=1):
+def evaluate_outlier_filters(
+    X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name,
+    cached_results=None, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf", "knn", "ffi"], n_splits=1,
+    checkpoint_fn=None
+):
     X_FFI_full = X_curves[:, [-1]]
     
     results_dict = cached_results.copy() if cached_results is not None else {}
@@ -221,6 +225,32 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
         y_preds_AC_kNN_, y_probs_AC_kNN_, classes_AC_kNN_ = [], [], []
         y_preds_FFI_, y_probs_FFI_, classes_FFI_ = [], [], []
 
+        def _checkpoint_partial():
+            if checkpoint_fn is None:
+                return
+            res_entry_partial = {
+                "y_trues_": y_trues_,
+                "mask_count": np.sum(mask) 
+            }
+            if "cnn" in models:
+                res_entry_partial.update({"y_preds_AC_": y_preds_AC_, "y_probs_AC_": y_probs_AC_, "classes_AC_": classes_AC_})
+            if "lstm" in models:
+                res_entry_partial.update({"y_preds_AC_lstm_": y_preds_AC_lstm_, "y_probs_AC_lstm_": y_probs_AC_lstm_, "classes_AC_lstm_": classes_AC_lstm_})
+            if "gru" in models:
+                res_entry_partial.update({"y_preds_AC_gru_": y_preds_AC_gru_, "y_probs_AC_gru_": y_probs_AC_gru_, "classes_AC_gru_": classes_AC_gru_})
+            if "rnn" in models:
+                res_entry_partial.update({"y_preds_AC_rnn_": y_preds_AC_rnn_, "y_probs_AC_rnn_": y_probs_AC_rnn_, "classes_AC_rnn_": classes_AC_rnn_})
+            if "transformer" in models:
+                res_entry_partial.update({"y_preds_AC_trans_": y_preds_AC_trans_, "y_probs_AC_trans_": y_probs_AC_trans_, "classes_AC_trans_": classes_AC_trans_})
+            if "rf" in models:
+                res_entry_partial.update({"y_preds_AC_rf_": y_preds_AC_rf_, "y_probs_AC_rf_": y_probs_AC_rf_, "classes_AC_rf_": classes_AC_rf_})
+            if "knn" in models:
+                res_entry_partial.update({"y_preds_AC_kNN_": y_preds_AC_kNN_, "y_probs_AC_kNN_": y_probs_AC_kNN_, "classes_AC_kNN_": classes_AC_kNN_})
+            if "ffi" in models:
+                res_entry_partial.update({"y_preds_FFI_": y_preds_FFI_, "y_probs_FFI_": y_probs_FFI_, "classes_FFI_": classes_FFI_})
+            results_dict[f] = res_entry_partial
+            checkpoint_fn(results_dict)
+
         splits = splitter.split(X_AC, y_true)
         
         for train_index, test_index in splits:
@@ -257,6 +287,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | CNN (ACA)   | {cnn_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
+                _checkpoint_partial()
                 
             # --- Long Short-Term Memory (LSTM) ---
             if "lstm" in models:
@@ -286,6 +317,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LSTM (ACA)  | {lstm_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
+                _checkpoint_partial()
                 
             # --- Gated Recurrent Unit (GRU) ---
             if "gru" in models:
@@ -315,6 +347,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | GRU (ACA)   | {gru_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
+                _checkpoint_partial()
 
             # --- Simple Recurrent Neural Network (RNN) ---
             if "rnn" in models:
@@ -344,6 +377,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RNN (ACA)   | {rnn_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
+                _checkpoint_partial()
 
             # --- Transformer ---
             if "transformer" in models:
@@ -373,6 +407,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | Trans (ACA) | {trans_acc:5.2f}%   | Duration: {formatted_time}")
                 tf.keras.backend.clear_session()
+                _checkpoint_partial()
 
             # --- Random Forest (AC) ---
             if "rf" in models:
@@ -394,6 +429,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | RF (ACA)    | {rf_acc:5.2f}%   | Duration: {formatted_time}")
+                _checkpoint_partial()
 
             # --- K-Nearest Neighbors (AC) ---
             if "knn" in models:
@@ -415,6 +451,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | KNN (ACA)   | {knn_acc:5.2f}%   | Duration: {formatted_time}")
+                _checkpoint_partial()
 
             # --- Logistic Regression (FFI) ---
             if "ffi" in models:
@@ -436,6 +473,7 @@ def evaluate_outlier_filters(X_curves, features_df, y_encoded, outlier_filters, 
                 formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
 
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | LR (FFI)    | {lr_acc:5.2f}%")
+                _checkpoint_partial()
             
         # Dynamically build the results entry based on trained models
         res_entry = {
