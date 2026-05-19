@@ -121,6 +121,14 @@ if __name__ == "__main__":
     total_samples = len(y_full)
     trained_curve = dataset[0].copy()
 
+    # --- OPTIMIZATION: Extract existing baseline if script was restarted ---
+    shared_ref_baseline = None
+    for ct in all_ml_results:
+        if "Reference" in all_ml_results[ct] and None in all_ml_results[ct]["Reference"]:
+            shared_ref_baseline = all_ml_results[ct]["Reference"][None]
+            print("  [*] Found cached Reference Baseline. Will skip redundant baseline training for all datasets.")
+            break
+
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
         clean_title = name.replace("_", " ").title()
         progress_pct = ((idx + 1) / total_datasets) * 100
@@ -158,6 +166,10 @@ if __name__ == "__main__":
         print(f"\n  [MODE 2/2] REFERENCE TRAINING")
         cached_ref = all_ml_results[clean_title].get("Reference", {})
 
+        # Inject the shared baseline so it immediately hits the cache inside evaluate_outlier_filters
+        if shared_ref_baseline is not None and None not in cached_ref:
+            cached_ref[None] = shared_ref_baseline
+
         checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
         
         res_ref = evaluate_outlier_filters(
@@ -165,6 +177,11 @@ if __name__ == "__main__":
             mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf"],
             checkpoint_fn=checkpoint_ref
         )
+        
+        # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
+        if shared_ref_baseline is None and None in res_ref:
+            shared_ref_baseline = res_ref[None]
+
         all_ml_results[clean_title]["Reference"] = res_ref
         
         joblib.dump(all_ml_results, results_file_path, compress=3)
