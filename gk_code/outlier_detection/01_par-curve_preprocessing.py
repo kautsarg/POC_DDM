@@ -679,8 +679,10 @@ if __name__ == "__main__":
     exp_path = exp_paths[args.task_id]
     save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
     if os.path.exists(save_path):
+        print(f"Cache hit: {exp_path}")
+        print("  ✓ Experiment complete!\n")
         sys.exit(0)
-        
+
     print(f"Processing Experiment: {exp_path}")
         
     exp = titan_load_and_preprocessing(exp_path, n_wells=config.N_WELLS, start_type="temperature",
