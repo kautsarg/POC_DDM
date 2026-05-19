@@ -12,8 +12,9 @@ from cycler import cycler
 # ==========================================
 
 # Default path for the HPC cluster
-# DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
-DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
+DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+# DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
+# DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -114,4 +115,9 @@ IMPORTANCE_METRICS = [
     "silhouette_score", 
     "mutual_info_score", 
     "kruskal_wallis_score"
+]
+
+SAVED_VIZ = [
+    "D20250808_E00_C00_F4500KHz_U_Sample_7",
+    "D20250820_E00_C00_F4500KHz_U_Sample_18_wet_3"
 ]
