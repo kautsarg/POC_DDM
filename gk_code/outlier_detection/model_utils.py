@@ -124,15 +124,24 @@ def create_rnn_model(input_size, output_size):
                   metrics=['accuracy'])
     return model
 
-# 5. Transformer (Added Positional Embedding)
+# 5. Transformer
 def create_transformer_model(input_size, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
     
-    # Positional Embedding
-    positions = tf.range(start=0, limit=input_size, delta=1)
-    pos_embedding = tf.keras.layers.Embedding(input_dim=input_size, output_dim=1)(positions)
-    x = inputs + pos_embedding 
+    # --- THE DOWNSAMPLING STEM ---
+    # Shrinks sequence from 600 -> ~150 while projecting to 32 features
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(inputs)
+    x = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(x)
     
+    # Calculate the new sequence length mathematically for the Positional Embedding
+    new_seq_len = x.shape[1] 
+    
+    # Positional Embedding
+    positions = tf.range(start=0, limit=x.shape[1], delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    x = x + pos_embedding 
+    
+    # --- STANDARD TRANSFORMER BLOCKS ---
     for _ in range(num_blocks):
         attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
         attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
@@ -140,7 +149,7 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
 
         ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(x)
         ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
-        ffn_output = tf.keras.layers.Dense(inputs.shape[-1])(ffn_output)
+        ffn_output = tf.keras.layers.Dense(head_size)(ffn_output) 
         x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn_output)
 
     x = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
@@ -149,10 +158,8 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
     outputs = tf.keras.layers.Dense(output_size, activation="softmax")(x)
 
     model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
-    model.compile(optimizer=optimizer, 
-                  loss='sparse_categorical_crossentropy', 
-                  metrics=['accuracy'])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
 # ====================================================================
@@ -223,6 +230,12 @@ def evaluate_outlier_filters(
             y_true = y_true[valid_class_mask]
 
         n_classes = len(np.unique(y_true))
+
+        # Curve Normalisations
+        curve_mins = np.min(X_AC, axis=1, keepdims=True)
+        curve_maxs = np.max(X_AC, axis=1, keepdims=True)
+        
+        X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
         
         if n_classes < 2:
             print(f"     [Warning] Not enough classes left to train after filtering. Skipping.")
