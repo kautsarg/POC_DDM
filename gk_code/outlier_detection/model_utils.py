@@ -74,74 +74,86 @@ def create_cnn_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
                   metrics=['accuracy'])
     return model
 
-# 2. LSTM (Long Short-Term Memory)
+# 2. LSTM (Bidirectional + Gradient Clipping)
 def create_lstm_model(input_size, output_size):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.LSTM(32, return_sequences=True)(inputs)
-    x = tf.keras.layers.LSTM(16)(x)
+    # Wrapped in Bidirectional
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(inputs)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
     x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
     
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    model.compile(optimizer='adam', 
+    # Added clipnorm to prevent exploding gradients
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, 
                   loss='sparse_categorical_crossentropy', 
                   metrics=['accuracy'])
     return model
 
-# 3. GRU (Gated Recurrent Unit)
+# 3. GRU (Bidirectional + Gradient Clipping)
 def create_gru_model(input_size, output_size):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.GRU(32, return_sequences=True)(inputs)
-    x = tf.keras.layers.GRU(16)(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inputs)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
     x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
     
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    model.compile(optimizer='adam', 
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, 
                   loss='sparse_categorical_crossentropy', 
                   metrics=['accuracy'])
     return model
 
-# 4. Simple RNN
+# 4. Simple RNN (Bidirectional + Gradient Clipping)
 def create_rnn_model(input_size, output_size):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.SimpleRNN(32, return_sequences=True)(inputs)
-    x = tf.keras.layers.SimpleRNN(16)(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(32, return_sequences=True))(inputs)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
     x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
     
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    model.compile(optimizer='adam', 
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, 
                   loss='sparse_categorical_crossentropy', 
                   metrics=['accuracy'])
     return model
 
-# 5. Transformer (1D Time Series Encoder)
+# 5. Transformer (Added Positional Embedding)
 def create_transformer_model(input_size, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = inputs
+    
+    # Positional Embedding
+    positions = tf.range(start=0, limit=input_size, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=input_size, output_dim=1)(positions)
+    x = inputs + pos_embedding 
     
     for _ in range(num_blocks):
-        # Multi-Head Attention Block
         attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
         attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
         x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn_output)
 
-        # Feed Forward Block
         ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(x)
         ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
         ffn_output = tf.keras.layers.Dense(inputs.shape[-1])(ffn_output)
         x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn_output)
 
-    # Global average pooling over the sequence dimension
     x = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
     x = tf.keras.layers.Dense(16, activation="relu")(x)
     x = tf.keras.layers.Dropout(dropout)(x)
     outputs = tf.keras.layers.Dense(output_size, activation="softmax")(x)
 
     model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
-    model.compile(optimizer='adam', 
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, 
                   loss='sparse_categorical_crossentropy', 
                   metrics=['accuracy'])
     return model
-
 
 # ====================================================================
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)

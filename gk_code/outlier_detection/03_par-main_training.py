@@ -175,7 +175,7 @@ if __name__ == "__main__":
         
         res_ref = evaluate_outlier_filters(
             trained_curve, features_df, y_full, outlier_filters, clean_title, 
-            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf"],
+            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "gru", "rnn", "rf"],
             checkpoint_fn=checkpoint_ref
         )
         
