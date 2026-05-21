@@ -87,10 +87,10 @@ if __name__ == "__main__":
     outlier_filters = [
         None, 
         
-        'msc_label_msc_linear_0.001'
+        'msc_label_msc_linear_0.001',
         'msc_label_msc_baseline_0.001',
 
-        'amf_label_amf_important'
+        'amf_label_amf_important',
         'amf_label_amf_send_5',
 
         'knn_top_0.95',
