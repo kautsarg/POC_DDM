@@ -13,6 +13,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
 
 import tensorflow as tf
 import absl.logging
@@ -53,6 +54,113 @@ def set_global_determinism(seed=0):
     except AttributeError:
         pass
 
+# ====================================================================
+# LATE FUSION NEURAL NETWORKS (Multi-Input)
+# ====================================================================
+def create_cnn_lf_model(input_size_curve, input_size_features, output_size):
+    # 1. Raw Curve Branch
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    x = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    x = tf.keras.layers.Conv1D(8, 3, activation='relu')(x)
+    x = tf.keras.layers.Flatten()(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+    
+    # 2. Manual Features Branch
+    input_features = tf.keras.layers.Input(shape=(input_size_features,), name="features_input")
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+    
+    # 3. Fusion & Output
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+    
+    model = tf.keras.models.Model(inputs=[input_curve, input_features], outputs=outputs)
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+def create_lstm_lf_model(input_size_curve, input_size_features, output_size):
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(input_curve)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+    
+    input_features = tf.keras.layers.Input(shape=(input_size_features,), name="features_input")
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+    
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+    
+    model = tf.keras.models.Model(inputs=[input_curve, input_features], outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+def create_gru_lf_model(input_size_curve, input_size_features, output_size):
+    # 1. Raw Curve Branch (GRU)
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(input_curve)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+    
+    # 2. Manual Features Branch
+    input_features = tf.keras.layers.Input(shape=(input_size_features,), name="features_input")
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+    
+    # 3. Fusion & Output
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+    
+    # Compile
+    model = tf.keras.models.Model(inputs=[input_curve, input_features], outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+def create_transformer_lf_model(input_size_curve, input_size_features, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(input_curve)
+    x = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(x)
+    
+    new_seq_len = x.shape[1] 
+    positions = tf.range(start=0, limit=new_seq_len, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    x = x + pos_embedding 
+    
+    for _ in range(num_blocks):
+        attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
+        attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn_output)
+
+        ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(x)
+        ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
+        ffn_output = tf.keras.layers.Dense(head_size)(ffn_output) 
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn_output)
+
+    x = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(x)
+    curve_emb = tf.keras.layers.Dense(32, activation="relu")(x)
+    
+    input_features = tf.keras.layers.Input(shape=(input_size_features,), name="features_input")
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+    
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+
+    model = tf.keras.models.Model(inputs=[input_curve, input_features], outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
 
 # ====================================================================
 # NEURAL NETWORK SETUP
@@ -167,15 +275,21 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
 # ====================================================================
 def evaluate_outlier_filters(
     X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name,
-    cached_results=None, models=["cnn", "lstm", "gru", "rnn", "transformer", "rf", "knn", "ffi"], n_splits=1,
-    checkpoint_fn=None
+    cached_results=None, models=["cnn", "cnn_lf"], n_splits=1,
+    checkpoint_fn=None, KFS=None, rerun_models=[]
 ):
     X_FFI_full = X_curves[:, [-1]]
     
+    # Safely extract manual features if KFS is provided
+    if KFS is not None:
+        X_manual_full = features_df[KFS].values
+        # Replace inf/-inf/NaN generated by feature extraction edge cases
+        X_manual_full = np.nan_to_num(X_manual_full, nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        X_manual_full = None
+    
     results_dict = cached_results.copy() if cached_results is not None else {}
     total_filters = len(outlier_filters)
-    
-    # Normalize model names to lowercase for robust matching
     models = [m.lower() for m in models]
 
     model_key_map = {
@@ -187,17 +301,17 @@ def evaluate_outlier_filters(
         "rf": ("y_preds_AC_rf_", "y_probs_AC_rf_", "classes_AC_rf_"),
         "knn": ("y_preds_AC_kNN_", "y_probs_AC_kNN_", "classes_AC_kNN_"),
         "ffi": ("y_preds_FFI_", "y_probs_FFI_", "classes_FFI_"),
+        "cnn_lf": ("y_preds_AC_cnn_lf_", "y_probs_AC_cnn_lf_", "classes_AC_cnn_lf_"),
+        "lstm_lf": ("y_preds_AC_lstm_lf_", "y_probs_AC_lstm_lf_", "classes_AC_lstm_lf_"),
+        "trans_lf": ("y_preds_AC_trans_lf_", "y_probs_AC_trans_lf_", "classes_AC_trans_lf_"),
+        "gru_lf": ("y_preds_AC_gru_lf_", "y_probs_AC_gru_lf_", "classes_AC_gru_lf_"),
     }
 
     model_print_map = {
-        "cnn": "CNN (ACA)",
-        "lstm": "LSTM (ACA)",
-        "gru": "GRU (ACA)",
-        "rnn": "RNN (ACA)",
-        "transformer": "Trans (ACA)",
-        "rf": "RF (ACA)",
-        "knn": "KNN (ACA)",
-        "ffi": "LR (FFI)"
+        "cnn": "CNN (ACA)", "lstm": "LSTM (ACA)", "gru": "GRU (ACA)",
+        "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
+        "knn": "KNN (ACA)", "ffi": "LR (FFI)",
+        "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
     }
 
     for idx, f in enumerate(outlier_filters):
@@ -205,7 +319,6 @@ def evaluate_outlier_filters(
         filter_pct = ((idx + 1) / total_filters) * 100
         print(f"  -> Testing Filter [{idx+1}/{total_filters} | {filter_pct:.1f}%]: {filter_name}")
         
-        # Load any existing progress for this filter
         res_entry = results_dict.get(f, {})
         
         if f is None:
@@ -219,6 +332,8 @@ def evaluate_outlier_filters(
         X_AC = np.nan_to_num(X_curves[mask], nan=0.0, posinf=0.0, neginf=0.0)
         X_FFI = np.nan_to_num(X_FFI_full[mask], nan=0.0, posinf=0.0, neginf=0.0)
         y_true = y_encoded[mask]
+        
+        X_manual = X_manual_full[mask] if X_manual_full is not None else None
 
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
@@ -228,37 +343,28 @@ def evaluate_outlier_filters(
             X_AC = X_AC[valid_class_mask]
             X_FFI = X_FFI[valid_class_mask]
             y_true = y_true[valid_class_mask]
+            if X_manual is not None:
+                X_manual = X_manual[valid_class_mask]
 
         n_classes = len(np.unique(y_true))
 
         # Curve Normalisations
         curve_mins = np.min(X_AC, axis=1, keepdims=True)
         curve_maxs = np.max(X_AC, axis=1, keepdims=True)
-        
         X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
         
-        if n_classes < 2:
-            print(f"     [Warning] Not enough classes left to train after filtering. Skipping.")
-            continue
-
-        if len(y_true) < 2 * n_classes:
-            print(f"     [Warning] Too few samples left ({len(y_true)}) to stratify {n_classes} classes. Skipping.")
+        if n_classes < 2 or len(y_true) < 2 * n_classes:
+            print(f"     [Warning] Insufficient classes or samples. Skipping.")
             continue
 
         calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
 
         if n_splits == 1:
             splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
-        elif n_splits > 1:
+        else:
             min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
             actual_splits = min(n_splits, min_class_count)
-            
-            if actual_splits < n_splits:
-                print(f"     [Warning] Reduced n_splits from {n_splits} to {actual_splits} due to class imbalance.")
-                
             splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
-        else:
-            raise ValueError("n_splits must be 1 or greater.")
 
         splits = list(splitter.split(X_AC, y_true))
         
@@ -266,16 +372,17 @@ def evaluate_outlier_filters(
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
             res_entry["mask_count"] = int(np.sum(mask))
 
-        # Train models iteratively, checking cache before each
         for m in models:
-            if m not in model_key_map:
+            if m not in model_key_map: continue
+            if "lf" in m and X_manual is None:
+                print(f"     [Error] Model {m} requires KFS features, but KFS was not provided.")
                 continue
                 
             preds_key, probs_key, classes_key = model_key_map[m]
             print_name = f"{model_print_map[m]:<11}"
             
             # --- CHECK CACHE ---
-            if preds_key in res_entry:
+            if (preds_key in res_entry) and (m not in rerun_models):
                 fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
                 acc = np.mean(fold_accs) * 100
                 print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
@@ -283,48 +390,73 @@ def evaluate_outlier_filters(
                 continue
             
             # --- TRAIN NEW MODEL ---
-            preds, probs, classes = [], [], []
+            preds, probs, classes_list = [], [], []
             start_time = time.perf_counter()
             
             for train_idx, test_idx in splits:
-                X_train = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
-                X_test = X_FFI[test_idx] if m == 'ffi' else X_AC[test_idx]
+                X_train_curve = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
+                X_test_curve = X_FFI[test_idx] if m == 'ffi' else X_AC[test_idx]
                 y_train = y_true[train_idx]
                 
-                if m == "cnn":
-                    clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                elif m == "lstm":
-                    clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                elif m == "gru":
-                    clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                elif m == "rnn":
-                    clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                elif m == "transformer":
-                    clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train.shape[1], model__output_size=len(np.unique(y_encoded)), epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                elif m == "rf":
-                    clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
-                elif m == "knn":
-                    clf = KNeighborsClassifier(n_neighbors=10)
-                elif m == "ffi":
-                    clf = LogisticRegression(max_iter=1000)
-                    
-                clf.fit(X_train, y_train)
-                
-                preds.append(clf.predict(X_test))
-                probs.append(clf.predict_proba(X_test))
-                classes.append(clf.classes_)
-                
-                if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
+                # Setup Manual Features (Scaled strictly on train fold)
+                if X_manual is not None:
+                    scaler = StandardScaler()
+                    X_train_man = scaler.fit_transform(X_manual[train_idx])
+                    X_test_man = scaler.transform(X_manual[test_idx])
+
+                # Train Standard vs. Late Fusion models
+                if m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
                     tf.keras.backend.clear_session()
+                    if m == "cnn_lf":
+                        model = create_cnn_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        epochs = 1000
+                    elif m == "lstm_lf":
+                        model = create_lstm_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        epochs = 500
+                    elif m == "trans_lf":
+                        model = create_transformer_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        epochs = 500
+                    elif m == "gru_lf":
+                        model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        epochs = 500
+                        
+                    model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    
+                    prob = model.predict([X_test_curve, X_test_man], verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+                    
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+                else:
+                    # Standard 1D Models (scikeras/sklearn)
+                    if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "lstm": clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "gru": clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "rnn": clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "transformer": clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "rf": clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
+                    elif m == "knn": clf = KNeighborsClassifier(n_neighbors=10)
+                    elif m == "ffi": clf = LogisticRegression(max_iter=1000)
+                    else:
+                        raise ValueError(f"Model '{m}' is not properly defined in the training loop.")
+                        
+                    clf.fit(X_train_curve, y_train)
+                    preds.append(clf.predict(X_test_curve))
+                    probs.append(clf.predict_proba(X_test_curve))
+                    classes_list.append(clf.classes_)
+                    
+                    if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
+                        tf.keras.backend.clear_session()
                     
             end_time = time.perf_counter()
             duration = end_time - start_time
             formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))
             
-            # --- CHECKPOINT AFTER MODEL IS COMPLETELY DONE ---
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
-            res_entry[classes_key] = classes
+            res_entry[classes_key] = classes_list
             
             results_dict[f] = res_entry
             if checkpoint_fn is not None:
@@ -335,7 +467,6 @@ def evaluate_outlier_filters(
             
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}%   | Duration: {formatted_time}")
 
-        # Ensure dictionary is explicitly updated in the parent
         results_dict[f] = res_entry
 
     return results_dict

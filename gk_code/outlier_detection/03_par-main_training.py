@@ -6,6 +6,9 @@ import joblib
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
+from sklearn.feature_selection import mutual_info_classif
+import numpy as np
+
 
 import config
 
@@ -142,28 +145,22 @@ if __name__ == "__main__":
             if clean_title not in all_ml_results: 
                 all_ml_results[clean_title] = {}
     
-            # # --- NATIVE TRAINING ---
-            # print(f"\n  [MODE 1/2] NATIVE TRAINING")
-            # cached_native = all_ml_results[clean_title].get("Native", {})
+            # --- FEATURE SELECTION (MUTUAL INFORMATION) ---
+            print(f"\n  [*] Calculating Mutual Information for Top 10 Features...")
             
-            # res_native = evaluate_outlier_filters(
-            #     curves_2d, features_df, y_full, outlier_filters, clean_title, 
-            #     mode_name="Native", cached_results=cached_native, models=["cnn"]
-            # )
-            # all_ml_results[clean_title]["Native"] = res_ref
+            # Extract candidate features and clean NaNs/Infs (MI function will crash otherwise)
+            X_candidates = features_df[config.LD_FEATURES].values
+            X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
             
-            # joblib.dump(all_ml_results, results_file_path, compress=3)
-                
-            # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
-            # plot_ml_results(
-            #     results_dict=all_ml_results[clean_title]["Native"], 
-            #     outlier_filters=outlier_filters, 
-            #     dataset_name=clean_title, 
-            #     mode_name="Native Training", 
-            #     total_count=total_samples, 
-            #     save_prefix=prefix_native
-            # )
-    
+            # Calculate MI scores
+            mi_scores = mutual_info_classif(X_candidates_clean, y_full, random_state=0)
+            
+            # Get indices of the top 10 scores (sorted descending)
+            top_10_idx = np.argsort(mi_scores)[-10:][::-1]
+            top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
+            
+            print(f"  [*] Selected Top 10 Features: {top_10_features}")
+
             # --- REFERENCE TRAINING ---
             print(f"\n  [MODE 2/2] REFERENCE TRAINING")
             cached_ref = all_ml_results[clean_title].get("Reference", {})
@@ -175,9 +172,17 @@ if __name__ == "__main__":
             checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
             
             res_ref = evaluate_outlier_filters(
-                trained_curve, features_df, y_full, outlier_filters, clean_title, 
-                mode_name="Reference", cached_results=cached_ref, models=["cnn", "gru", "transformer"],
-                checkpoint_fn=checkpoint_ref
+                trained_curve, 
+                features_df, 
+                y_full, 
+                outlier_filters, 
+                clean_title, 
+                mode_name="Reference", 
+                cached_results=cached_ref, 
+                models=["cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf"],
+                checkpoint_fn=checkpoint_ref,
+                KFS=top_10_features,
+                rerun_models=config.RERUN_MODELS
             )
             
             # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
