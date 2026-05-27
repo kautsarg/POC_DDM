@@ -88,29 +88,29 @@ if __name__ == "__main__":
         None, 
         
         'msc_label_msc_linear_0.001',
-        'msc_label_msc_baseline_0.001',
+        # 'msc_label_msc_baseline_0.001',
 
         'amf_label_amf_important',
-        'amf_label_amf_send_5',
+        # 'amf_label_amf_send_5',
 
         'knn_top_0.95',
-        'knn_top_0.9',
+        # 'knn_top_0.9',
         # 'knn_top_0.85', 
         
-        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
         # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
         
         f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
-        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
         # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
 
-        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
         # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
 
         f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
         # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
     ]
 
@@ -131,70 +131,71 @@ if __name__ == "__main__":
             break
 
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-        clean_title = name.replace("_", " ").title()
-        progress_pct = ((idx + 1) / total_datasets) * 100
-        
-        print(f"\n{'='*75}")
-        print(f"[{idx+1}/{total_datasets} | {progress_pct:.1f}%] Processing Dataset: {clean_title}")
-        print(f"{'='*75}")
-
-        if clean_title not in all_ml_results: 
-            all_ml_results[clean_title] = {}
-
-        # # --- NATIVE TRAINING ---
-        # print(f"\n  [MODE 1/2] NATIVE TRAINING")
-        # cached_native = all_ml_results[clean_title].get("Native", {})
-        
-        # res_native = evaluate_outlier_filters(
-        #     curves_2d, features_df, y_full, outlier_filters, clean_title, 
-        #     mode_name="Native", cached_results=cached_native, models=["cnn"]
-        # )
-        # all_ml_results[clean_title]["Native"] = res_ref
-        
-        # joblib.dump(all_ml_results, results_file_path, compress=3)
+        if(name=="ori_curves"):
+            clean_title = name.replace("_", " ").title()
+            progress_pct = ((idx + 1) / total_datasets) * 100
             
-        # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
-        # plot_ml_results(
-        #     results_dict=all_ml_results[clean_title]["Native"], 
-        #     outlier_filters=outlier_filters, 
-        #     dataset_name=clean_title, 
-        #     mode_name="Native Training", 
-        #     total_count=total_samples, 
-        #     save_prefix=prefix_native
-        # )
-
-        # --- REFERENCE TRAINING ---
-        print(f"\n  [MODE 2/2] REFERENCE TRAINING")
-        cached_ref = all_ml_results[clean_title].get("Reference", {})
-
-        # Inject the shared baseline so it immediately hits the cache inside evaluate_outlier_filters
-        if shared_ref_baseline is not None and None not in cached_ref:
-            cached_ref[None] = shared_ref_baseline
-
-        checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
-        
-        res_ref = evaluate_outlier_filters(
-            trained_curve, features_df, y_full, outlier_filters, clean_title, 
-            mode_name="Reference", cached_results=cached_ref, models=["cnn", "lstm", "transformer", "rnn", "rf"],
-            checkpoint_fn=checkpoint_ref
-        )
-        
-        # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
-        if shared_ref_baseline is None and None in res_ref:
-            shared_ref_baseline = res_ref[None]
-
-        all_ml_results[clean_title]["Reference"] = res_ref
-        
-        joblib.dump(all_ml_results, results_file_path, compress=3)
+            print(f"\n{'='*75}")
+            print(f"[{idx+1}/{total_datasets} | {progress_pct:.1f}%] Processing Dataset: {clean_title}")
+            print(f"{'='*75}")
+    
+            if clean_title not in all_ml_results: 
+                all_ml_results[clean_title] = {}
+    
+            # # --- NATIVE TRAINING ---
+            # print(f"\n  [MODE 1/2] NATIVE TRAINING")
+            # cached_native = all_ml_results[clean_title].get("Native", {})
             
-        prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
-        plot_ml_results(
-            results_dict=all_ml_results[clean_title]["Reference"], 
-            outlier_filters=outlier_filters, 
-            dataset_name=clean_title, 
-            mode_name="Reference Training", 
-            total_count=total_samples, 
-            save_prefix=prefix_ref
-        )
-        
-    gc.collect()
+            # res_native = evaluate_outlier_filters(
+            #     curves_2d, features_df, y_full, outlier_filters, clean_title, 
+            #     mode_name="Native", cached_results=cached_native, models=["cnn"]
+            # )
+            # all_ml_results[clean_title]["Native"] = res_ref
+            
+            # joblib.dump(all_ml_results, results_file_path, compress=3)
+                
+            # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
+            # plot_ml_results(
+            #     results_dict=all_ml_results[clean_title]["Native"], 
+            #     outlier_filters=outlier_filters, 
+            #     dataset_name=clean_title, 
+            #     mode_name="Native Training", 
+            #     total_count=total_samples, 
+            #     save_prefix=prefix_native
+            # )
+    
+            # --- REFERENCE TRAINING ---
+            print(f"\n  [MODE 2/2] REFERENCE TRAINING")
+            cached_ref = all_ml_results[clean_title].get("Reference", {})
+    
+            # Inject the shared baseline so it immediately hits the cache inside evaluate_outlier_filters
+            if shared_ref_baseline is not None and None not in cached_ref:
+                cached_ref[None] = shared_ref_baseline
+    
+            checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
+            
+            res_ref = evaluate_outlier_filters(
+                trained_curve, features_df, y_full, outlier_filters, clean_title, 
+                mode_name="Reference", cached_results=cached_ref, models=["cnn", "gru", "transformer"],
+                checkpoint_fn=checkpoint_ref
+            )
+            
+            # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
+            if shared_ref_baseline is None and None in res_ref:
+                shared_ref_baseline = res_ref[None]
+    
+            all_ml_results[clean_title]["Reference"] = res_ref
+            
+            joblib.dump(all_ml_results, results_file_path, compress=3)
+                
+            prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
+            plot_ml_results(
+                results_dict=all_ml_results[clean_title]["Reference"], 
+                outlier_filters=outlier_filters, 
+                dataset_name=clean_title, 
+                mode_name="Reference Training", 
+                total_count=total_samples, 
+                save_prefix=prefix_ref
+            )
+            
+        gc.collect()
