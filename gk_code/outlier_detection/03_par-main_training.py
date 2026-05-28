@@ -179,7 +179,7 @@ if __name__ == "__main__":
                 clean_title, 
                 mode_name="Reference", 
                 cached_results=cached_ref, 
-                models=["cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf"],
+                models=["cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
                 checkpoint_fn=checkpoint_ref,
                 KFS=top_10_features,
                 rerun_models=config.RERUN_MODELS

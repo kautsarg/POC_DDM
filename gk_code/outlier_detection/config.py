@@ -12,9 +12,9 @@ from cycler import cycler
 # ==========================================
 
 # Default path for the HPC cluster
-DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
+# DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
 # DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-# DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
+DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -120,4 +120,18 @@ IMPORTANCE_METRICS = [
 SAVED_VIZ = [
     "D20250808_E00_C00_F4500KHz_U_Sample_7",
     "D20250820_E00_C00_F4500KHz_U_Sample_18_wet_3"
+]
+
+LD_FEATURES = [
+    'Fm', 'Fb', 'Sc', 'Cs', 'As', 'xms', 'xs', 'xe', 'xp1', 'xp2', 'TH', 
+    'y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'amplitude', 'dy_xms', 
+    'dy_xp1', 'dy_xp2', 'd2y_xp1', 'd2y_xp2', 'threshold_distance', 
+    'first_half_distance', 'second_half_distance', 'distance_asymmetry_index', 
+    'peak_shifting_distance', 'A1', 'A2', 'area_asymmetry_index', 
+    'peak_asymmetry_index', 'Ct', 'Cy0', 'F_max', 'log_F0', 'F0', 'Send', 
+    'FFI', 'F_range'
+]
+
+RERUN_MODELS = [
+    # "cnn_lf"
 ]
