@@ -261,6 +261,117 @@ def plot_ultimate_attributions(models, X, y, timestamps, dataset_name, save_path
     fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+def plot_latent_saliency_heatmap(models, X, timestamps, dataset_name, save_path):
+    """
+    Plots a stacked figure for each model: 
+    Top: The mean input curve across the batch.
+    Bottom: A heatmap where the Y-axis represents ALL latent dimensions 
+    (sorted by Dense layer weight importance) and the X-axis represents input timestamps.
+    """
+    if not models: return
+    
+    # 1. Select a consistent batch
+    batch_size = min(512, len(X))
+    rng = np.random.default_rng(42)
+    idx = rng.choice(len(X), size=batch_size, replace=False)
+    X_batch = X[idx]
+    
+    t = timestamps if len(timestamps) == X_batch.shape[1] else np.arange(X_batch.shape[1])
+    
+    # Calculate the mean and standard deviation of the input signal to plot the curve
+    mean_curve = np.squeeze(np.mean(X_batch, axis=0))
+    std_curve = np.squeeze(np.std(X_batch, axis=0))
+    if mean_curve.ndim > 1: 
+        mean_curve = mean_curve.mean(axis=-1)
+        std_curve = std_curve.mean(axis=-1)
+    
+    # Create subplots: 2 rows per model (1 for curve, 1 for heatmap)
+    fig, axes = plt.subplots(
+        nrows=len(models) * 2, 
+        ncols=1, 
+        figsize=(10, 6 * len(models)), 
+        gridspec_kw={'height_ratios': [1, 3] * len(models)}
+    )
+    
+    # Ensure axes is a 1D array even if there's only 1 model
+    if len(models) * 2 == 2:
+        axes = np.array(axes)
+
+    for m_idx, (model_name, model) in enumerate(models.items()):
+        # Assign the specific axes for this model
+        ax_curve = axes[m_idx * 2]
+        ax_heat = axes[m_idx * 2 + 1]
+        
+        # Extract the latent model to find the total number of dimensions
+        latent_model = tf.keras.Model(model.input, model.layers[-2].output)
+        # num_latent_dims = latent_model.output_shape[-1]
+    
+        num_latent_dims = 100
+        
+        # 2. Get ALL dimensions ranked by dense weights
+        ranked_dims, importances = get_top_dims_from_weights(model, top_k=num_latent_dims)
+        
+        # 3. Calculate attribution for all ranked dimensions
+        attributions = targeted_latent_attribution(latent_model, X_batch, ranked_dims)
+        
+        # 4. Build the Heatmap Matrix
+        heatmap_matrix = np.zeros((num_latent_dims, len(t)))
+        
+        for rank_idx, dim in enumerate(ranked_dims):
+            heatmap_matrix[rank_idx, :] = attributions[dim]
+        
+        # # Normalise globally across the matrix for better colour scaling
+        # max_val = np.max(heatmap_matrix)
+        # if max_val > 0:
+        #     heatmap_matrix = heatmap_matrix / max_val
+
+        # 5a. Plot the Input Curve (Top Plot)
+        ax_curve.plot(t, mean_curve, color='black', lw=1.5)
+        ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
+        ax_curve.set_title(f"{model_name.upper()} - Saliency Map by Ranked Latent Dimension", fontsize=12, fontweight='bold')
+        ax_curve.set_ylabel("Input Signal", fontsize=10, fontweight='bold')
+        
+        # Align x-axis limits strictly to the data bounds
+        ax_curve.set_xlim(t[0], t[-1])
+        ax_curve.margins(x=0) # Double ensure no padding is added
+        plt.setp(ax_curve.get_xticklabels(), visible=False)
+        ax_curve.grid(True, linestyle='--', alpha=0.5)
+
+        # 5b. Plot the heatmap (Bottom Plot)
+        im = ax_heat.imshow(
+            heatmap_matrix, 
+            aspect='auto', 
+            cmap='inferno', 
+            extent=[t[0], t[-1], num_latent_dims, 0], # 0 (Rank 1) at the top
+            interpolation='nearest'
+        )
+        
+        ax_heat.set_xlabel("Time", fontsize=10, fontweight='bold')
+        ax_heat.set_ylabel("Latent Rank\n(Top = Most Important)", fontsize=10, fontweight='bold')
+        
+        # --- THE ALIGNMENT FIX ---
+        # 1. Allocate a tiny slice of space on the right of the heatmap for the real colorbar
+        divider_heat = make_axes_locatable(ax_heat)
+        cax_heat = divider_heat.append_axes("right", size="3%", pad=0.1)
+        cbar = fig.colorbar(im, cax=cax_heat)
+        cbar.set_label("Saliency Attribution", rotation=270, labelpad=15, fontweight='bold')
+        
+        # 2. Allocate the exact same tiny slice of space on the right of the curve... and make it invisible!
+        divider_curve = make_axes_locatable(ax_curve)
+        cax_curve = divider_curve.append_axes("right", size="3%", pad=0.1)
+        cax_curve.axis('off')
+        # -------------------------
+
+    fig.suptitle(f"Global Latent Saliency Heatmap | {dataset_name}", fontsize=16, fontweight='bold', y=1.02)
+    
+    # Use hspace to control the gap between the curve and the heatmap
+    plt.subplots_adjust(hspace=0.15)
+    
+    # Removed fig.tight_layout() as it sometimes fights with make_axes_locatable
+    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
 
 # ====================================================================
 # MODULE 3: GLOBAL VISUALIZATION
@@ -383,6 +494,15 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             dataset_name=data_dict["dataset_name"], 
             save_path=global_vis_dir / f"03_ultimate_time_attribution_{exp_path.name}.png",
             top_k=25
+        )
+        
+        # --- NEW HEATMAP VISUALISATION IMPLEMENTED HERE ---
+        plot_latent_saliency_heatmap(
+            models=models, 
+            X=data_dict["X_full"], timestamps=data_dict["timestamps"], 
+            # dataset_name=data_dict["dataset_name"], 
+            dataset_name=exp_path.name,
+            save_path=global_vis_dir / f"04_saliency_heatmap_{exp_path.name}.png"
         )
 
         print(f"  [✓] Processed {exp_path.name}")
