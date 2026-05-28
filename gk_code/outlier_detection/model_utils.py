@@ -55,6 +55,90 @@ def set_global_determinism(seed=0):
         pass
 
 # ====================================================================
+# DUAL MODEL
+# ====================================================================
+
+def create_cnn_gru_dual_model(input_size_curve, output_size):
+    """
+    Dual-branch architecture combining CNN (Local) and BiGRU (Global) 
+    using only the raw curve as input.
+    """
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    
+    # 1. Local Feature Branch (CNN)
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
+    c = tf.keras.layers.Flatten()(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
+    
+    # 2. Global Feature Branch (BiGRU)
+    g = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(input_curve)
+    g = tf.keras.layers.LayerNormalization()(g)
+    g = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(g)
+    g = tf.keras.layers.Dropout(0.2)(g)
+    gru_emb = tf.keras.layers.Dense(32, activation='relu')(g)
+    
+    # 3. Fusion & Output
+    merged = tf.keras.layers.Concatenate()([cnn_emb, gru_emb])
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+    
+    # Compile
+    model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+
+def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    """
+    Dual-branch architecture combining CNN (Local) and Transformer (Global) 
+    using only the raw curve as input.
+    """
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    
+    # 1. Local Feature Branch (CNN)
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
+    c = tf.keras.layers.Flatten()(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
+    
+    # 2. Global Feature Branch (Transformer)
+    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(input_curve)
+    t = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(t)
+    
+    new_seq_len = t.shape[1] 
+    positions = tf.range(start=0, limit=new_seq_len, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    t = t + pos_embedding 
+    
+    for _ in range(num_blocks):
+        attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(t, t)
+        attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
+        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + attn_output)
+
+        ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(t)
+        ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
+        ffn_output = tf.keras.layers.Dense(head_size)(ffn_output) 
+        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + ffn_output)
+
+    t = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(t)
+    trans_emb = tf.keras.layers.Dense(32, activation="relu")(t)
+    
+    # 3. Fusion & Output
+    merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+
+    # Compile
+    model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+# ====================================================================
 # LATE FUSION NEURAL NETWORKS (Multi-Input)
 # ====================================================================
 def create_cnn_lf_model(input_size_curve, input_size_features, output_size):
@@ -305,6 +389,8 @@ def evaluate_outlier_filters(
         "lstm_lf": ("y_preds_AC_lstm_lf_", "y_probs_AC_lstm_lf_", "classes_AC_lstm_lf_"),
         "trans_lf": ("y_preds_AC_trans_lf_", "y_probs_AC_trans_lf_", "classes_AC_trans_lf_"),
         "gru_lf": ("y_preds_AC_gru_lf_", "y_probs_AC_gru_lf_", "classes_AC_gru_lf_"),
+        "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
+        "cnn_trans_dual": ("y_preds_AC_cnn_trans_dual_", "y_probs_AC_cnn_trans_dual_", "classes_AC_cnn_trans_dual_"),
     }
 
     model_print_map = {
@@ -312,6 +398,7 @@ def evaluate_outlier_filters(
         "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
         "knn": "KNN (ACA)", "ffi": "LR (FFI)",
         "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
+        "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
     }
 
     for idx, f in enumerate(outlier_filters):
@@ -429,6 +516,28 @@ def evaluate_outlier_filters(
                     preds.append(pred)
                     probs.append(prob)
                     classes_list.append(cls)
+
+                elif m in ["cnn_gru_dual", "cnn_trans_dual"]:
+                    tf.keras.backend.clear_session()
+                    
+                    if m == "cnn_gru_dual":
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
+                        epochs = 500
+                    elif m == "cnn_trans_dual":
+                        model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes)
+                        epochs = 500
+                        
+                    # Notice we only pass X_train_curve here, not a list of inputs!
+                    model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+                    
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
                 else:
                     # Standard 1D Models (scikeras/sklearn)
                     if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
@@ -507,6 +616,18 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('Long Short-Term Memory (ACA)', 'y_preds_AC_lstm_'))
         if 'y_preds_AC_' in sample_res:
             method_info.append(('Convolutional Neural Network (ACA)', 'y_preds_AC_'))
+        if 'y_preds_AC_cnn_lf_' in sample_res:
+            method_info.append(('CNN Late Fusion', 'y_preds_AC_cnn_lf_'))
+        if 'y_preds_AC_lstm_lf_' in sample_res:
+            method_info.append(('LSTM Late Fusion', 'y_preds_AC_lstm_lf_'))
+        if 'y_preds_AC_gru_lf_' in sample_res:
+            method_info.append(('GRU Late Fusion', 'y_preds_AC_gru_lf_'))
+        if 'y_preds_AC_trans_lf_' in sample_res:
+            method_info.append(('Transformer Late Fusion', 'y_preds_AC_trans_lf_'))
+        if 'y_preds_AC_cnn_gru_dual_' in sample_res:
+            method_info.append(('CNN + GRU Dual', 'y_preds_AC_cnn_gru_dual_'))
+        if 'y_preds_AC_cnn_trans_dual_' in sample_res:
+            method_info.append(('CNN + Transformer Dual', 'y_preds_AC_cnn_trans_dual_'))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")
