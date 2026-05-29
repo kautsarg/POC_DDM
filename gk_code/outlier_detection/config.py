@@ -15,6 +15,7 @@ from cycler import cycler
 # DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
 # DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
 DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
+LAB_EXP_FOLDER = "/vol/bitbucket/gk225/lab_dataset"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -35,6 +36,7 @@ AE_DOWNSAMPLE_FACTOR = 1
 PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
 TRAINING_DATA_PATH = 'curve_for_training.joblib'
 TRAINING_RESULT_PATH = 'classification_performances.joblib'
+TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
 
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
