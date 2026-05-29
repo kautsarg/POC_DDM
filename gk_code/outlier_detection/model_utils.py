@@ -573,8 +573,9 @@ def evaluate_outlier_filters(
                 
             fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], preds)]
             acc = np.mean(fold_accs) * 100
+            std = np.std(fold_accs) * 100
             
-            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}%   | Duration: {formatted_time}")
+            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: {formatted_time}")
 
         results_dict[f] = res_entry
 
@@ -714,9 +715,9 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
         fig_comp.savefig(comp_path, bbox_inches='tight', dpi=300, facecolor='white')
     plt.close(fig_comp)
     
-    # --- 3. CONSOLE LEADERBOARD PRINT ---
+   # --- 3. CONSOLE LEADERBOARD PRINT ---
     print(f"\n  🏆 Top Combinations for {mode_name}: {dataset_name}")
-    print("  " + "-"*95)
+    print("  " + "-"*105)
     
     all_results = []
     for title, m_key in method_info:
@@ -729,13 +730,14 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
     
             if len(fold_accs) > 0:
                 mean_acc = np.mean(fold_accs)
+                std_acc = np.std(fold_accs)
                 filt_name = str(f) if f is not None else "Baseline (None)"
-                all_results.append((mean_acc, dataset_name, mode_name, title, filt_name))
+                all_results.append((mean_acc, std_acc, dataset_name, mode_name, title, filt_name))
             
     all_results.sort(key=lambda x: x[0], reverse=True)
     
-    for i, (acc, d_name, m_name, method, filt) in enumerate(all_results):
-        print(f"  {i+1}. {acc:6.2f}% | Data: {d_name[:15]:<15} | Model: {method[:20]:<20} | Filter: {filt[:30]}")
-    print("  " + "-"*95 + "\n")
+    for i, (acc, std_acc, d_name, m_name, method, filt) in enumerate(all_results):
+        print(f"  {i+1:2d}. {acc:6.2f}% ± {std_acc:5.2f}% | Data: {d_name[:15]:<15} | Model: {method[:20]:<20} | Filter: {filt[:30]}")
+    print("  " + "-"*105 + "\n")
     
     return all_results

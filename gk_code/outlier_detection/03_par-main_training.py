@@ -59,10 +59,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Main Training Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
+    parser.add_argument("--n_splits", type=int, default=1)
     args = parser.parse_args()
 
     exp_paths = get_exp_paths(args.exp_folder)
-
+    n_splits = args.n_splits
     if args.task_id >= len(exp_paths):
         print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
         sys.exit(0)
@@ -70,7 +71,10 @@ if __name__ == "__main__":
     exp_path = exp_paths[args.task_id]
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
-    results_file_path = os.path.join(exp_path, config.TRAINING_RESULT_PATH)
+    if(n_splits > 1):
+        results_file_path = os.path.join(exp_path, config.TRAINING_10FOLD_RESULT_PATH)
+    else:    
+        results_file_path = os.path.join(exp_path, config.TRAINING_RESULT_PATH)
     model_plot_path = os.path.join(exp_path, "model_performance")
     os.makedirs(model_plot_path, exist_ok=True)
 
@@ -90,31 +94,31 @@ if __name__ == "__main__":
     outlier_filters = [
         None, 
         
-        'msc_label_msc_linear_0.001',
-        # 'msc_label_msc_baseline_0.001',
+        # 'msc_label_msc_linear_0.001',
+        # # 'msc_label_msc_baseline_0.001',
 
-        'amf_label_amf_important',
-        # 'amf_label_amf_send_5',
+        # 'amf_label_amf_important',
+        # # 'amf_label_amf_send_5',
 
-        'knn_top_0.95',
-        # 'knn_top_0.9',
-        # 'knn_top_0.85', 
+        # 'knn_top_0.95',
+        # # 'knn_top_0.9',
+        # # 'knn_top_0.85', 
         
-        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
         
-        f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
-        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
+        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
+        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
 
-        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
+        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
 
-        f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
-        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
+        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
+        # # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
+        # # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
     ]
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
@@ -134,7 +138,7 @@ if __name__ == "__main__":
             break
 
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-        if(name=="ori_curves"):
+        if(name=="ori_curves" or name =='original_fitted_full'):
             clean_title = name.replace("_", " ").title()
             progress_pct = ((idx + 1) / total_datasets) * 100
             
@@ -179,10 +183,11 @@ if __name__ == "__main__":
                 clean_title, 
                 mode_name="Reference", 
                 cached_results=cached_ref, 
-                models=["cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
+                models=["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
                 checkpoint_fn=checkpoint_ref,
                 KFS=top_10_features,
-                rerun_models=config.RERUN_MODELS
+                rerun_models=config.RERUN_MODELS,
+                n_splits=args.n_splits
             )
             
             # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
