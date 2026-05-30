@@ -33,10 +33,16 @@ PLOT_DECIMAL_PRECISION = 4
 AE_DOWNSAMPLE_FACTOR = 1
 
 # File paths
-PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
-TRAINING_DATA_PATH = 'curve_for_training.joblib'
-TRAINING_RESULT_PATH = 'classification_performances.joblib'
-TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
+PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
+TRAINING_DATA_PATH = 'curve_for_training_nonorm.joblib'
+TRAINING_RESULT_PATH = 'classification_performances_nonorm.joblib'
+TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold_nonorm.joblib'
+
+# File paths
+# PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
+# TRAINING_DATA_PATH = 'curve_for_training.joblib'
+# TRAINING_RESULT_PATH = 'classification_performances.joblib'
+# TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
 
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 

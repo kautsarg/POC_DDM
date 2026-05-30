@@ -699,9 +699,14 @@ if __name__ == "__main__":
     X_time, Y_well, X_2d_bs_active = reconstruct_data(exp, attr_str="well_2d_bs_active")
     
     baseline_value = 0
-    if (np.min(X_2d_bs_active) < 0):
-        baseline_value = -np.min(X_2d_bs_active) + 1e-9
-        X_2d_bs_active = X_2d_bs_active + baseline_value
+
+    ##############################################################
+    # THIS #######################################################
+    # if (np.min(X_2d_bs_active) < 0):
+    #     baseline_value = -np.min(X_2d_bs_active) + 1e-9
+    #     X_2d_bs_active = X_2d_bs_active + baseline_value
+    ##############################################################
+    ##############################################################
     
     processed_curves, indices_dict = process_experiment_data(
         X_2d_bs_active, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin

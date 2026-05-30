@@ -435,10 +435,13 @@ def evaluate_outlier_filters(
 
         n_classes = len(np.unique(y_true))
 
-        # Curve Normalisations
-        curve_mins = np.min(X_AC, axis=1, keepdims=True)
-        curve_maxs = np.max(X_AC, axis=1, keepdims=True)
-        X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
+
+        # # THISSS ############################################################
+        # # Curve Normalisations
+        # curve_mins = np.min(X_AC, axis=1, keepdims=True)
+        # curve_maxs = np.max(X_AC, axis=1, keepdims=True)
+        # X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
+        ######################################################################
         
         if n_classes < 2 or len(y_true) < 2 * n_classes:
             print(f"     [Warning] Insufficient classes or samples. Skipping.")
@@ -472,8 +475,10 @@ def evaluate_outlier_filters(
             if (preds_key in res_entry) and (m not in rerun_models):
                 fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
                 acc = np.mean(fold_accs) * 100
+                std = np.std(fold_accs) * 100
+            
                 print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}%   | Duration: Cached")
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: Cached")
                 continue
             
             # --- TRAIN NEW MODEL ---
