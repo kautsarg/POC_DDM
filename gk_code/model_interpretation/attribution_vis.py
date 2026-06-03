@@ -512,4 +512,4 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
     plot_global_cnn_kernels(global_kernels, global_dataset_names, global_vis_dir)
 
 if __name__ == "__main__":
-    run_interpretation_pipeline()
+    run_interpretation_pipeline(exp_folder_path=config.LAB_EXP_FOLDER, filter_key=None)
