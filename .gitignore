@@ -3,6 +3,7 @@
 
 *.html
 *.csv
+*.ndjson
 
 .ipynb_checkpoints/
 *.ipynb_checkpoints/
