@@ -88,6 +88,16 @@ if __name__ == "__main__":
     # Filter Clean data only
     dataset_name, dataset, kinetic_features = filter_datasets(dataset_name, dataset, kinetic_features)
 
+    if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
+        print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
+        mapping = config.LABEL_MAPPINGS[exp_path.name]
+        
+        # Maps matching keys; falls back to the original index value if not found
+        Y_well = [mapping.get(w, w) for w in Y_well]
+    else:
+        print(f"  [*] No custom mapping found for {exp_path.name}. Retaining default well labels.")
+
+    # Convert to encoded labels
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well)
 
