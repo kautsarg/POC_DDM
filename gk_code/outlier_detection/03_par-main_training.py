@@ -22,7 +22,7 @@ def get_exp_paths(exp_folder):
     return sorted([
         Path(exp_folder, name)
         for name in os.listdir(exp_folder)
-        if (os.path.isdir(os.path.join(exp_folder, name)) and name not in [".DS_Store"])
+        if (os.path.isdir(os.path.join(exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)
     ])
 
 def load_training_data(exp_path):
@@ -178,41 +178,41 @@ if __name__ == "__main__":
             # ---------------------------------------------------------
             # NATIVE TRAINING (Raw Original Curves)
             # ---------------------------------------------------------
-            print(f"\n  [MODE 1/2] NATIVE TRAINING")
-            cached_native = all_ml_results[clean_title].get("Native", {})
+            # print(f"\n  [MODE 1/2] NATIVE TRAINING")
+            # cached_native = all_ml_results[clean_title].get("Native", {})
             
-            checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
+            # checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
 
-            # 3. Train models on original un-fitted curves (curves_2d)
-            res_native = evaluate_outlier_filters(
-                X_curves=curves_2d,              
-                features_df=features_df, 
-                y_encoded=y_full, 
-                outlier_filters=outlier_filters,
-                dataset_name=clean_title, 
-                mode_name="Native", 
-                cached_results=cached_native, 
-                models=["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
-                checkpoint_fn=checkpoint_native,
-                KFS=top_10_features,
-                rerun_models=config.RERUN_MODELS,
-                n_splits=args.n_splits
-            )
+            # # 3. Train models on original un-fitted curves (curves_2d)
+            # res_native = evaluate_outlier_filters(
+            #     X_curves=curves_2d,              
+            #     features_df=features_df, 
+            #     y_encoded=y_full, 
+            #     outlier_filters=outlier_filters,
+            #     dataset_name=clean_title, 
+            #     mode_name="Native", 
+            #     cached_results=cached_native, 
+            #     models=["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
+            #     checkpoint_fn=checkpoint_native,
+            #     KFS=top_10_features,
+            #     rerun_models=config.RERUN_MODELS,
+            #     n_splits=args.n_splits
+            # )
             
-            # 4. Final Save
-            all_ml_results[clean_title]["Native"] = res_native
-            joblib.dump(all_ml_results, results_file_path, compress=3)
+            # # 4. Final Save
+            # all_ml_results[clean_title]["Native"] = res_native
+            # joblib.dump(all_ml_results, results_file_path, compress=3)
                 
-            # 5. Generate and Save Visualizations
-            prefix_native = os.path.join(model_plot_path, f"{name}_Native")
-            plot_ml_results(
-                results_dict=all_ml_results[clean_title]["Native"], 
-                outlier_filters=outlier_filters,       # FIXED: Use the local list
-                dataset_name=clean_title, 
-                mode_name="Native Training", 
-                total_count=total_samples, 
-                save_prefix=prefix_native
-            )
+            # # 5. Generate and Save Visualizations
+            # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
+            # plot_ml_results(
+            #     results_dict=all_ml_results[clean_title]["Native"], 
+            #     outlier_filters=outlier_filters,       # FIXED: Use the local list
+            #     dataset_name=clean_title, 
+            #     mode_name="Native Training", 
+            #     total_count=total_samples, 
+            #     save_prefix=prefix_native
+            # )
 
             # --- REFERENCE TRAINING ---
             print(f"\n  [MODE 2/2] REFERENCE TRAINING")
