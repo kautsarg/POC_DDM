@@ -14,9 +14,9 @@ from cycler import cycler
 # Default path for the HPC cluster
 # DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
 # DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
-DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
-LAB_EXP_FOLDER = "/vol/bitbucket/gk225/lab_dataset"
-MULTI_EXP_FOLDERS = "/vol/bitbucket/gk225/POC_DDM_multi"
+DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init"
+LAB_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper"
+MULTI_EXP_FOLDERS = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -159,3 +159,5 @@ LABEL_MAPPINGS = {
 		9: 'NC-C',
 	},
 }
+
+EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old']
