@@ -820,12 +820,10 @@ if __name__ == "__main__":
     n_wells = args.n_wells
     n_a_type = args.n_a_type
 
-
     margin = (config.WINDOW_SIZE_1STDER - 1) // 2
 
     exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) 
-                        if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in [".DS_Store"])])
-
+                        if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)])
 
     curve_labels = ["Original Curve", "1st Derivative", "1st Derivative Moving Avg", "Cleaned Curve", 
                     "Cleaned Curve (Lowest Crossing)"] 
@@ -862,9 +860,9 @@ if __name__ == "__main__":
     print("  -> Processing Sigmoid Curves...")
     X_time, Y_well, X_2d_bs_active = reconstruct_data(all_exp_data, attr_str="well_2d_bs_active")
     
-    X_2d_bs_active = pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values
-    Y_well = pixel_temp_dfs["well_2d_bs_active_df"]['well_id'].values
-    X_time = all_exp_data[0].wells_list[0].time_npr
+    # X_2d_bs_active = pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values
+    # Y_well = pixel_temp_dfs["well_2d_bs_active_df"]['well_id'].values
+    # X_time = all_exp_data[0].wells_list[0].time_npr
     
     baseline_value = 0
 
