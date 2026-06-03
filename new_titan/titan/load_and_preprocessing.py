@@ -182,6 +182,7 @@ def titan_load_and_preprocessing(exp_path: Path,
                 plt_show=False,
                 plt_save=False,
                 exp_path=exp_path,
+                ref_i=ref_i
             )
             idx_active_gain_list.append(idx_ref)
 
@@ -253,7 +254,7 @@ def titan_load_and_preprocessing(exp_path: Path,
                     arr_gain_3d_filtered[~idx_active_gain_2d, :] = np.nan
                     plot_gain_3d_plotly(
                         arr_gain_3d_filtered,
-                        save_path=None,
+                        save_path='/vol/bitbucket/gk225/multi_viz',
                         experiment_name=f"{experiment_name} (vref_idx={ref_i})",
                         vref=vref_vect[ref_i],
                     )

@@ -127,7 +127,7 @@ def filter_by_vref(X, v_thresh=70):
         axis=0)  # check if one of the first 10 derivatives is >v_thresh
 
 
-def filter_by_gain(x, delta_threshold=50, range_threshold=10, plt_show=False, plt_save=False, exp_path=None):
+def filter_by_gain(x, delta_threshold=50, range_threshold=10, plt_show=False, plt_save=False, exp_path=None, ref_i=None):
     delta = x[:, :, 1] - x[:, :, 3]
     idx_active_vref = delta > delta_threshold
 
@@ -152,8 +152,8 @@ def filter_by_gain(x, delta_threshold=50, range_threshold=10, plt_show=False, pl
         ax[2, 1].set(title="gain (vref & vrange)")
         plt.tight_layout()
         if plt_save:
-            plt.savefig(Path(exp_path, "gain_summary.png"))
-            print(f'Image gain_summary.png for experiment {exp_path} saved.')
+            plt.savefig(Path(exp_path, f"gain_summary_{ref_i}.png"))
+            print(f'Image gain_summary_{ref_i}.png for experiment {exp_path} saved.')
         plt.show()
 
         # # TMP PLOT FOR THESIS

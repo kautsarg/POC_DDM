@@ -219,12 +219,13 @@ if __name__ == '__main__':
     MULTI_VREF_AUTO_OPEN_HTML = True
     # Prefer an absolute OneDrive path so the script works regardless of current working directory.
     # (The previous relative path depended on running from a specific folder.)
-    onedrive_path = Path.home() / "OneDrive - ProtonDx"
-    exp_folder = Path(onedrive_path,"Data","Multi_Vref")  # CHANGE THE NAME OF THE DATA FOLDER HERE
+    # onedrive_path = Path.home() / "OneDrive - ProtonDx"
+    # exp_folder = Path(onedrive_path,"Data","Multi_Vref")  # CHANGE THE NAME OF THE DATA FOLDER HERE
+    exp_folder = Path("/vol/bitbucket/gk225/POC_DDM_multi")  # OR THIS TO RUN ON TEST DATA (IGNORES ONE DRIVE PATH)
     # exp_folder = Path(onedrive_path, "Master Data Folder", "Lacewing - 25_Zambia_Malaria")
 
     #exp_paths = [f for f in exp_folder.glob('*') if f.is_dir()]  # USE THIS TO RUN ALL EXPERIMENTS IN A FOLDER
-    exp_paths = [Path(exp_folder, "D20260529_E00_C00_F4500KHz_U_new_design_01")]  # OR THIS TO RUN ONE EXPERIMENT
+    exp_paths = [Path(exp_folder, "D20260320_E00_C00_F4500KHz_U_Elena_steap_cv")]  # OR THIS TO RUN ONE EXPERIMENT
 
     # Optional: overlay several runs on one plot (t=0 at vref jump / idx_settled).
     # Set enabled=True and list folders in overlay_paths (or None to reuse exp_paths).
@@ -301,7 +302,7 @@ if __name__ == '__main__':
                     f"No readout in {exp_path.name}; plotting active pixels from "
                     f"{len(find_active_files)} find_active file(s)..."
                 )
-                save_path_find_active = r"C:\Users\Matthew L\OneDrive - ProtonDx\Data\Saved Images"
+                save_path_find_active = '/vol/bitbucket/gk225/multi_viz'
                 show_find_active_for_experiment(
                     exp_path,
                     save_path=save_path_find_active,
@@ -322,7 +323,7 @@ if __name__ == '__main__':
         print(f"Found {len(readout_files)} readout files, processing...")
         
         # Define save path
-        save_path = r"C:\Users\Matthew L\OneDrive - ProtonDx\Data\Saved Images"
+        save_path = r"/vol/bitbucket/gk225/multi_viz"
 
         # Export underlying data for the Plotly `raw_signal_grid` trace across all vref slices.
         raw_signal_grid_csv_path = Path(save_path) / f"{experiment_name}_raw_signal_grid_all_vrefs.csv"
@@ -437,8 +438,8 @@ if __name__ == '__main__':
                     end_time_min=60,
                     n_a_type=n_a_type,
                     print_status=True,
-                    plt_gain_calib=False,
-                    save_gain_calib=False,
+                    plt_gain_calib=True,
+                    save_gain_calib=True,
                     plot_gain_3d=PLOT_CONFIG.get('gain_3d_filtered', False),
                     ref_idx=int(_ref_idx) if str(n_a_type).lower() in ("v05", "v06") else _ref_idx,
                 )
@@ -556,7 +557,7 @@ if __name__ == '__main__':
                                     "data": data or {},
                                     "timestamp": int(_agent_time.time() * 1000),
                                 }
-                                with open(r"c:\Users\Matthew L\Cursor Projects\titan-processing-costanza\.cursor\debug.log", "a", encoding="utf-8") as f:
+                                with open(r"/vol/bitbucket/gk225/multi_viz/debug.log", "a", encoding="utf-8") as f:
                                     f.write(_agent_json.dumps(payload, ensure_ascii=False) + "\n")
                             except Exception:
                                 pass
@@ -1377,7 +1378,7 @@ if __name__ == '__main__':
         print(first_deriv_table.to_string(index=False))
         
         # Save to Excel
-        save_path = r"C:\Users\Matthew L\OneDrive - ProtonDx\Data\Saved Images"
+        save_path = r"/vol/bitbucket/gk225/multi_viz"
         os.makedirs(save_path, exist_ok=True)
         excel_filename = "peak_detection_summary.xlsx"
         excel_filepath = os.path.join(save_path, excel_filename)
@@ -1437,7 +1438,7 @@ if __name__ == '__main__':
             overlay_paths = OVERLAY_CONFIG.get("overlay_paths") or exp_paths
             overlay_save = OVERLAY_CONFIG.get(
                 "save_path",
-                r"C:\Users\Matthew L\OneDrive - ProtonDx\Data\Saved Images",
+                r"/vol/bitbucket/gk225/multi_viz",
             )
             plot_experiments_overlay(
                 overlay_paths,

@@ -16,6 +16,7 @@ from cycler import cycler
 # DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
 DEFAULT_EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_dataset"
 LAB_EXP_FOLDER = "/vol/bitbucket/gk225/lab_dataset"
+MULTI_EXP_FOLDERS = "/vol/bitbucket/gk225/POC_DDM_multi"
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -143,3 +144,18 @@ LD_FEATURES = [
 RERUN_MODELS = [
     # "cnn_lf"
 ]
+
+LABEL_MAPPINGS = {
+	'D20260320_E00_C00_F4500KHz_U_Elena_steap_cv': {
+		0: 'S',
+		1: 'C',
+		2: 'C',
+		3: 'S',
+		4: 'S',
+		5: 'C',
+		6: 'C',
+		7: 'S',
+		8: 'NC-S',
+		9: 'NC-C',
+	},
+}
