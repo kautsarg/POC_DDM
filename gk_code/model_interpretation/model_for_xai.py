@@ -20,7 +20,7 @@ from model_utils import (
 
 def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
     out_subdir = "model_interpretation"
-    exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name != '.DS_Store'])
+    exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in config.EXCLUDED_FOLDERS])
 
     filter_key = None
     filter_str = str(filter_key) 
@@ -83,12 +83,12 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
         if filter_key is None:
             mask = np.ones(len(y_full), dtype=bool)
         else:
-            mask = (features_df[filter_key] == 1).fillna(False).values
+            mask = (data_package['features_df'][filter_key] == 1).fillna(False).values
             
         X_curve = data_package["dataset"][mask]
         X_curve = X_curve.astype(np.float32)[..., None]
         y = y_full[mask]
-        features_df_masked = features_df[mask]
+        features_df_masked = data_package['features_df'][mask]
 
         # --- SPLIT FIRST TO PREVENT DATA LEAKAGE ---
         splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
