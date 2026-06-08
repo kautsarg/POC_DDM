@@ -148,7 +148,7 @@ if __name__ == "__main__":
             break
 
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-        if(name=="ori_curves" or name =='original_fitted_full'):
+        if(name=="ori_curves"): # or name =='original_fitted_full'):
             clean_title = name.replace("_", " ").title()
             progress_pct = ((idx + 1) / total_datasets) * 100
             

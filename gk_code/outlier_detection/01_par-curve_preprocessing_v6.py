@@ -78,6 +78,7 @@ def get_derivatives(curves_batch, timestamps):
     return Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
         delayed(sp.calculate_first_derivative)(timestamps, y) for y in curves_batch
     )
+    
 def reconstruct_data(all_exp_data, attr_str):   
     if not all_exp_data:
         return None, np.array([]), None
@@ -294,10 +295,10 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
 # 5. SAVING MODULE
 # ==========================================
 
-def save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
+def save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves, 
                                      indices_dict, pixel_temp_dfs, baseline_value, 
                                      Y_well, X_time, all_exp_data, 
-                                     window_size_ori, window_size_1stder, margin):
+                                     window_size_ori, window_size_1stder, margin, max_significant_index):
     
     df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
     well0 = all_exp_data[0].wells_list[0]
@@ -309,7 +310,7 @@ def save_experiment_data_restructured(exp_path, fitting_results, processed_curve
             "well_temp_lin2d": pixel_temp_dfs["well_temp_lin2d_df"].filter(like="Cycle_").values,
             "well_2d_temp_npr": pixel_temp_dfs["well_2d_temp_npr_df"].filter(like="Cycle_").values,
             "well_temp_mean_then_lin": well0.well_temp_mean_then_lin,
-            "ori_curves": processed_curves[0],
+            "ori_curves": processed_curves[0],  # Overridden by truncated if nc_substract=True
             "ori_curve_dydx": processed_curves[1],
             "ori_dydx_avg": processed_curves[2],
             "cleaned_std": processed_curves[3],
@@ -323,8 +324,9 @@ def save_experiment_data_restructured(exp_path, fitting_results, processed_curve
             "idx_active": well0.idx_active,
             "cleaned_idx": indices_dict["cleaned_idx"],
             "cleaned_lowest_idx": indices_dict["cleaned_lowest_idx"],
+            "max_significant_index": max_significant_index,
         },
-        "timestamps": X_time,
+        "timestamps": X_time, # Overridden by truncated_timestamps if nc_substract=True
         "well_labels": Y_well,
         "metadata": {
             "pixel_row_idx": df_meta['pixel_row_idx'].values,
@@ -340,7 +342,7 @@ def save_experiment_data_restructured(exp_path, fitting_results, processed_curve
         "margin": margin
     }
 
-    save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
+    save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
     joblib.dump(save_data, save_path, compress=3)
     print(f"  -> Saved numerical results and metadata to {save_path}")
 
@@ -372,7 +374,7 @@ def blank_plot(plot_size):
     p.scatter(x=[], y=[]) 
     return p
 
-def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timestamps, processed_curves, fitting_results, indices_dict, curve_labels, ds_step=5, precision=4):
+def plot_interactive_sigmoid_grids(save_exp_path, unique_wells, ori_well, ori_timestamps, processed_curves, fitting_results, indices_dict, curve_labels, ds_step=5, precision=4):
     col_to_idx_map = {
         0: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
         1: (indices_dict["cleaned_idx"], indices_dict["cleaned_lowest_idx"]), 
@@ -392,7 +394,7 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
     scatter_kwargs = dict(size=5, color="grey", alpha=0.6, selection_color="red", selection_alpha=1.0, nonselection_color="grey", nonselection_alpha=0.1)
 
     for row_idx, well in enumerate(unique_wells):
-        filename = f"{exp_path}/well_{well}_sigmoid_curves.html"
+        filename = f"{save_exp_path}/well_{well}_sigmoid_curves.html"
         output_file(filename, title=f"Well {well} Sigmoid Curves")
         
         mask = (ori_well == well)
@@ -520,8 +522,8 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
 # 7. PLOTTING MODULE 2: PIXEL VS TEMP
 # ==========================================
 
-def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4):
-    output_file(f"{exp_path}/all_experiments_combined_interactive.html", title="Wells Overlaid Across Experiments")
+def plot_pixel_temp_interactions(all_exp_data, save_exp_path, ds_step=5, precision=4):
+    output_file(f"{save_exp_path}/all_experiments_combined_interactive.html", title="Wells Overlaid Across Experiments")
     p_width, p_height = 450, 225
     all_well_layouts = []
 
@@ -539,15 +541,13 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
     # ====================================================================
     # 1. GLOBAL MASTER CONTROLS (At the top of the page)
     # ====================================================================
-    # Use CheckboxButtonGroup for highly visible, colored toggle buttons
     global_checkbox = CheckboxButtonGroup(
         labels=[f"Toggle Experiment {i}" for i in range(num_exps)], 
         active=list(range(num_exps)), 
-        button_type="success", # Makes the buttons green when active
+        button_type="success", 
         sizing_mode="stretch_width"
     )
 
-    # The filter logic applied to every single plot
     global_js_filter = CustomJSFilter(args=dict(checkbox=global_checkbox), code="""
         const active = checkbox.active;
         const exp_ids = source.data['exp_id'];
@@ -558,7 +558,6 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
         return res;
     """)
 
-    # Trackers to update everything when a button is clicked
     all_sources = []
     spans_by_exp = {i: [] for i in range(num_exps)}
 
@@ -663,10 +662,8 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
         source_temps_inactive = ColumnDataSource({'xs': temp_inact_xs, 'ys_lin': temp_inact_ys_lin, 'ys_nl': temp_inact_ys_nl, 'group_id': temp_inact_group_id, 'exp_id': temp_inact_exp_id})
         source_mean = ColumnDataSource({'xs': mean_xs, 'ys': mean_ys, 'color_lin': mean_color, 'exp_id': mean_exp_id})
 
-        # Register sources for the global callback
         all_sources.extend([source_pixels, source_temps_active, source_temps_inactive, source_mean])
 
-        # Attach the global filter
         view_pixels = CDSView(filter=global_js_filter)
         view_temps_act = CDSView(filter=global_js_filter)
         view_temps_inact = CDSView(filter=global_js_filter)
@@ -739,7 +736,6 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
         hover_pixel_lin = HoverTool(tooltips=[("Exp", "@exp_id"), ("Pixel", "@pixel_id"), ("Group", "@group_id"), ("Value", "$y")], line_policy="nearest")
         linked_crosshair = CrosshairTool(dimensions="height", line_color="black", line_alpha=0.3)
 
-        # Build Plots using Views
         p0 = figure(title=f"NL Pixels (Well {w_idx} All Exps)", width=p_width, height=p_height, tools=["pan", "wheel_zoom", "box_zoom", "reset", "tap", hover_pixel_nl, linked_crosshair], output_backend="webgl")
         p0.multi_line(xs='xs', ys='ys_nl', source=source_pixels, view=view_pixels, color='color_nl', alpha=0.3, selection_color="red", selection_alpha=1.0, nonselection_color='color_nl', nonselection_alpha=0.05)
 
@@ -760,7 +756,6 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
         p3.multi_line(xs='xs', ys='ys', source=source_mean, view=view_mean, color='color_lin', line_width=1.5)
         p3.add_tools(HoverTool(tooltips=[("Exp", "@exp_id"), ("Group", "@group_id"), ("Val", "$y")], renderers=[active_temp_renderer_lin]), TapTool(renderers=[active_temp_renderer_lin]))
 
-        # Manage Spans globally
         for p_fig in [p0, p1, p2, p3]:
             for i_exp, (ts, te) in enumerate(zip(settled_lines, end_lines)):
                 span_s = Span(location=ts, dimension='height', line_color='green', line_alpha=0.5, line_dash='dashed')
@@ -769,23 +764,15 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
                 p_fig.add_layout(span_e)
                 spans_by_exp[i_exp].extend([span_s, span_e])
 
-        # Layout for a single well
         well_layout = column(info_div, row(p0, p1, p2, p3), Spacer(height=50))
         all_well_layouts.append(well_layout)
 
-    # ====================================================================
-    # 3. GLOBAL JAVASCRIPT CALLBACK
-    # ====================================================================
-    # This single callback triggers a re-draw for all 384+ plots instantly
     global_checkbox_cb = CustomJS(args=dict(
         sources=all_sources, spans=spans_by_exp, checkbox=global_checkbox
     ), code="""
-        // Force re-evaluation of the CustomJSFilter on all data sources
         for (let s of sources) {
             s.change.emit();
         }
-
-        // Toggle visibility of the vertical threshold lines
         const active = checkbox.active;
         for (const [exp_id, span_list] of Object.entries(spans)) {
             const is_visible = active.includes(parseInt(exp_id));
@@ -796,10 +783,6 @@ def plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=5, precision=4)
     """)
     global_checkbox.js_on_change('active', global_checkbox_cb)
 
-    # ====================================================================
-    # 4. MASTER LAYOUT ASSEMBLY
-    # ====================================================================
-    # Place the Master Toggle Menu at the absolute top of the HTML file
     header_title = Div(text="<h1>Experiment Visibility Controls</h1>", margin=(10, 10, 5, 10))
     master_layout = column(header_title, global_checkbox, Spacer(height=30), *all_well_layouts)
     
@@ -815,6 +798,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--n_wells", type=int, default=config.N_WELLS, help="Number of wells")
     parser.add_argument("--n_a_type", type=str, default=config.N_A_TYPE, help="Type of n_a")
+    parser.add_argument("--nc_subtract", action="store_true", help="Apply baseline subtraction based on derivatives")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -833,9 +817,16 @@ if __name__ == "__main__":
         sys.exit(0)
 
     exp_path = exp_paths[args.task_id]
-    save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
+    
+    if args.nc_subtract:
+        save_exp_path = Path(str(exp_path) + "_nc_subtract")
+        os.makedirs(save_exp_path, exist_ok=True)
+    else:
+        save_exp_path = exp_path
+        
+    save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
     if os.path.exists(save_path):
-        print(f"Cache hit: {exp_path}")
+        print(f"Cache hit: {save_exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)
     
@@ -854,16 +845,93 @@ if __name__ == "__main__":
     print("  -> Generating Pixel & Temp DataFrames...")
     pixel_temp_dfs = extract_pixel_temp_dataframes(all_exp_data)
 
-    # print("  -> Building Pixel vs Temp Interactions (Optimized)...")
-    # plot_pixel_temp_interactions(all_exp_data, exp_path, ds_step=config.PLOT_DOWNSAMPLE_STEP, precision=config.PLOT_DECIMAL_PRECISION)
-    
     print("  -> Processing Sigmoid Curves...")
     X_time, Y_well, X_2d_bs_active = reconstruct_data(all_exp_data, attr_str="well_2d_bs_active")
     
-    # X_2d_bs_active = pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values
-    # Y_well = pixel_temp_dfs["well_2d_bs_active_df"]['well_id'].values
-    # X_time = all_exp_data[0].wells_list[0].time_npr
+    max_significant_index = None
     
+    # -------------------------------------------------------------
+    # TRUNCATION AND NEGATIVE CONTROL (NC) SUBTRACTION LOGIC
+    # -------------------------------------------------------------
+    if args.nc_subtract:
+        print("  -> [nc_subtract=True] Initiating Truncation and NC Subtraction...")
+        exp_folder = os.path.basename(exp_path)
+
+        # 1. & 2. Check configuration constraints and ABORT if missing
+        if not hasattr(config, "LABEL_MAPPINGS") or exp_folder not in config.LABEL_MAPPINGS:
+            print(f"  [!] CRITICAL: Missing mapping rules for '{exp_folder}' in config.LABEL_MAPPINGS.")
+            print("  [!] Aborting processing as requested.")
+            sys.exit(1)
+
+        # Apply Label Mapping to get y_label
+        mapping = config.LABEL_MAPPINGS[exp_folder]
+        y_label = np.array([mapping.get(w, w) for w in Y_well])
+        vref_idx = pixel_temp_dfs["well_2d_bs_active_df"]['vref_idx'].values
+
+        # --- PART A: Truncation ---
+        print("      -> Calculating derivatives for truncation...")
+        ori_curve_dydx = np.array(get_derivatives(X_2d_bs_active, X_time))
+        min_indices = np.argmin(ori_curve_dydx, axis=1)
+
+        unique_indices, counts = np.unique(min_indices, return_counts=True)
+        threshold = len(ori_curve_dydx) / 3
+        significant_indices = unique_indices[counts > threshold]
+
+        max_significant_index = np.max(significant_indices) if len(significant_indices) > 0 else None
+
+        if max_significant_index is not None:
+            if (max_significant_index + 1) < (len(X_time) - 100):           # Do not truncate if the index is too close to the end to avoid losing critical data or crashing
+                truncated_curves = X_2d_bs_active[:, max_significant_index + 1:]
+                truncated_timestamps = X_time[max_significant_index + 1:]
+                
+                # Baseline subtract the truncated curves (zeroing to start)
+                X_2d_bs_active = truncated_curves - truncated_curves[:, 0:1]
+                X_time = truncated_timestamps
+                print(f"      -> Truncated X_time from {len(X_time) + max_significant_index + 1} to {len(X_time)}")
+            else:
+                print(f"      -> [!] Truncation index {max_significant_index} is too close to the end (Total len: {len(X_time)}). Skipping truncation to prevent crash.")
+                max_significant_index = None 
+        else:
+            print("      -> No significant index found for truncation. Proceeding with original data.")
+
+        # --- PART B: NC Subtraction ---
+        print("      -> Performing Negative Control (NC) Subtraction...")
+        
+        unique_vrefs = np.unique(vref_idx)
+        unique_labels = np.unique(y_label)
+        
+        # Isolate the base classes (e.g., extracts 'C' if 'NC-C' exists)
+        base_labels = list(dict.fromkeys([str(lbl).replace('NC-', '') for lbl in unique_labels]))
+        
+        subtracted_curves = X_2d_bs_active.copy()
+        
+        for vref_val in unique_vrefs:
+            vref_mask = (vref_idx == vref_val)
+            
+            for b_lbl in base_labels:
+                nc_target = f"NC-{b_lbl}"
+                
+                # Check if both Sample and corresponding NC exist for this specific VREF
+                if b_lbl in unique_labels and nc_target in unique_labels:
+                    nc_mask = vref_mask & (y_label == nc_target)
+                    sample_mask = vref_mask & (y_label == b_lbl)
+                    
+                    if np.any(nc_mask) and np.any(sample_mask):
+                        # 3.1 Get Mean of NCs
+                        nc_baseline = np.mean(X_2d_bs_active[nc_mask], axis=0)
+                        
+                        # 3.2 Subtract from corresponding Samples
+                        subtracted_curves[sample_mask] = X_2d_bs_active[sample_mask] - nc_baseline
+                        
+                        # 3.3 Subtract from the NCs themselves (centers the control noise floor at 0)
+                        subtracted_curves[nc_mask] = X_2d_bs_active[nc_mask] - nc_baseline
+                        
+                        print(f"         -> Slice VREF {vref_val}: Subtracted '{nc_target}' mean from '{b_lbl}' ({np.sum(sample_mask)} curves) and normalized NCs ({np.sum(nc_mask)} curves)")
+
+        # Update main tracking array for the rest of the pipeline
+        X_2d_bs_active = subtracted_curves
+        print("  [✓] Truncation and NC baseline subtraction complete.")
+
     baseline_value = 0
 
     ##############################################################
@@ -880,20 +948,20 @@ if __name__ == "__main__":
     
     fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
     
-    save_experiment_data_restructured(exp_path, fitting_results, processed_curves, 
+    save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves, 
                                     indices_dict, pixel_temp_dfs, baseline_value, 
                                     Y_well, X_time, all_exp_data, 
-                                    config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin)
+                                    config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index)
     
     print("  -> Building Sigmoid Grids (Optimized)...")
     unique_wells = np.unique(Y_well)
 
     saved_viz = getattr(config, "SAVED_VIZ", [])
-    save_plot_flag = bool(saved_viz) and np.any([saved in str(exp_path) for saved in saved_viz])
+    save_plot_flag = bool(saved_viz) and np.any([saved in str(save_exp_path) for saved in saved_viz])
     
     # if(save_plot_flag):
     #     plot_interactive_sigmoid_grids(
-    #         exp_path, unique_wells, Y_well, X_time, 
+    #         save_exp_path, unique_wells, Y_well, X_time, 
     #         processed_curves, fitting_results, indices_dict, curve_labels,
     #         ds_step=config.PLOT_DOWNSAMPLE_STEP, precision=config.PLOT_DECIMAL_PRECISION
     #     )
