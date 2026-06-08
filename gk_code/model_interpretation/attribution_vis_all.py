@@ -66,8 +66,19 @@ def prepare_dataset(exp_path, filter_key):
         return None
 
     data = joblib.load(data_path)
+    
+    Y_well = data["Y_well"]
+    if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
+        print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
+        mapping = config.LABEL_MAPPINGS[exp_path.name]
+        
+        # Maps matching keys; falls back to the original index value if not found
+        Y_well = [mapping.get(w, w) for w in Y_well]
+    else:
+        print(f"  [*] No custom mapping found for {exp_path.name}. Retaining default well labels.")
+
     encoder = LabelEncoder()
-    y_full = encoder.fit_transform(data["Y_well"])
+    y_full = encoder.fit_transform(Y_well)
 
     features_df = data["kinetic_features"][0]
     if filter_key is None:

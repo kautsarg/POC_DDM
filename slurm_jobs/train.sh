@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=e2e_ddm_pipeline
+#SBATCH --job-name=v06_poc
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -10,7 +10,7 @@
 #SBATCH --partition a30
  
 # Launch 10 clones of this job (SLURM array indices 1 through 10)
-#SBATCH --array=2-3
+#SBATCH --array=3
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x_%A_%a.out
@@ -34,8 +34,12 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection
 # Replace PBS_ARRAY_INDEX with SLURM_ARRAY_TASK_ID
 PY_INDEX=$(($SLURM_ARRAY_TASK_ID - 1))
 
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing.py --task_id $PY_INDEX
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $PY_INDEX
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $PY_INDEX --n_splits 10 --exp_folder "/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper"
+# # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing.py --task_id $PY_INDEX
+# # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $PY_INDEX
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $PY_INDEX --n_splits 10 --exp_folder "/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper"
+
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id 2 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v06 --nc_subtract
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id 3 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id 3 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
 
 deactivate
