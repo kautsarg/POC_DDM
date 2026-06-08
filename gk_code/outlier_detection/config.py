@@ -18,11 +18,11 @@ LAB_ROOT_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets"
 HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets"
 LOCAL_ROOT_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data"
 
-BASE_FOLDER = HPC_ROOT_FOLDER
+BASE_FOLDER = LAB_ROOT_FOLDER
 
 DEFAULT_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_chip_init")
 LAB_EXP_FOLDER = os.path.join(BASE_FOLDER, "LAB_DDM_paper")
-MULTI_EXP_FOLDERS = os.path.join(BASE_FOLDER, "POC_DDM_multi")
+MULTI_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_multi")
 
 # Global Experiment Parameters
 N_WELLS = 10
