@@ -226,19 +226,22 @@ def list_to_numpy_readout(
                 # using A_total-1 mis-counts optional PID/extra tail words as vref slots and
                 # shifts chem/temp/temp_avg_Vs_shifted (shows up as a flat temperature trace).
                 count_word = int(pack[P_frame])
-                if inferred_A_after is not None:
+                # Lacewing v05 writer (Lacewing_Thread.py / Lacewing_Main.py) stores uint16(11)
+                # as a format sentinel, NOT as "number of fields after this word".
+                # Tail layout: [11, ts, vref[n_refs], chem, temp, temp_lin+100, adc, tam, tch, n_wells, version]
+                # => tail length = n_refs + 10 (including the sentinel).
+                if count_word == V05_TAIL_SENTINEL:
+                    n_vref = int(n_refs)
+                    n_fields_after_count = n_vref + 9
+                elif inferred_A_after is not None:
                     n_fields_after_count = int(inferred_A_after)
-                elif count_word == V05_TAIL_SENTINEL or (
-                    9 <= count_word <= int(A) - 1 and count_word != int(A) - 1
-                ):
+                    n_vref = int(n_fields_after_count) - 9
+                elif 9 <= count_word <= int(A) - 1 and count_word != int(A) - 1:
                     n_fields_after_count = count_word
+                    n_vref = int(n_fields_after_count) - 9
                 else:
                     n_fields_after_count = int(A) - 1
-
-                # Layout after count:
-                #   [timestamp] + vref_array + 8 fixed fields
-                # => len(vref_array) = n_fields_after_count - 9
-                n_vref = int(n_fields_after_count) - 9
+                    n_vref = int(n_fields_after_count) - 9
                 if n_vref < 0:
                     raise Exception(
                         f"RAISED list_to_numpy_readout: v05 invalid parameter count. "

@@ -111,7 +111,8 @@ if __name__ == '__main__':
         'active_pixels': True,            # Active pixels heatmap (full chip view)
         'temperature': True,             # Temperature overlay plot
         'gain_3d_filtered': True,          # Filtered gain 3D plot (from load_and_preprocessing)
-        'raw_chem_plotly': False,           # Raw chem data plot (plotly) - individual pixel traces
+        'raw_chem_plotly': True,           # Raw chem data plot (plotly) - individual pixel traces
+        'linearized_chem_plotly': True,    # Same grid as raw_chem_plotly: per-pixel well_2d_bs (active only)
         'raw_chem_export_all_pixels': True,  # Export raw chem (all pixels) to CSV per well across all vrefs
         'average_combined': False,           # Average (unfiltered) combined plot for all wells
         'raw_chip_video': True,             # Plotly animation: full-chip raw heatmap over time (HTML)
@@ -221,11 +222,13 @@ if __name__ == '__main__':
     # (The previous relative path depended on running from a specific folder.)
     # onedrive_path = Path.home() / "OneDrive - ProtonDx"
     # exp_folder = Path(onedrive_path,"Data","Multi_Vref")  # CHANGE THE NAME OF THE DATA FOLDER HERE
-    exp_folder = Path("/vol/bitbucket/gk225/POC_DDM_multi")  # OR THIS TO RUN ON TEST DATA (IGNORES ONE DRIVE PATH)
+    exp_folder = Path("/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi")  # OR THIS TO RUN ON TEST DATA (IGNORES ONE DRIVE PATH)
     # exp_folder = Path(onedrive_path, "Master Data Folder", "Lacewing - 25_Zambia_Malaria")
 
     #exp_paths = [f for f in exp_folder.glob('*') if f.is_dir()]  # USE THIS TO RUN ALL EXPERIMENTS IN A FOLDER
     exp_paths = [Path(exp_folder, "D20260320_E00_C00_F4500KHz_U_Elena_steap_cv")]  # OR THIS TO RUN ONE EXPERIMENT
+    # exp_paths = [Path(exp_folder, "D20260522_E00_C00_F4500KHz_U_manifold_test_05")]  # OR THIS TO RUN ONE EXPERIMENT
+    # exp_paths = [Path(exp_folder, "D20260608_E00_C00_F4500KHz_U_norm_temp_04")]  # OR THIS TO RUN ONE EXPERIMENT
 
     # Optional: overlay several runs on one plot (t=0 at vref jump / idx_settled).
     # Set enabled=True and list folders in overlay_paths (or None to reuse exp_paths).
@@ -1082,6 +1085,21 @@ if __name__ == '__main__':
                         except Exception as e:
                             print(f"    Warning: Could not create raw chip video: {str(e)}")
                     
+                    if PLOT_CONFIG.get('linearized_chem_plotly', False):
+                        print("  - Creating linearized chem plot (plotly, per-pixel)...")
+                        try:
+                            plot_wells_raw_plotly(
+                                exp,
+                                save_path=save_path,
+                                experiment_name=experiment_name_slice,
+                                show=(True if not is_multi_vref else bool(MULTI_VREF_SHOW_PLOTS)),
+                                auto_open_html=(True if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)),
+                                signal_mode="linearized",
+                            )
+                            plots_created.append("Linearized Chem Plotly (per-pixel)")
+                        except Exception as e:
+                            print(f"    Warning: Could not create linearized chem plot: {str(e)}")
+
                     # Plot temperature data for all wells.
                     if PLOT_CONFIG['temperature']:
                         print("  - Creating temperature plot...")

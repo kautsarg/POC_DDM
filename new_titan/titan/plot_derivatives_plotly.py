@@ -2358,14 +2358,25 @@ def plot_wells_raw_plotly(
     show=True,
     auto_open_html=False,
     save_excel=True,
+    signal_mode="raw",
 ):
     """
-    Plot raw chem data per well (time_npr vs well_2d_npr) in a grid using Plotly.
+    Plot per-pixel chem traces per well in a grid using Plotly.
+
+    signal_mode:
+      - "raw": time_npr vs well_2d_npr (from idx_settled onward)
+      - "linearized": well_2d_bs per active pixel vs time (min, zero at idx_settled)
+
     Mirrors the matplotlib view in plt_Experiment_summary.py (lines 29-34):
       - all pixel traces per well (light)
-      - mean trace (bold)
       - vertical lines at idx_start, idx_settled, idx_end
     """
+    signal_mode = str(signal_mode).lower()
+    if signal_mode not in {"raw", "linearized"}:
+        raise ValueError(f"signal_mode must be 'raw' or 'linearized', got {signal_mode!r}")
+    is_linearized = signal_mode == "linearized"
+    plot_label = "Linearized Chem" if is_linearized else "Raw Chem"
+    file_tag = "linearized_chem_plotly" if is_linearized else "raw_chem_plotly"
     #region agent log
     import json as _agent_json
     import time as _agent_time
@@ -2464,24 +2475,63 @@ def plot_wells_raw_plotly(
     _agent_skipped_mismatch = 0
     _agent_exc_wells = 0
 
-    # Store the plotted raw-chem traces so we can export them to Excel.
+    # Store the plotted traces so we can export them to Excel.
     raw_chem_export = {}
 
     for well_idx, well in enumerate(exp.wells_list):
         try:
-            time = getattr(well, "time_npr", None)
-            data_2d = getattr(well, "well_2d_npr", None)
-            if time is None or data_2d is None:
-                print(f"Warning: Well {well_idx + 1} missing time or raw data")
+            idx_settled = int(getattr(well, "idx_settled", 0))
+            idx_end = int(getattr(well, "idx_end", 0))
+            time_npr = getattr(well, "time_npr", None)
+            if time_npr is None:
+                print(f"Warning: Well {well_idx + 1} missing time_npr")
                 _agent_skipped_missing += 1
                 continue
+            time_npr = np.asarray(time_npr)
 
-            time = np.asarray(time)
-            data_2d = np.asarray(data_2d)
-
-            # data_2d expected shape: (n_time, n_pixels); if not, try transpose
-            if data_2d.shape[0] != len(time) and data_2d.shape[1] == len(time):
-                data_2d = data_2d.T
+            if is_linearized:
+                # Per-pixel firmware-linearized signal, baseline-subtracted at idx_settled
+                # (matches well_2d_bs_active_mean used in combined linearized plots).
+                data_2d = getattr(well, "well_2d_bs", None)
+                if data_2d is None:
+                    print(f"Warning: Well {well_idx + 1} missing linearized data (well_2d_bs)")
+                    _agent_skipped_missing += 1
+                    continue
+                data_2d = np.asarray(data_2d, dtype=float)
+                if idx_end <= idx_settled:
+                    idx_end = len(time_npr)
+                time = _time_minutes_for_well(well, zero_at="settled")
+                if len(time) != data_2d.shape[0]:
+                    # Fallback alignment if indices differ
+                    n = min(len(time), data_2d.shape[0])
+                    time = time[:n]
+                    data_2d = data_2d[:n, :]
+            else:
+                data_2d = getattr(well, "well_2d_npr", None)
+                if data_2d is None:
+                    print(f"Warning: Well {well_idx + 1} missing raw data (well_2d_npr)")
+                    _agent_skipped_missing += 1
+                    continue
+                time = time_npr
+                data_2d = np.asarray(data_2d)
+                # data_2d expected shape: (n_time, n_pixels); if not, try transpose
+                if data_2d.shape[0] != len(time) and data_2d.shape[1] == len(time):
+                    data_2d = data_2d.T
+                if data_2d.shape[0] != len(time):
+                    print(
+                        f"Warning: Well {well_idx + 1} time/data length mismatch "
+                        f"({len(time)} vs {data_2d.shape[0]}); skipping"
+                    )
+                    _agent_skipped_mismatch += 1
+                    continue
+                if idx_settled >= len(time):
+                    print(
+                        f"Warning: Well {well_idx + 1} idx_settled ({idx_settled}) >= "
+                        f"time length ({len(time)}); using full range"
+                    )
+                    idx_settled = 0
+                time = time[idx_settled:]
+                data_2d = data_2d[idx_settled:, :]
 
             if data_2d.shape[0] != len(time):
                 print(
@@ -2490,15 +2540,6 @@ def plot_wells_raw_plotly(
                 )
                 _agent_skipped_mismatch += 1
                 continue
-
-            # Slice from idx_settled onwards
-            idx_settled = getattr(well, 'idx_settled', 0)
-            if idx_settled >= len(time):
-                print(f"Warning: Well {well_idx + 1} idx_settled ({idx_settled}) >= time length ({len(time)}); using full range")
-                idx_settled = 0
-            
-            time = time[idx_settled:]
-            data_2d = data_2d[idx_settled:, :]
 
             # Downsample to keep plots responsive (aim ~1200 points)
             max_points = 1200
@@ -2516,18 +2557,30 @@ def plot_wells_raw_plotly(
             # Plot individual pixel traces
             # Use Scattergl for better performance with many traces
             well_color = colors[well_idx % len(colors)]
-            pixel_color = _hex_to_rgba(well_color, 0.1)  # Very transparent for individual pixels
+            pixel_alpha = 0.25 if is_linearized else 0.1
+            pixel_color = _hex_to_rgba(well_color, pixel_alpha)
             
             # Plot each pixel trace (use Scattergl for performance with many traces)
             n_pixels = data_2d_ds.shape[1]
-            # Limit to reasonable number of pixels to avoid browser crash
             max_pixels_to_plot = 2000
-            if n_pixels > max_pixels_to_plot:
-                # Sample pixels evenly
-                pixel_indices = np.linspace(0, n_pixels - 1, max_pixels_to_plot, dtype=int)
-                print(f"Warning: Well {well_idx + 1} has {n_pixels} pixels, plotting {max_pixels_to_plot} sampled pixels")
+            idx_active = getattr(well, "idx_active", None)
+            if is_linearized and idx_active is not None:
+                idx_active = np.asarray(idx_active, dtype=bool)
+                if idx_active.size == n_pixels and np.any(idx_active):
+                    pixel_indices = np.flatnonzero(idx_active)
+                else:
+                    pixel_indices = np.arange(n_pixels)
             else:
                 pixel_indices = np.arange(n_pixels)
+
+            if len(pixel_indices) > max_pixels_to_plot:
+                pixel_indices = pixel_indices[
+                    np.linspace(0, len(pixel_indices) - 1, max_pixels_to_plot, dtype=int)
+                ]
+                print(
+                    f"Warning: Well {well_idx + 1} plotting {max_pixels_to_plot} "
+                    f"sampled {'active ' if is_linearized else ''}pixels (of {n_pixels})"
+                )
             
             for pix_idx in pixel_indices:
                 show_in_legend = bool(pix_idx < 5)  # Convert to Python bool
@@ -2553,21 +2606,29 @@ def plot_wells_raw_plotly(
             idx_end = getattr(well, 'idx_end', len(time_full) - 1)
 
             # Keep exactly what is displayed in the plot (downsampled + sampled pixels).
-            export_cols = {"time_s": time_ds}
+            time_col = "time_min" if is_linearized else "time_s"
+            export_cols = {time_col: time_ds}
             for pix_idx in pixel_indices:
                 export_cols[f"pixel_{int(pix_idx)}"] = data_2d_ds[:, int(pix_idx)]
-            export_cols["mean_signal"] = np.nanmean(data_2d_ds, axis=1)
+            export_cols["mean_signal"] = np.nanmean(data_2d_ds[:, pixel_indices], axis=1) if pixel_indices.size else np.nanmean(data_2d_ds, axis=1)
             raw_chem_export[f"well_{well_idx + 1}"] = {
                 "df": export_cols,
                 "idx_start": idx_start,
                 "idx_settled": idx_settled,
                 "idx_end": idx_end,
             }
+
+            t_settled = float(time_full[idx_settled])
             
             # Start marker (only if idx_start < idx_settled, otherwise it's before our data)
             if idx_start < idx_settled:
+                x_start = (
+                    (float(time_full[idx_start]) - t_settled) / 60.0
+                    if is_linearized
+                    else float(time_full[idx_start])
+                )
                 fig.add_vline(
-                    x=time_full[idx_start],
+                    x=x_start,
                     line=dict(color="black", width=2, dash="dash"),
                     annotation_text="Start",
                     annotation_position="top",
@@ -2598,16 +2659,30 @@ def plot_wells_raw_plotly(
                         col=col,
                     )
 
-            print(f"DEBUG Raw Plot Well {well_idx + 1}: time len={len(time)}, data shape={data_2d.shape}")
+            y_plot = data_2d[:, pixel_indices] if pixel_indices.size else data_2d
+            y_min = float(np.nanmin(y_plot)) if y_plot.size else float("nan")
+            y_max = float(np.nanmax(y_plot)) if y_plot.size else float("nan")
+            print(
+                f"DEBUG {plot_label} Plot Well {well_idx + 1}: "
+                f"time len={len(time)}, data shape={data_2d.shape}, "
+                f"y range [{y_min:.6f}, {y_max:.6f}], n_traces={len(pixel_indices)}"
+            )
             _agent_plotted_wells += 1
 
         except Exception as exc:
-            print(f"Error plotting raw data for Well {well_idx + 1}: {exc}")
+            print(f"Error plotting {plot_label.lower()} data for Well {well_idx + 1}: {exc}")
             _agent_exc_wells += 1
             continue
 
+    if is_linearized:
+        title = f"{experiment_name} - Linearized Chem Data (per-pixel well_2d_bs, active pixels)"
+        y_label = "Linearized Signal (baseline-subtracted, a.u.)"
+    else:
+        title = f"{experiment_name} - Raw Chem Data (time_npr vs well_2d_npr)"
+        y_label = "Signal (a.u.)"
+
     fig.update_layout(
-        title=f"{experiment_name} - Raw Chem Data (time_npr vs well_2d_npr)",
+        title=title,
         height=max(figsize[1], rows * 240),
         width=figsize[0],
         font=dict(size=12),
@@ -2616,9 +2691,10 @@ def plot_wells_raw_plotly(
 
     # Axes labels
     for r in range(1, rows + 1):
-        fig.update_yaxes(title_text="Signal (a.u.)", row=r, col=1)
+        fig.update_yaxes(title_text=y_label, row=r, col=1)
+    x_label = "Time (min)" if is_linearized else "Time (s)"
     for c in range(1, cols + 1):
-        fig.update_xaxes(title_text="Time (s)", row=rows, col=c)
+        fig.update_xaxes(title_text=x_label, row=rows, col=c)
 
     # Grid
     for r in range(1, rows + 1):
@@ -2662,9 +2738,9 @@ def plot_wells_raw_plotly(
             save_path = Path(save_path)
             save_path.mkdir(parents=True, exist_ok=True)
             safe_experiment_name = sanitize_filename(experiment_name)
-            html_filename = f"{safe_experiment_name}_raw_chem_plotly.html"
+            html_filename = f"{safe_experiment_name}_{file_tag}.html"
             html_path = save_path / html_filename
-            print(f"Saving raw chem HTML file to: {html_path}")
+            print(f"Saving {plot_label.lower()} HTML file to: {html_path}")
             #region agent log
             _agent_log(
                 "E",
@@ -2684,7 +2760,7 @@ def plot_wells_raw_plotly(
             })
             #endregion agent log
             fig.write_html(str(html_path))
-            print(f"Raw chem HTML file saved successfully: {html_path}")
+            print(f"{plot_label} HTML file saved successfully: {html_path}")
             #region agent log
             _agent_log("E", "titan/plot_derivatives_plotly.py:2121-2130", "write_html succeeded for raw chem plot", {"html_path": str(html_path)}, runId="pre-fix")
             _agent_log_visible({
@@ -2713,9 +2789,9 @@ def plot_wells_raw_plotly(
                     })
                     #endregion agent log
                     webbrowser.open(html_path.as_uri())
-                    print(f"Opened raw chem HTML in browser: {html_path}")
+                    print(f"Opened {plot_label.lower()} HTML in browser: {html_path}")
                 except Exception as e:
-                    print(f"Warning: Could not auto-open raw chem HTML: {e}")
+                    print(f"Warning: Could not auto-open {plot_label.lower()} HTML: {e}")
                     #region agent log
                     _agent_log("F", "titan/plot_derivatives_plotly.py:auto_open_html", "Failed to open raw chem HTML in browser", {"exc_type": str(type(e)), "exc_str": str(e), "traceback": _agent_traceback.format_exc()}, runId="pre-fix")
                     _agent_log_visible({
@@ -2732,7 +2808,7 @@ def plot_wells_raw_plotly(
                 try:
                     import pandas as pd
 
-                    xlsx_filename = f"{safe_experiment_name}_raw_chem_plotly.xlsx"
+                    xlsx_filename = f"{safe_experiment_name}_{file_tag}.xlsx"
                     xlsx_path = save_path / xlsx_filename
                     with pd.ExcelWriter(str(xlsx_path), engine="openpyxl") as writer:
                         # Metadata sheet for quick context.
@@ -2754,11 +2830,11 @@ def plot_wells_raw_plotly(
                             # Excel sheet names have a 31-char limit.
                             safe_sheet_name = sheet_name[:31]
                             df_sheet.to_excel(writer, sheet_name=safe_sheet_name, index=False)
-                    print(f"Raw chem Excel file saved successfully: {xlsx_path}")
+                    print(f"{plot_label} Excel file saved successfully: {xlsx_path}")
                 except Exception as e:
-                    print(f"Warning: Could not save raw chem Excel file: {e}")
+                    print(f"Warning: Could not save {plot_label.lower()} Excel file: {e}")
         except Exception as e:
-            print(f"Error saving raw chem HTML file: {str(e)}")
+            print(f"Error saving {plot_label.lower()} HTML file: {str(e)}")
             #region agent log
             _agent_log(
                 "E",
