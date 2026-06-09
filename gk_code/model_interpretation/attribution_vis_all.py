@@ -619,7 +619,324 @@ def plot_temporal_alignment_matrix(artifacts, model_name, T_man_batch, top_10_fe
 
 
 # ====================================================================
-# MODULE 6: PIPELINE ORCHESTRATOR
+# MODULE 6: LATENT → FEATURE MAPPING
+# ====================================================================
+# Strategy:
+#   For each top-ranked latent neuron we have:
+#     (A) its activation values across the batch           → z_trace  (Batch,)
+#     (B) its per-sample saliency profile over time        → sal_prof  (Time,) [mean over batch]
+#
+#   For each manual feature we have:
+#     (A) its scalar value across the batch               → f_vals   (Batch,)
+#     (B) its "sensitivity profile" over time             → feat_sens (Time,)
+#         computed once via finite-difference perturbation of the raw curves:
+#         perturb x[t] by +δ, recompute the feature via
+#         extract_kinetic_parameters_original, measure Δfeature / δ
+#
+#   Three complementary similarity scores are combined:
+#     1. |Spearman(z_trace, f_vals)|      — activation ↔ feature value correlation
+#     2. |Spearman(z_trace, f_vals)| MI   — mutual information (non-linear)
+#     3. cos_sim(sal_prof, feat_sens)     — temporal profile alignment
+#
+#   Final score: weighted average (w1=0.35, w2=0.25, w3=0.40)
+#   Each latent is assigned to the best-scoring feature + confidence displayed.
+#
+#   Output: one plot per model — a (TOP_K × n_features) heatmap of combined scores
+#           with the best assignment starred, plus a ranked assignment table below.
+
+def _compute_feature_sensitivity_profiles(X_batch, timestamps, top_10_features, delta_frac=0.05):
+    """
+    For each manual feature and each time step, estimate how sensitive the
+    feature is to a small perturbation at that time step.
+
+    Uses extract_kinetic_parameters_original. Returns a matrix of shape
+    (n_features, T) where each row is normalised to [0, 1].
+
+    Only the SCALAR features in top_10_features are supported — any feature
+    not returned by extract_kinetic_parameters_original is set to a flat
+    profile (uniform sensitivity, so it does not bias the cos-sim score).
+    """
+    from sigmoid_fitting import extract_kinetic_parameters_original
+
+    X_sq = np.squeeze(X_batch, axis=-1)  # (Batch, T)
+    T = X_sq.shape[1]
+    n_feats = len(top_10_features)
+    t = np.asarray(timestamps, dtype=float)
+    if len(t) != T:
+        t = np.linspace(0, T - 1, T)
+
+    # Compute baseline features on a small random subset for speed
+    rng = np.random.default_rng(7)
+    n_sub = min(64, X_sq.shape[0])
+    sub_idx = rng.choice(X_sq.shape[0], size=n_sub, replace=False)
+    X_sub = X_sq[sub_idx]
+
+    sensitivity = np.zeros((n_feats, T))
+
+    for t_idx in range(T):
+        delta = delta_frac * (np.max(X_sub) - np.min(X_sub) + 1e-8)
+        X_pert = X_sub.copy()
+        X_pert[:, t_idx] += delta
+
+        diffs = np.zeros((n_sub, n_feats))
+        for s in range(n_sub):
+            try:
+                base = extract_kinetic_parameters_original(t, X_sub[s])
+                pert = extract_kinetic_parameters_original(t, X_pert[s])
+                for fi, fname in enumerate(top_10_features):
+                    bv = base.get(fname, np.nan)
+                    pv = pert.get(fname, np.nan)
+                    if np.isfinite(bv) and np.isfinite(pv):
+                        diffs[s, fi] = abs(pv - bv) / (delta + 1e-12)
+                    else:
+                        diffs[s, fi] = 0.0
+            except Exception:
+                pass  # leave row as zeros
+
+        sensitivity[:, t_idx] = np.mean(diffs, axis=0)
+
+    # Normalise each feature's profile to [0, 1]
+    for fi in range(n_feats):
+        row_max = sensitivity[fi].max()
+        if row_max > 0:
+            sensitivity[fi] /= row_max
+        else:
+            sensitivity[fi] = np.ones(T) / T  # flat → no bias
+
+    return sensitivity  # (n_feats, T)
+
+
+def _cosine_similarity(a, b):
+    """1-D cosine similarity, returns scalar in [-1, 1]."""
+    na = np.linalg.norm(a)
+    nb = np.linalg.norm(b)
+    if na < 1e-12 or nb < 1e-12:
+        return 0.0
+    return float(np.dot(a, b) / (na * nb))
+
+
+def plot_latent_feature_mapping(
+    artifacts, model_name,
+    X_batch, X_man_batch, timestamps,
+    top_10_features, dataset_name, base_save_path,
+    TOP_K=15,
+    w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
+    feat_sensitivity=None,          # pass pre-computed to avoid recomputing per model
+):
+    """
+    Produce a combined latent → manual-feature mapping plot for one model.
+
+    Parameters
+    ----------
+    artifacts        : dict from extract_xai_artifacts
+    model_name       : str
+    X_batch          : (Batch, T, 1)  raw curves
+    X_man_batch      : (Batch, n_feats)  manual features (scaled)
+    timestamps       : 1-D array of length T
+    top_10_features  : list of feature name strings
+    dataset_name     : str, for plot title
+    base_save_path   : Path or str
+    TOP_K            : how many top latents to show (default 15)
+    w_spearman/mi/cosine : score weights (must sum to 1)
+    feat_sensitivity : (n_feats, T) pre-computed or None → computed here
+
+    Returns
+    -------
+    feat_sensitivity : (n_feats, T)  — cache and re-pass between models to save time
+    assignment_df    : list of dicts with per-latent best assignment
+    """
+    from sklearn.feature_selection import mutual_info_regression
+
+    art = artifacts.get(model_name)
+    if not art:
+        return feat_sensitivity, []
+
+    save_path = str(base_save_path).replace('.png', f'_latent_mapping_{model_name}.png')
+    n_feats = len(top_10_features)
+    TOP_K = min(TOP_K, len(art["curve_order"]))
+
+    # ------------------------------------------------------------------
+    # 1.  Gather latent activation traces  (TOP_K, Batch)
+    # ------------------------------------------------------------------
+    z_np      = art["z_curve"]          # (Batch, *latent_dims)
+    order     = art["curve_order"][:TOP_K]
+    imp_shape = art["curve_imp_shape"]
+    is_3d     = len(imp_shape) == 2
+
+    z_traces = []
+    for flat_idx in order:
+        if is_3d:
+            row, col = np.unravel_index(int(flat_idx), imp_shape)
+            z_traces.append(z_np[:, row, col])
+        else:
+            z_traces.append(z_np[:, int(flat_idx)])
+    z_traces = np.array(z_traces)   # (TOP_K, Batch)
+
+    # ------------------------------------------------------------------
+    # 2.  Gather mean saliency profiles  (TOP_K, T)
+    # ------------------------------------------------------------------
+    raw_maps = art["raw_saliency_curve"][:TOP_K]   # list of (Batch, T)
+    sal_profiles = np.array([np.mean(m, axis=0) for m in raw_maps])  # (TOP_K, T)
+    # Normalise rows to [0,1]
+    for i in range(TOP_K):
+        row_max = sal_profiles[i].max()
+        if row_max > 0:
+            sal_profiles[i] /= row_max
+
+    # ------------------------------------------------------------------
+    # 3.  Compute feature sensitivity profiles if not cached
+    # ------------------------------------------------------------------
+    if feat_sensitivity is None:
+        print(f"    [+] Computing feature sensitivity profiles for {model_name}...")
+        feat_sensitivity = _compute_feature_sensitivity_profiles(
+            X_batch, timestamps, top_10_features
+        )
+
+    # ------------------------------------------------------------------
+    # 4.  Build score matrices
+    # ------------------------------------------------------------------
+    spearman_matrix = np.zeros((TOP_K, n_feats))
+    mi_matrix       = np.zeros((TOP_K, n_feats))
+    cosine_matrix   = np.zeros((TOP_K, n_feats))
+
+    for i in range(TOP_K):
+        z_i = z_traces[i]   # (Batch,)
+        for j in range(n_feats):
+            f_j = X_man_batch[:, j]   # (Batch,) — already standardised
+
+            # 4a. |Spearman correlation| between activation and feature value
+            corr, _ = scipy.stats.spearmanr(z_i, f_j)
+            spearman_matrix[i, j] = 0.0 if np.isnan(corr) else abs(corr)
+
+            # 4b. Mutual information  (z_i ranked → treat as continuous)
+            try:
+                mi = mutual_info_regression(
+                    z_i.reshape(-1, 1), f_j, random_state=0
+                )[0]
+            except Exception:
+                mi = 0.0
+            mi_matrix[i, j] = mi
+
+        # 4c. Cosine similarity between saliency profile and feature sensitivity
+        for j in range(n_feats):
+            cosine_matrix[i, j] = max(0.0, _cosine_similarity(
+                sal_profiles[i], feat_sensitivity[j]
+            ))
+
+    # Normalise MI matrix to [0, 1] globally so it's on the same scale
+    mi_max = mi_matrix.max()
+    if mi_max > 0:
+        mi_matrix /= mi_max
+
+    # ------------------------------------------------------------------
+    # 5.  Combined score
+    # ------------------------------------------------------------------
+    combined = w_spearman * spearman_matrix + w_mi * mi_matrix + w_cosine * cosine_matrix
+
+    # ------------------------------------------------------------------
+    # 6.  Derive best assignment per latent
+    # ------------------------------------------------------------------
+    best_feat_idx  = np.argmax(combined, axis=1)   # (TOP_K,)
+    best_score     = combined[np.arange(TOP_K), best_feat_idx]
+
+    assignment_df = []
+    for i, flat_idx in enumerate(order):
+        assignment_df.append({
+            "latent_rank":   i + 1,
+            "latent_flat_idx": int(flat_idx),
+            "best_feature":  top_10_features[best_feat_idx[i]],
+            "combined_score": float(best_score[i]),
+            "spearman":      float(spearman_matrix[i, best_feat_idx[i]]),
+            "mi":            float(mi_matrix[i, best_feat_idx[i]]),
+            "cosine":        float(cosine_matrix[i, best_feat_idx[i]]),
+        })
+
+    # ------------------------------------------------------------------
+    # 7.  Plotting
+    # ------------------------------------------------------------------
+    fig = plt.figure(figsize=(14, TOP_K * 0.55 + 5))
+    gs  = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.45)
+    ax_heat = fig.add_subplot(gs[0])
+    ax_table = fig.add_subplot(gs[1])
+
+    # --- Heatmap ---
+    im = ax_heat.imshow(
+        combined, aspect='auto', cmap='YlOrRd', vmin=0, vmax=1,
+        interpolation='nearest'
+    )
+
+    ax_heat.set_xticks(np.arange(n_feats))
+    ax_heat.set_yticks(np.arange(TOP_K))
+    ax_heat.set_xticklabels(top_10_features, rotation=40, ha='right', fontsize=9, fontweight='bold')
+    ax_heat.set_yticklabels([f"Rank {i+1} (dim {d})" for i, d in enumerate(order)], fontsize=8)
+    ax_heat.set_title(
+        f"Latent → Feature Mapping: {model_name.upper()} | {dataset_name}\n"
+        f"Combined Score = {w_spearman:.0%} |Spearman| + {w_mi:.0%} MI + {w_cosine:.0%} Cos-Sim(saliency, sensitivity)",
+        fontsize=11, fontweight='bold', pad=12
+    )
+
+    # Annotate each cell with its score; star the best assignment
+    for i in range(TOP_K):
+        for j in range(n_feats):
+            val = combined[i, j]
+            is_best = (j == best_feat_idx[i])
+            text  = f"{'★' if is_best else ''}{val:.2f}"
+            color = "white" if val > 0.65 else "black"
+            weight = 'bold' if is_best else 'normal'
+            ax_heat.text(j, i, text, ha='center', va='center',
+                         color=color, fontsize=7, fontweight=weight)
+
+    divider = make_axes_locatable(ax_heat)
+    cax = divider.append_axes("right", size="3%", pad=0.15)
+    fig.colorbar(im, cax=cax).set_label("Combined Mapping Score", rotation=270, labelpad=14, fontsize=9)
+
+    # --- Assignment summary table ---
+    ax_table.axis('off')
+    col_labels = ["Rank", "Latent dim", "Best Feature", "Score", "|Spearman|", "MI (norm)", "Cos-Sim"]
+    cell_data  = [
+        [
+            str(r["latent_rank"]),
+            str(r["latent_flat_idx"]),
+            r["best_feature"],
+            f"{r['combined_score']:.3f}",
+            f"{r['spearman']:.3f}",
+            f"{r['mi']:.3f}",
+            f"{r['cosine']:.3f}",
+        ]
+        for r in assignment_df
+    ]
+    tbl = ax_table.table(
+        cellText=cell_data,
+        colLabels=col_labels,
+        loc='center',
+        cellLoc='center',
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.scale(1, 1.25)
+
+    # Colour header row
+    for col_idx in range(len(col_labels)):
+        tbl[(0, col_idx)].set_facecolor('#2C3E50')
+        tbl[(0, col_idx)].set_text_props(color='white', fontweight='bold')
+
+    # Highlight best assignment column
+    for row_idx in range(1, TOP_K + 1):
+        score = float(cell_data[row_idx - 1][3])
+        intensity = min(1.0, score)
+        tbl[(row_idx, 2)].set_facecolor(plt.cm.YlOrRd(intensity * 0.8))
+        tbl[(row_idx, 3)].set_facecolor(plt.cm.YlOrRd(intensity * 0.8))
+
+    ax_table.set_title("Assignment Summary Table", fontsize=10, fontweight='bold', pad=8)
+
+    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    return feat_sensitivity, assignment_df
+
+
+# ====================================================================
+# MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
 def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -670,10 +987,30 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         plot_latent_tsne(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], global_vis_dir / f"02_latent_space_tsne_{exp_path.name}.png")
 
         # 2. Advanced Heatmaps (Optimized)
+        # feat_sensitivity is computed once per dataset and reused across all models
+        # (it depends only on X_batch and the feature set, not on the model weights)
+        feat_sensitivity_cache = None
+
         for model_name in models.keys():
             plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, exp_path.name, global_vis_dir / f"04_saliency_{exp_path.name}.png")
             plot_concept_alignment_matrix(artifacts, model_name, X_man_batch, data_dict["top_10_features"], exp_path.name, global_vis_dir / f"05_concept_{exp_path.name}.png")
             plot_temporal_alignment_matrix(artifacts, model_name, T_man_batch, data_dict["top_10_features"], exp_path.name, global_vis_dir / f"06_temporal_{exp_path.name}.png")
+
+            # 3. New: Latent → Feature mapping
+            print(f"  -> Latent-Feature Mapping: {model_name}...")
+            feat_sensitivity_cache, assignments = plot_latent_feature_mapping(
+                artifacts, model_name,
+                X_batch, X_man_batch, data_dict["timestamps"],
+                data_dict["top_10_features"], exp_path.name,
+                global_vis_dir / f"07_latent_mapping_{exp_path.name}.png",
+                feat_sensitivity=feat_sensitivity_cache,   # reuse after first model
+            )
+            if assignments:
+                print(f"     Top assignments for {model_name}:")
+                for a in assignments[:5]:
+                    print(f"       Rank {a['latent_rank']} (dim {a['latent_flat_idx']}) → "
+                          f"{a['best_feature']}  (score={a['combined_score']:.3f}, "
+                          f"ρ={a['spearman']:.3f}, MI={a['mi']:.3f}, cos={a['cosine']:.3f})")
 
         print(f"  [✓] Processed {exp_path.name}")
         tf.keras.backend.clear_session()

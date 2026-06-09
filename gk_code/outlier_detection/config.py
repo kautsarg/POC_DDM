@@ -200,6 +200,30 @@ LABEL_MAPPINGS = {
 		8: 'Target',
 		9: 'NC',
 	},
+    'D20260608_E00_C00_F4500KHz_U_norm_temp_04':{
+        0: 'Target',
+		1: 'NC-Target',
+		2: 'NC-Target',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC-Target',
+		6: 'NC-Target',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC-Target',
+    },
+    'D20260608_E00_C00_F4500KHz_U_norm_temp_04_nc_subtract':{
+        0: 'Target',
+		1: 'NC',
+		2: 'NC',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC',
+		6: 'NC',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC',
+    },
 }
 
 EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old']
