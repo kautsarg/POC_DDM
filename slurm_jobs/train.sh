@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=v06_poc
+#SBATCH --job-name=v06_poc_multi
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -7,39 +7,36 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition a30
- 
-# Launch 10 clones of this job (SLURM array indices 1 through 10)
-#SBATCH --array=3
+#SBATCH --partition=a30
+#SBATCH --array=0-1
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
 
-cd /vol/bitbucket/gk225/POC_DDM/
+# CRITICAL: Slurm will fail if the logs directory doesn't exist yet
+mkdir -p /vol/bitbucket/gk225/POC_DDM/logs
 
-# # Load modules
-# module load Python/3.12.3-GCCcore-13.3.0
-# module load CUDA/12.6.0
-# module load cuDNN/9.10.2.21-CUDA-12.6.0
+cd /vol/bitbucket/gk225/POC_DDM/
 
 # Activate venv
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 
-# Run python script
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection
 
-# Replace PBS_ARRAY_INDEX with SLURM_ARRAY_TASK_ID
-PY_INDEX=$(($SLURM_ARRAY_TASK_ID - 1))
+REAL_TASK_ID=8
+OUTLIER_TRAINING_ID=$((REAL_TASK_ID + SLURM_ARRAY_TASK_ID))
 
-# # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing.py --task_id $PY_INDEX
-# # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $PY_INDEX
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $PY_INDEX --n_splits 10 --exp_folder "/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper"
+# FIX: Correct Bash if/else syntax
+if [ "$REAL_TASK_ID" -eq "$OUTLIER_TRAINING_ID" ]; then
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v06
+else
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v06 --nc_subtract
+fi
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id 2 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v06 --nc_subtract
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id 3 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id 3 --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $OUTLIER_TRAINING_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $OUTLIER_TRAINING_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
 
 deactivate
