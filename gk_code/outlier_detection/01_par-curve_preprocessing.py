@@ -661,6 +661,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Curve Preprocessing Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
+    parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved file already exists")
     args = parser.parse_args()
 
     margin = (config.WINDOW_SIZE_1STDER - 1) // 2
@@ -678,7 +679,7 @@ if __name__ == "__main__":
 
     exp_path = exp_paths[args.task_id]
     save_path = os.path.join(exp_path, config.PREPROCESSED_CURVES_PATH)
-    if os.path.exists(save_path):
+    if os.path.exists(save_path) and not args.force_rerun:
         print(f"Cache hit: {exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)

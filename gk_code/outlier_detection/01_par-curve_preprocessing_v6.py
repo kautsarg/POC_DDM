@@ -799,6 +799,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_wells", type=int, default=config.N_WELLS, help="Number of wells")
     parser.add_argument("--n_a_type", type=str, default=config.N_A_TYPE, help="Type of n_a")
     parser.add_argument("--nc_subtract", action="store_true", help="Apply baseline subtraction based on derivatives")
+    parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved file already exists")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -825,7 +826,7 @@ if __name__ == "__main__":
         save_exp_path = exp_path
         
     save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
-    if os.path.exists(save_path):
+    if os.path.exists(save_path) and not args.force_rerun:
         print(f"Cache hit: {save_exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)

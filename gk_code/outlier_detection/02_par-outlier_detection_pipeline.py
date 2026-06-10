@@ -42,6 +42,7 @@ from cnn_autoencoder_outlier import run_cnn_autoencoder_pipeline
 from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
 from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipeline
 from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
+from spatial_consistency_outlier import run_spatial_consistency_knn_pipeline, run_spatial_consistency_grid_pipeline
 
 # ====================================================================
 # GLOBAL CONSTANTS & CONFIGURATIONS
@@ -103,10 +104,14 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
         fig = plt.figure(figsize=(10, 8))
         axes = [fig.add_subplot(2, 2, i+1) for i in range(3)]
         for i, feature in enumerate(valid_features):
-            sns.boxplot(data=plot_data, x=target, y=feature, ax=axes[i])
+            feature_data = plot_data.dropna(subset=[feature])
+            if feature_data.empty:
+                axes[i].text(0.5, 0.5, "No data", ha="center", va="center", transform=axes[i].transAxes)
+            else:
+                sns.boxplot(data=feature_data, x=target, y=feature, ax=axes[i])
             axes[i].set_title(feature, fontweight='bold')
             axes[i].grid(True, alpha=0.3, axis='y')
-            
+
         ax4 = fig.add_subplot(2, 2, 4, projection='3d')
         f1, f2, f3 = valid_features
         unique_targets = np.unique(well_labels)
@@ -126,7 +131,11 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
         fig, axes = plt.subplots(1, n_features, figsize=(n_features * 4, 3))
         if n_features == 1: axes = [axes]
         for i, feature in enumerate(valid_features):
-            sns.boxplot(data=plot_data, x=target, y=feature, ax=axes[i])
+            feature_data = plot_data.dropna(subset=[feature])
+            if feature_data.empty:
+                axes[i].text(0.5, 0.5, "No data", ha="center", va="center", transform=axes[i].transAxes)
+            else:
+                sns.boxplot(data=feature_data, x=target, y=feature, ax=axes[i])
             axes[i].set_title(feature, fontweight='bold')
             axes[i].grid(True, alpha=0.3, axis='y')
             
@@ -182,6 +191,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Outlier Detection Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
+    parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved unified state already exists")
     args = parser.parse_args()
 
     exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)])
@@ -208,7 +218,9 @@ if __name__ == "__main__":
     unified_save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     pipeline_state = {}
 
-    if os.path.exists(unified_save_path):
+    if args.force_rerun and os.path.exists(unified_save_path):
+        print(f"  -> [FORCE RERUN] Ignoring presaved unified state at {unified_save_path}. Recomputing everything...")
+    elif os.path.exists(unified_save_path):
         print(f"  -> Found unified state at {unified_save_path}. Loading...")
         try:
             pipeline_state = joblib.load(unified_save_path)
@@ -538,8 +550,10 @@ if __name__ == "__main__":
     ]
     mean_std_configs = [] # Add tuple entries to enable
     knn_filter_config = [0.85, 0.90, 0.95]
-    ae_configs = ["elbow", 90, 95]        
+    ae_configs = ["elbow", 90, 95]
     downsample_factor = config.AE_DOWNSAMPLE_FACTOR
+    spatial_knn_configs = ["elbow", 90, 95]
+    spatial_grid_configs = ["elbow", 90, 95]
 
     ae_filtered_names, ae_filtered_dataset = [], []
     for name, data in zip(dataset_name, dataset):
@@ -607,11 +621,33 @@ if __name__ == "__main__":
     missing_knn = [pct for pct, label in zip(knn_filter_config, expected_knn) if label not in kinetic_features[0].columns]
     if missing_knn:
         extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
-        for i in range(len(dataset_name)): 
+        for i in range(len(dataset_name)):
             features_to_concat[i].append(extracted_dfs[i])
         flush_and_save_progress()
     else:
         print("  -> [SKIP] KNN Filter: Already calculated.")
+
+    # --- Spatial Consistency Filter (KNN neighbors) ---
+    expected_spatial_knn = [f"spatial_knn_label_{pct}" for pct in spatial_knn_configs]
+    missing_spatial_knn = [pct for pct, label in zip(spatial_knn_configs, expected_spatial_knn) if label not in kinetic_features[0].columns]
+    if missing_spatial_knn:
+        extracted_dfs = run_spatial_consistency_knn_pipeline(dataset_name, dataset, Y_well, ref_curves, metadata_df, os.path.join(exp_path, "spatial_knn_outlier"), missing_spatial_knn, k_neighbors=config.SPATIAL_CONSISTENCY_KNN_K, save_plot=save_plot_flag)
+        for i in range(len(dataset_name)):
+            features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
+    else:
+        print("  -> [SKIP] Spatial Consistency Filter (KNN): Already calculated.")
+
+    # --- Spatial Consistency Filter (Grid neighbors) ---
+    expected_spatial_grid = [f"spatial_grid_label_{pct}" for pct in spatial_grid_configs]
+    missing_spatial_grid = [pct for pct, label in zip(spatial_grid_configs, expected_spatial_grid) if label not in kinetic_features[0].columns]
+    if missing_spatial_grid:
+        extracted_dfs = run_spatial_consistency_grid_pipeline(dataset_name, dataset, Y_well, ref_curves, metadata_df, os.path.join(exp_path, "spatial_grid_outlier"), missing_spatial_grid, window=config.SPATIAL_CONSISTENCY_GRID_WINDOW, save_plot=save_plot_flag)
+        for i in range(len(dataset_name)):
+            features_to_concat[i].append(extracted_dfs[i])
+        flush_and_save_progress()
+    else:
+        print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
 
     # --- MSC Filter ---
     msc_configs_to_run = []

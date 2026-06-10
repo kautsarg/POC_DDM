@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--n_splits", type=int, default=1)
+    parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     args = parser.parse_args()
 
     exp_paths = get_exp_paths(args.exp_folder)
@@ -101,39 +102,15 @@ if __name__ == "__main__":
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well)
 
-    outlier_filters = [
-        None, 
-        
-        # 'msc_label_msc_linear_0.001',
-        # # 'msc_label_msc_baseline_0.001',
-
-        # 'amf_label_amf_important',
-        # # 'amf_label_amf_send_5',
-
-        # 'knn_top_0.95',
-        # # 'knn_top_0.9',
-        # # 'knn_top_0.85', 
-        
-        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'cnn_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-        
-        # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow',  
-        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'cnn_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90',
-
-        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95',
-        # # f'lstm_ae_pw_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-
-        # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow', 
-        # # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_95'
-        # # f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_90', 
-    ]
+    outlier_filters = config.OUTLIER_FILTERS
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
-    all_ml_results = load_or_init_results(results_file_path)
+    if args.force_rerun:
+        print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")
+        all_ml_results = {}
+    else:
+        all_ml_results = load_or_init_results(results_file_path)
 
     total_datasets = len(dataset_name)
     total_samples = len(y_full)

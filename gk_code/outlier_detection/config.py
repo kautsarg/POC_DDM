@@ -26,7 +26,7 @@ MULTI_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_multi")
 
 # Global Experiment Parameters
 N_WELLS = 10
-N_A_TYPE = "v04"
+N_A_TYPE = "v06"
 
 # Preprocessing Window Sizes
 WINDOW_SIZE_ORI = 50
@@ -38,6 +38,50 @@ PLOT_DECIMAL_PRECISION = 4
 
 # AutoEncoder Downsample Factor
 AE_DOWNSAMPLE_FACTOR = 1
+
+# Spatial Consistency Outlier Filters
+SPATIAL_CONSISTENCY_KNN_K = 24       # Number of nearest neighbors (by pixel coordinate distance)
+SPATIAL_CONSISTENCY_GRID_WINDOW = 2  # Grid half-width -> (2*window+1)^2 neighborhood (5x5)
+
+# All outlier filter labels produced by 02_par-outlier_detection_pipeline.py
+# (None = no filtering / baseline)
+OUTLIER_FILTERS = [
+    None,
+
+    'msc_label_msc_linear_0.001',
+    'msc_label_msc_baseline_0.001',
+
+    'amf_label_amf_important',
+    'amf_label_amf_send_5',
+
+    'knn_top_0.95',
+    'knn_top_0.9',
+    'knn_top_0.85',
+
+    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+
+    f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+
+    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+
+    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+
+    'spatial_knn_label_elbow',
+    'spatial_knn_label_90',
+    'spatial_knn_label_95',
+
+    'spatial_grid_label_elbow',
+    'spatial_grid_label_90',
+    'spatial_grid_label_95',
+]
 
 # File paths
 PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
@@ -68,6 +112,8 @@ EXCLUDED_FEATURES = [
     "lstm_ae_pw_ds1_label_elbow", "lstm_ae_pw_ds1_label_90", "lstm_ae_pw_ds1_label_95",
     "lstm_ae_glb_ds1_label_elbow", "lstm_ae_glb_ds1_label_90", "lstm_ae_glb_ds1_label_95",
     "knn_top_0.85", "knn_top_0.9", "knn_top_0.95",
+    "spatial_knn_label_elbow", "spatial_knn_label_90", "spatial_knn_label_95",
+    "spatial_grid_label_elbow", "spatial_grid_label_90", "spatial_grid_label_95",
     "msc_mahal_dist",
     "msc_mahal_dist_msc_linear_0.001", "msc_label_msc_linear_0.001",
     "msc_mahal_dist_msc_baseline_0.001", "msc_label_msc_baseline_0.001",
@@ -213,6 +259,78 @@ LABEL_MAPPINGS = {
 		9: 'NC-Target',
     },
     'D20260608_E00_C00_F4500KHz_U_norm_temp_04_nc_subtract':{
+        0: 'Target',
+		1: 'NC',
+		2: 'NC',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC',
+		6: 'NC',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06':{
+        0: 'Target',
+		1: 'NC-Target',
+		2: 'NC-Target',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC-Target',
+		6: 'NC-Target',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC-Target',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06_nc_subtract':{
+        0: 'Target',
+		1: 'NC',
+		2: 'NC',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC',
+		6: 'NC',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07':{
+        0: 'Target',
+		1: 'NC-Target',
+		2: 'NC-Target',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC-Target',
+		6: 'NC-Target',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC-Target',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07_nc_subtract':{
+        0: 'Target',
+		1: 'NC',
+		2: 'NC',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC',
+		6: 'NC',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08':{
+        0: 'Target',
+		1: 'NC-Target',
+		2: 'NC-Target',
+		3: 'Target',
+		4: 'Target',
+		5: 'NC-Target',
+		6: 'NC-Target',
+		7: 'Target',
+		8: 'Target',
+		9: 'NC-Target',
+    },
+    'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08_nc_subtract':{
         0: 'Target',
 		1: 'NC',
 		2: 'NC',
