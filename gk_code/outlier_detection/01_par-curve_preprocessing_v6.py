@@ -953,7 +953,6 @@ if __name__ == "__main__":
                                     Y_well, X_time, all_exp_data, 
                                     config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index)
     
-    print("  -> Building Sigmoid Grids (Optimized)...")
     unique_wells = np.unique(Y_well)
 
     saved_viz = getattr(config, "SAVED_VIZ", [])
