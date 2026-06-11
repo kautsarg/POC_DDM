@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=multi_cv_training
+#SBATCH --job-name=multi_03b_loco_crossval
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -11,11 +11,10 @@
 #SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
-#SBATCH --output=logs/%x_%A_%a.out
-#SBATCH --error=logs/%x_%A_%a.err
+#SBATCH --output=logs/%x/%A_%a.out
+#SBATCH --error=logs/%x/%A_%a.err
 
-# CRITICAL: Slurm will fail if the logs directory doesn't exist yet
-mkdir -p /vol/bitbucket/gk225/POC_DDM/logs
+mkdir -p "logs/${SLURM_JOB_NAME}"
 
 # Activate venv
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=v06_poc_init_chip
+#SBATCH --job-name=chip_init_03_train
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -11,11 +11,10 @@
 #SBATCH --array=0,7
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
-#SBATCH --output=logs/%x_%A_%a.out
-#SBATCH --error=logs/%x_%A_%a.err
+#SBATCH --output=logs/%x/%A_%a.out
+#SBATCH --error=logs/%x/%A_%a.err
 
-# CRITICAL: Slurm will fail if the logs directory doesn't exist yet
-mkdir -p /vol/bitbucket/gk225/POC_DDM/logs
+mkdir -p "logs/${SLURM_JOB_NAME}"
 
 cd /vol/bitbucket/gk225/POC_DDM/
 

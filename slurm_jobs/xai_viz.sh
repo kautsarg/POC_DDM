@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=ddm_xai_viz
+#SBATCH --job-name=xai_viz
 #SBATCH --time=72:00:00
 
 # Request resources for a single job
@@ -9,11 +9,10 @@
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
 
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --output=logs/%x/%j.out
+#SBATCH --error=logs/%x/%j.err
 
-# Safety check to ensure the log directory exists
-mkdir -p /vol/bitbucket/gk225/POC_DDM/logs
+mkdir -p "logs/${SLURM_JOB_NAME}"
 
 cd /vol/bitbucket/gk225/POC_DDM/
 
