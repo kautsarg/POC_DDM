@@ -54,6 +54,37 @@ def set_global_determinism(seed=0):
     except AttributeError:
         pass
 
+
+# ====================================================================
+# CURVE RESAMPLING (for combining datasets with different timestamp grids)
+# ====================================================================
+class CurveResampler:
+    """
+    Resamples curves onto a single common time grid via linear interpolation.
+
+    The grid spans [0, duration], where `duration` is the shortest curve
+    duration seen during `fit` (so every fitted curve covers the full grid
+    and no extrapolation is needed). Curves shorter than the grid (e.g. at
+    inference time) are flat-extrapolated, since `np.interp` clips to the
+    boundary value outside the source range.
+    """
+
+    def __init__(self, t_grid):
+        self.t_grid = np.asarray(t_grid, dtype=float)
+
+    @classmethod
+    def fit(cls, timestamps_list, n_points=None):
+        """timestamps_list: list of 1D arrays, each starting at t=0 (i.e. t - t[0])."""
+        duration = min(t[-1] for t in timestamps_list)
+        if n_points is None:
+            n_points = max(int(np.sum(t <= duration)) for t in timestamps_list)
+        return cls(np.linspace(0, duration, n_points))
+
+    def transform(self, t_raw, curves):
+        """curves: (N, T) array sharing timestamps t_raw -> (N, len(t_grid))."""
+        t_zeroed = np.asarray(t_raw, dtype=float) - t_raw[0]
+        return np.array([np.interp(self.t_grid, t_zeroed, c) for c in curves])
+
 # ====================================================================
 # DUAL MODEL
 # ====================================================================
@@ -357,10 +388,30 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
 # ====================================================================
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
+def _remap_global_splits(global_splits, mask, valid_mask=None):
+    """
+    Convert (train_idx, test_idx) pairs defined over the FULL pre-filter index
+    space (0..N-1, matching X_curves/y_encoded as passed in) into positional
+    indices over the array after `mask` (and optionally `valid_mask`, applied
+    on top of `mask`) has been used to slice it.
+    """
+    kept_global = np.where(mask)[0]
+    if valid_mask is not None:
+        kept_global = kept_global[valid_mask]
+    pos_lookup = {g: i for i, g in enumerate(kept_global)}
+
+    remapped = []
+    for train_idx, test_idx in global_splits:
+        local_train = np.array([pos_lookup[g] for g in train_idx if g in pos_lookup], dtype=int)
+        local_test = np.array([pos_lookup[g] for g in test_idx if g in pos_lookup], dtype=int)
+        remapped.append((local_train, local_test))
+    return remapped
+
+
 def evaluate_outlier_filters(
     X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name,
     cached_results=None, models=["cnn", "cnn_lf"], n_splits=1,
-    checkpoint_fn=None, KFS=None, rerun_models=[]
+    checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None
 ):
     X_FFI_full = X_curves[:, [-1]]
     
@@ -425,6 +476,7 @@ def evaluate_outlier_filters(
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
 
+        valid_class_mask = None
         if len(rare_classes) > 0:
             valid_class_mask = ~np.isin(y_true, rare_classes)
             X_AC = X_AC[valid_class_mask]
@@ -442,21 +494,28 @@ def evaluate_outlier_filters(
         # curve_maxs = np.max(X_AC, axis=1, keepdims=True)
         # X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
         ######################################################################
-        
+
         if n_classes < 2 or len(y_true) < 2 * n_classes:
             print(f"     [Warning] Insufficient classes or samples. Skipping.")
             continue
 
-        calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
-
-        if n_splits == 1:
-            splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+        if cv_splits is not None:
+            splits = _remap_global_splits(cv_splits, mask, valid_class_mask)
+            splits = [(tr, te) for tr, te in splits if len(tr) > 0 and len(te) > 0]
+            if not splits:
+                print(f"     [Warning] No samples remain for this filter under the given CV splits. Skipping.")
+                continue
         else:
-            min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
-            actual_splits = min(n_splits, min_class_count)
-            splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
+            calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
 
-        splits = list(splitter.split(X_AC, y_true))
+            if n_splits == 1:
+                splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+            else:
+                min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
+                actual_splits = min(n_splits, min_class_count)
+                splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
+
+            splits = list(splitter.split(X_AC, y_true))
         
         if "y_trues_" not in res_entry:
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
