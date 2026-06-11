@@ -3,6 +3,8 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid Tkinter issues
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import plotly.io as pio
+pio.renderers.default = "json"  # avoid fig.show() trying to open a browser (causes vscode-ipc errors over SSH)
 from pathlib import Path
 import pandas as pd
 from scipy.signal import lfilter
@@ -217,7 +219,7 @@ if __name__ == '__main__':
     # When looping over many Vref slices, avoid spamming interactive windows.
     # Plots will still be saved to HTML in `save_path`.
     MULTI_VREF_SHOW_PLOTS = True    
-    MULTI_VREF_AUTO_OPEN_HTML = True
+    MULTI_VREF_AUTO_OPEN_HTML = False
     # Prefer an absolute OneDrive path so the script works regardless of current working directory.
     # (The previous relative path depended on running from a specific folder.)
     # onedrive_path = Path.home() / "OneDrive - ProtonDx"
@@ -230,7 +232,7 @@ if __name__ == '__main__':
     # exp_paths = [Path(exp_folder, "D20260522_E00_C00_F4500KHz_U_manifold_test_05")]  # OR THIS TO RUN ONE EXPERIMENT
     # exp_paths = [Path(exp_folder, "D20260608_E00_C00_F4500KHz_U_norm_temp_04")]  # OR THIS TO RUN ONE EXPERIMENT
     # exp_paths = [Path(exp_folder, "D20260609_E00_C00_F4500KHz_U_norm_temp_read_06")]  # OR THIS TO RUN ONE EXPERIMENT
-    exp_paths = [Path(exp_folder, "D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08")]  # OR THIS TO RUN ONE EXPERIMENT
+    exp_paths = [Path(exp_folder, "D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01")]  # OR THIS TO RUN ONE EXPERIMENT
     
     # Optional: overlay several runs on one plot (t=0 at vref jump / idx_settled).
     # Set enabled=True and list folders in overlay_paths (or None to reuse exp_paths).
@@ -624,7 +626,7 @@ if __name__ == '__main__':
                         })
                         #endregion agent log
                         _show = True
-                        _auto_open = True
+                        _auto_open = False
                         if is_multi_vref:
                             _show = bool(MULTI_VREF_SHOW_PLOTS)
                             _auto_open = bool(MULTI_VREF_AUTO_OPEN_HTML)
@@ -1065,7 +1067,8 @@ if __name__ == '__main__':
                         print("  - Creating raw chip video (Plotly)...")
                         try:
                             _show_rc = True if not is_multi_vref else bool(MULTI_VREF_SHOW_PLOTS)
-                            _auto_open_rc = True if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)
+                            # _auto_open_rc = True if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)
+                            _auto_open_rc = False
                             plot_raw_chip_video_plotly(
                                 exp,
                                 save_path=save_path,
@@ -1095,7 +1098,7 @@ if __name__ == '__main__':
                                 save_path=save_path,
                                 experiment_name=experiment_name_slice,
                                 show=(True if not is_multi_vref else bool(MULTI_VREF_SHOW_PLOTS)),
-                                auto_open_html=(True if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)),
+                                auto_open_html=(False if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)),
                                 signal_mode="linearized",
                             )
                             plots_created.append("Linearized Chem Plotly (per-pixel)")
@@ -1110,7 +1113,7 @@ if __name__ == '__main__':
                             save_path=save_path,
                             experiment_name=experiment_name_slice,
                             show=(True if not is_multi_vref else bool(MULTI_VREF_SHOW_PLOTS)),
-                            auto_open_html=(True if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)),
+                            auto_open_html=(False if not is_multi_vref else bool(MULTI_VREF_AUTO_OPEN_HTML)),
                         )
                         plots_created.append("Temperature")
                     

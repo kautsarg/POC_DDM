@@ -49,38 +49,38 @@ OUTLIER_FILTERS = [
     None,
 
     'msc_label_msc_linear_0.001',
-    'msc_label_msc_baseline_0.001',
+    # 'msc_label_msc_baseline_0.001',
 
     'amf_label_amf_important',
-    'amf_label_amf_send_5',
+    # 'amf_label_amf_send_5',
 
     'knn_top_0.95',
-    'knn_top_0.9',
-    'knn_top_0.85',
+    # 'knn_top_0.9',
+    # 'knn_top_0.85',
 
-    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
-    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
-    f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+    # f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    # # f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    # # f'cnn_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
 
     f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
-    f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
-    f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+    # f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    # f'cnn_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
 
-    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
-    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
-    f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+    # f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
+    # # f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    # # f'lstm_ae_pw_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
 
     f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
-    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
-    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
+    # f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_95',
+    # f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_90',
 
     'spatial_knn_label_elbow',
-    'spatial_knn_label_90',
-    'spatial_knn_label_95',
+    # 'spatial_knn_label_90',
+    # 'spatial_knn_label_95',
 
     'spatial_grid_label_elbow',
-    'spatial_grid_label_90',
-    'spatial_grid_label_95',
+    # 'spatial_grid_label_90',
+    # 'spatial_grid_label_95',
 ]
 
 # File paths
@@ -88,6 +88,8 @@ PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
 TRAINING_DATA_PATH = 'curve_for_training_nonorm.joblib'
 TRAINING_RESULT_PATH = 'classification_performances_nonorm.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold_nonorm.joblib'
+CROSS_DATASET_RESULT_PATH = 'classification_performances_cross_dataset_{mode}.joblib'
+CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resampler.joblib'
 
 # File paths
 # PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
@@ -342,6 +344,42 @@ LABEL_MAPPINGS = {
 		8: 'Target',
 		9: 'NC',
     },
+    'D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01': {
+		0: 'Conc-01',
+		1: 'Conc-02',
+		2: 'Conc-02',
+		3: 'Conc-01',
+		4: 'Conc-01',
+		5: 'Conc-02',
+		6: 'Conc-02',
+		7: 'Conc-01',
+		8: 'NC-Conc-01',
+		9: 'NC-Conc-02',
+	},
+    'D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01_nc_subtract': {
+		0: 'Conc-01',
+		1: 'Conc-02',
+		2: 'Conc-02',
+		3: 'Conc-01',
+		4: 'Conc-01',
+		5: 'Conc-02',
+		6: 'Conc-02',
+		7: 'Conc-01',
+		8: 'NC',
+		9: 'NC',
+	},
 }
 
-EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old']
+# ==========================================
+# CROSS-DATASET ROBUSTNESS CV (03b)
+# ==========================================
+# Manually defined groups of experiment folders to combine for cross-dataset
+# CV (see 03b_par-cross_dataset_training.py). All folders within a group MUST
+# share an IDENTICAL well-index -> label mapping in LABEL_MAPPINGS above,
+# since the well-based CV folds rely on that mapping being consistent.
+CROSS_DATASET_GROUPS = {
+    # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
+    'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08_nc_subtract']
+}
+
+EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old', 'outlier_visualisation', 'outlier_visualisation_old']

@@ -3334,13 +3334,13 @@ def plot_dvref_selection_model_plotly(
     if show:
         fig.show()
 
-    if auto_open_html and save_path:
+    if save_path:
         try:
             import os
             import sys
 
             html_path = Path(save_path) / f"{safe_name}_dvref_selection_model.html"
-            if sys.platform == "win32" and html_path.is_file():
+            if sys.platform == "win32" and html_path.is_file() and auto_open_html:
                 os.startfile(str(html_path))
         except Exception:
             pass
