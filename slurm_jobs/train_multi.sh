@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=v06_poc_multi
+#SBATCH --job-name=v06_e2e
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -27,8 +27,9 @@ export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection
 
 # REAL_TASK_ID=6
-REAL_TASK_ID=8
+# REAL_TASK_ID=8
 # REAL_TASK_ID=10
+REAL_TASK_ID=12
 OUTLIER_TRAINING_ID=$((REAL_TASK_ID + SLURM_ARRAY_TASK_ID))
 
 if [ "$REAL_TASK_ID" -eq "$OUTLIER_TRAINING_ID" ]; then
