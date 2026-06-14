@@ -44,11 +44,12 @@ def export_interactive_html(master_df, out_file="pipeline_comparison_report.html
     # - Subplots (Facets): Curve Types
     # - Lines (Grouping): Connects points from the same Experiment (sample_name)
     fig = px.line(
-        df, 
-        x="Clean_Filter", 
-        y="Accuracy (%)", 
+        df,
+        x="Clean_Filter",
+        y="Accuracy (%)",
         color="model",
-        facet_col="curve_name", 
+        color_discrete_map=config.MODEL_COLORS,
+        facet_col="curve_name",
         facet_col_wrap=3,          # Wraps to a new row after 3 columns
         line_group="sample_name",  # Crucial: Separates lines by experiment
         hover_name="sample_name",  # Shows Experiment name prominently on hover
@@ -83,6 +84,16 @@ def export_interactive_html(master_df, out_file="pipeline_comparison_report.html
     fig.write_html(out_file)
     print(f"[*] Successfully saved interactive report to: {out_file}")
 
+def get_hue_palette(df, hue_col):
+    """
+    Build a colour map for `hue_col` using config.get_palette, so models and
+    curve types keep their fixed colours (config.MODEL_COLORS /
+    config.CURVE_COLORS) and stay consistent across every figure.
+    """
+    fixed_colors = {"model": config.MODEL_COLORS, "curve_name": config.CURVE_COLORS}.get(hue_col, {})
+    return config.get_palette(df[hue_col].unique(), fixed_colors)
+
+
 def plot_flexible_grouped_bar(df, x_col, y_col, hue_col, ax, title=None, is_percentage=True, is_horizontal=False, baseline_value=None):
     """
     A highly flexible grouped bar chart generator using Seaborn.
@@ -91,10 +102,10 @@ def plot_flexible_grouped_bar(df, x_col, y_col, hue_col, ax, title=None, is_perc
     # 1. Map Data Based on Orientation
     x_data = y_col if is_horizontal else x_col
     y_data = x_col if is_horizontal else y_col
-    
-    # Note: If multiple models are present, sns.barplot will automatically plot the MEAN 
+
+    # Note: If multiple models are present, sns.barplot will automatically plot the MEAN
     # accuracy across all models for that specific curve/filter, with error bars for variance.
-    sns.barplot(data=df, x=x_data, y=y_data, hue=hue_col, palette="viridis", edgecolor="black", linewidth=1, ax=ax)
+    sns.barplot(data=df, x=x_data, y=y_data, hue=hue_col, palette=get_hue_palette(df, hue_col), edgecolor="black", linewidth=1, ax=ax)
     
     ax.set_xlabel(x_data.replace("_", " ").title(), fontsize=14, fontweight='bold')
     ax.set_ylabel(y_data.replace("_", " ").title(), fontsize=14, fontweight='bold')

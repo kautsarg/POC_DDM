@@ -38,16 +38,18 @@ def plot_dataset_results_line(df_long, sample_name, save_dir=None):
 
     curves = df['curve_name'].unique()
 
-    # Expanded styles to cover all deep learning and classical models
+    # Expanded styles to cover all deep learning and classical models.
+    # Colors come from config.MODEL_COLORS so each model is drawn in the same
+    # color across line plots, bar charts, and the interactive HTML report.
     styles = {
-        'CNN': {'color': '#2962FF', 'marker': 'o', 'label': 'CNN'},
-        'LSTM': {'color': '#00C853', 'marker': 's', 'label': 'LSTM'},
-        'GRU': {'color': '#FF6D00', 'marker': '^', 'label': 'GRU'},
-        'RNN': {'color': '#D500F9', 'marker': 'D', 'label': 'RNN'},
-        'Transformer': {'color': '#FF1744', 'marker': 'v', 'label': 'Transformer'},
-        'RandomForest': {'color': '#6200EA', 'marker': '*', 'label': 'Random Forest'},
-        'KNN': {'color': '#00B0FF', 'marker': 'p', 'label': 'KNN'},
-        'LR (FFI)': {'color': '#8D6E63', 'marker': 'h', 'label': 'LR (FFI)'}
+        'CNN': {'color': config.MODEL_COLORS['CNN'], 'marker': 'o', 'label': 'CNN'},
+        'LSTM': {'color': config.MODEL_COLORS['LSTM'], 'marker': 's', 'label': 'LSTM'},
+        'GRU': {'color': config.MODEL_COLORS['GRU'], 'marker': '^', 'label': 'GRU'},
+        'RNN': {'color': config.MODEL_COLORS['RNN'], 'marker': 'D', 'label': 'RNN'},
+        'Transformer': {'color': config.MODEL_COLORS['Transformer'], 'marker': 'v', 'label': 'Transformer'},
+        'RandomForest': {'color': config.MODEL_COLORS['RandomForest'], 'marker': '*', 'label': 'Random Forest'},
+        'KNN': {'color': config.MODEL_COLORS['KNN'], 'marker': 'p', 'label': 'KNN'},
+        'LR (FFI)': {'color': config.MODEL_COLORS['LR (FFI)'], 'marker': 'h', 'label': 'LR (FFI)'}
     }
 
     for c_name in curves:

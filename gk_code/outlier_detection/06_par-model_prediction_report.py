@@ -157,7 +157,7 @@ def build_html(title, panel_titles, img_buffers, save_path):
 
 
 def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
-    out_dir = exp_path.parent / "model_performance_viz"
+    out_dir = config.get_viz_dir(exp_path.parent, "model_performance_viz")
 
     mode_key = mode.strip().title()
     filter_tag = "none" if outlier_filter is None else re.sub(r"[^A-Za-z0-9._-]+", "_", outlier_filter)

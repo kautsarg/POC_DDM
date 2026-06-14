@@ -19,8 +19,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
 import tensorflow as tf
-from cycler import cycler
-from matplotlib.colors import to_hex
+from matplotlib.colors import ListedColormap
 
 # --- CUSTOM MODULES ---
 sys.path.insert(0, '..')
@@ -36,6 +35,7 @@ from cnn_autoencoder_outlier import run_cnn_autoencoder_pipeline
 from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
 from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipeline
 from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
+import config
 
 # ====================================================================
 # GLOBAL CONSTANTS & CONFIGURATIONS
@@ -44,13 +44,9 @@ from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeli
 from model_utils import set_global_determinism
 set_global_determinism(0)
 
-# Matplotlib Color Cycler Configuration
-mpl_colors = [
-    (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
-    (0.00, 0.60, 0.50), (0.95, 0.90, 0.25), (0.80, 0.40, 0.70), 
-    (0.20, 0.13, 0.53), (0.87, 0.80, 0.47), (0.27, 0.67, 0.60), (0.65, 0.65, 0.65)
-]
-plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
+# Shared colour-blind-safe matplotlib cycle + qualitative palette (sets
+# plt.rcParams['axes.prop_cycle'] as a side effect of import).
+WELL_CMAP = ListedColormap(config.WELL_COLORS)
 
 # Feature Exclusions and Groups for Correlation Logic
 EXCLUDED_FEATURES = [
@@ -137,11 +133,11 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
         ax4 = fig.add_subplot(2, 2, 4, projection='3d')
         f1, f2, f3 = valid_features
         unique_targets = np.unique(well_labels)
-        palette = sns.color_palette("tab10", len(unique_targets))
-        
-        for idx, val in enumerate(unique_targets):
+        palette = config.get_palette(unique_targets, config.WELL_COLOR_MAP if target == "well" else None)
+
+        for val in unique_targets:
             subset = plot_data[plot_data[target] == val]
-            ax4.scatter(subset[f1], subset[f2], subset[f3], label=f"Well {val}", color=palette[idx], alpha=0.7, s=20)
+            ax4.scatter(subset[f1], subset[f2], subset[f3], label=f"Well {val}", color=palette[val], alpha=0.7, s=20)
             
         ax4.set_xlabel(f1, fontweight='bold')
         ax4.set_ylabel(f2, fontweight='bold')
@@ -250,8 +246,8 @@ if __name__ == "__main__":
     dataset = np.array(dataset)
 
     try:
-        colors = pd.factorize(Y_well)[0]
-        cmap = 'tab10'
+        colors = Y_well
+        cmap = WELL_CMAP
     except NameError:
         colors = '#3498db'
         cmap = None
@@ -385,7 +381,8 @@ if __name__ == "__main__":
     # 5. GENERATE 3D FEATURE COMBINATIONS
     # -------------------------------------------------------------
     print("\n=== GENERATING 3D COMBINATION PLOTS ===")
-    colors = pd.factorize(Y_well)[0]
+    colors = Y_well
+    cmap = WELL_CMAP
     plot_3d_buffers = []
     
     for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
@@ -400,7 +397,7 @@ if __name__ == "__main__":
         
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap='tab10', s=30, alpha=0.8, edgecolor='k')
+        ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=30, alpha=0.8, edgecolor='k')
         ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\nAvg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
         ax.set_xlabel(x_feat, fontweight='bold', labelpad=10); ax.set_ylabel(y_feat, fontweight='bold', labelpad=10); ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
         
@@ -486,11 +483,11 @@ if __name__ == "__main__":
         
         fig = plt.figure(figsize=(22, 9))
         ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-        ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+        ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
         ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3_features)})", fontsize=14, fontweight='bold', pad=15)
         
         ax2 = fig.add_subplot(1, 2, 2)
-        ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap='tab10', s=40, alpha=0.8, edgecolor='k')
+        ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
         ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5_features)})", fontsize=14, fontweight='bold', pad=15)
         ax2.grid(True, linestyle='--', alpha=0.6)
         

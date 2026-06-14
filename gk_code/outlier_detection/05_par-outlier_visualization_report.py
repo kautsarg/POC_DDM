@@ -90,7 +90,7 @@ def build_html(title, filter_names, img_buffers, save_path):
 
 
 def process_experiment(exp_path, force_rerun):
-    out_dir = exp_path.parent / "outlier_visualisation"
+    out_dir = config.get_viz_dir(exp_path.parent, "outlier_visualisation")
     out_path = out_dir / f"{exp_path.name}_outlier.html"
 
     if out_path.exists() and not force_rerun:

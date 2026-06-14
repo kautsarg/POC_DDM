@@ -650,15 +650,16 @@ def evaluate_outlier_filters(
 # MODULE 2: VISUALIZATION FUNCTIONS
 # ====================================================================
 def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, total_count, save_prefix=None):
-    filter_labels = [str(f) if f is not None else "No Filter" for f in outlier_filters if f in results_dict]
-    
-    colors = []
-    for f in outlier_filters:
-        if f not in results_dict: continue
-        if f is None: colors.append('#888888')
-        elif 'mean_' in f: colors.append('#ff7f0e')
-        elif 'amf_' in f: colors.append('#2ca02c')
-        else: colors.append('#9467bd')
+    # Local import to avoid a circular import (config imports from this module).
+    import config
+
+    present_filters = [f for f in outlier_filters if f in results_dict]
+    filter_labels = [str(f) if f is not None else "No Filter" for f in present_filters]
+
+    # Reuse the shared colour palette so each outlier filter keeps the same
+    # colour across every bar chart in the report.
+    filter_palette = config.get_palette(present_filters, config.FILTER_COLORS)
+    colors = [filter_palette[f] for f in present_filters]
 
     # Dynamically determine which models were evaluated
     sample_res = next((results_dict[f] for f in outlier_filters if f in results_dict), None)

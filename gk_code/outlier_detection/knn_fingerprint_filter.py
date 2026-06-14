@@ -39,6 +39,8 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 
+import config
+
 from outlier_utils import *
 
 DEFAULT_INPUT = (
@@ -118,7 +120,7 @@ def plot_score_distribution(
     for i, (ax, name) in enumerate(zip(axes, classes)):
         s = scores[y == i]
         ax.hist(s, bins=40, edgecolor="black", alpha=0.7,
-                color=f"C{i}")
+                color=config.WELL_COLORS[i % len(config.WELL_COLORS)])
         ax.axvline(s.mean(), color="red", ls="--",
                    label=f"mean={s.mean():.3f}")
         ax.axvline(np.median(s), color="orange", ls=":",

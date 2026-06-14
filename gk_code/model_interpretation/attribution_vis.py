@@ -4,6 +4,7 @@ import joblib
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from pathlib import Path
 import sys
 
@@ -14,6 +15,9 @@ from sklearn.model_selection import StratifiedShuffleSplit
 sys.path.insert(0, "../outlier_detection")
 import config
 from model_utils import set_global_determinism
+
+# Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
+WELL_CMAP = ListedColormap(config.WELL_COLORS)
 
 # ====================================================================
 # HELPER FUNCTIONS: THE ULTIMATE COMBINATION
@@ -111,7 +115,7 @@ def plot_latent_pca(models, X, y, dataset_name, save_path):
         z = latent_model.predict(X, verbose=0)
         z_2d = PCA(n_components=2, random_state=0).fit_transform(z) if z.shape[1] > 2 else z
 
-        ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y, cmap='tab10', alpha=0.7, s=15, edgecolors='none')
+        ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y, cmap=WELL_CMAP, vmin=0, vmax=config.N_WELLS - 1, alpha=0.7, s=15, edgecolors='none')
         ax.set_title(f"{name.upper()} Latent Embeddings", fontsize=12, fontweight='bold')
         ax.set_xticks([]); ax.set_yticks([])
 
@@ -432,7 +436,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
     exp_folder = Path(exp_folder_path)
     
     # Centralized directory for all output visualisations
-    global_vis_dir = exp_folder / "model_interpretation"
+    global_vis_dir = config.get_viz_dir(exp_folder, "model_interpretation")
     global_vis_dir.mkdir(parents=True, exist_ok=True)
     
     # Grab dataset folders (excluding the new centralized vis folder)

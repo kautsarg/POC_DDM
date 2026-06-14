@@ -20,9 +20,19 @@ LOCAL_ROOT_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data"
 
 BASE_FOLDER = LAB_ROOT_FOLDER
 
+# Root folder mirroring BASE_FOLDER, where visualisation/report outputs are
+# written instead of alongside the raw datasets.
+VIZ_BASE_FOLDER = BASE_FOLDER.replace("POC_DDM_datasets", "POC_DDM_viz")
+
 DEFAULT_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_chip_init")
 LAB_EXP_FOLDER = os.path.join(BASE_FOLDER, "LAB_DDM_paper")
 MULTI_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_multi")
+
+
+def get_viz_dir(path, subdir):
+    """Mirror `path` (a folder under BASE_FOLDER) under VIZ_BASE_FOLDER and append `subdir`."""
+    rel = Path(path).relative_to(BASE_FOLDER)
+    return Path(VIZ_BASE_FOLDER) / rel / subdir
 
 # Global Experiment Parameters
 N_WELLS = 10
@@ -98,13 +108,81 @@ CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resamp
 # TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
 
 mpl_colors = [
-    (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90), 
-    (0.00, 0.60, 0.50), (0.95, 0.90, 0.25), (0.80, 0.40, 0.70), 
+    (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90),
+    (0.00, 0.60, 0.50), (0.95, 0.90, 0.25), (0.80, 0.40, 0.70),
     (0.20, 0.13, 0.53), (0.87, 0.80, 0.47), (0.27, 0.67, 0.60), (0.65, 0.65, 0.65)
 ]
 plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
 
-EXCLUDED_FEATURES = [    
+# ==========================================
+# UNIFIED VISUALISATION COLOUR PALETTE
+# ==========================================
+# Colour-blind-safe, high-contrast palette (same colours as the global mpl
+# cycle above) exposed as hex strings so seaborn/plotly categorical plots
+# (e.g. grouped bar charts comparing models or curve types) can reuse it,
+# keeping colours consistent and non-overlapping across all figures.
+VIZ_PALETTE = [to_hex(c) for c in mpl_colors]
+
+# Fixed colour per model architecture so the same model always has the same
+# colour across line plots, bar charts, and the interactive HTML report.
+MODEL_COLORS = {
+    "CNN": VIZ_PALETTE[0],
+    "LSTM": VIZ_PALETTE[1],
+    "GRU": VIZ_PALETTE[2],
+    "RNN": VIZ_PALETTE[3],
+    "Transformer": VIZ_PALETTE[4],
+    "RandomForest": VIZ_PALETTE[5],
+    "KNN": VIZ_PALETTE[6],
+    "LR (FFI)": VIZ_PALETTE[7],
+}
+
+# Fixed colour per curve type so the same curve type always has the same
+# colour across grouped bar charts comparing outlier filters.
+CURVE_COLORS = {
+    "Ori Curves": VIZ_PALETTE[0],
+    "Original Fitted Full": VIZ_PALETTE[1],
+    "Cleaned Std Fitted Full": VIZ_PALETTE[2],
+    "Cleaned Std Fitted Stretched": VIZ_PALETTE[3],
+    "Cleaned Lowest Fitted Full": VIZ_PALETTE[4],
+    "Cleaned Lowest Fitted Stretched": VIZ_PALETTE[5],
+}
+
+
+def get_palette(categories, fixed_map=None):
+    """
+    Build a {category: hex_color} map from VIZ_PALETTE for a grouped/hue bar
+    chart. Categories present in `fixed_map` (e.g. MODEL_COLORS, CURVE_COLORS)
+    keep their fixed colour so the same category is always the same colour
+    across every figure; any other categories get the remaining VIZ_PALETTE
+    colours, in order, so no two categories share a colour.
+    """
+    fixed_map = fixed_map or {}
+    remaining = [c for c in VIZ_PALETTE if c not in fixed_map.values()]
+    palette = {}
+    for category in categories:
+        if category in fixed_map:
+            palette[category] = fixed_map[category]
+        else:
+            palette[category] = remaining.pop(0) if remaining else VIZ_PALETTE[len(palette) % len(VIZ_PALETTE)]
+    return palette
+
+
+# Fixed colour per well index (0..N_WELLS-1) so the same well/sample is drawn
+# in the same colour across scatter plots, 3D/t-SNE projections, and
+# multi-line curve plots. VIZ_PALETTE has exactly N_WELLS colours.
+WELL_COLORS = VIZ_PALETTE[:N_WELLS]
+# Same mapping as a {well_index: colour} dict, handy as a `fixed_map` for get_palette.
+WELL_COLOR_MAP = dict(enumerate(WELL_COLORS))
+
+# Fixed colour per outlier filter so the same filter always has the same
+# colour across bar charts comparing filters. The baseline (None / "No
+# Filter") is a neutral grey; every other filter in OUTLIER_FILTERS gets a
+# distinct colour from VIZ_PALETTE.
+FILTER_COLORS = get_palette([f for f in OUTLIER_FILTERS if f is not None])
+FILTER_COLORS[None] = '#888888'
+
+
+EXCLUDED_FEATURES = [
     "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group",
     "well_temp_lin2d_mean", "well_2d_temp_npr_mean",
     "5p_sigmoid_fitted", "5p_sigmoid_fitted_dydx",

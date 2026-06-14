@@ -6,6 +6,7 @@ import numpy as np
 import scipy.stats
 import tensorflow as tf
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from pathlib import Path
 import sys
 
@@ -20,6 +21,9 @@ sys.path.insert(0, "..")
 sys.path.insert(0, "../outlier_detection")
 import config
 from model_utils import set_global_determinism
+
+# Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
+WELL_CMAP = ListedColormap(config.WELL_COLORS)
 
 
 # ====================================================================
@@ -141,7 +145,7 @@ def plot_latent_pca(models, X, X_man, y, dataset_name, save_path):
         z = latent_model.predict(model_inputs, verbose=0)
         z_2d = PCA(n_components=2, random_state=0).fit_transform(z) if z.shape[1] > 2 else z
 
-        scatter = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y, cmap='tab10', alpha=0.7, s=15, edgecolors='none')
+        scatter = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y, cmap=WELL_CMAP, vmin=0, vmax=config.N_WELLS - 1, alpha=0.7, s=15, edgecolors='none')
         ax.set_title(f"{name.upper()}", fontsize=12, fontweight='bold')
         ax.set_xticks([]); ax.set_yticks([])
 
@@ -185,7 +189,7 @@ def plot_latent_tsne(models, X, X_man, y, dataset_name, save_path, max_samples=2
         else:
             z_2d = z
 
-        scatter = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y_batch, cmap='tab10', alpha=0.7, s=15, edgecolors='none')
+        scatter = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y_batch, cmap=WELL_CMAP, vmin=0, vmax=config.N_WELLS - 1, alpha=0.7, s=15, edgecolors='none')
         ax.set_title(f"{name.upper()}", fontsize=12, fontweight='bold')
         ax.set_xticks([]); ax.set_yticks([])
 
@@ -1087,12 +1091,12 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
     exp_folder = Path(exp_folder_path)
-    global_vis_dir = exp_folder / "model_interpretation"
+    global_vis_dir = config.get_viz_dir(exp_folder, "model_interpretation")
     global_vis_dir.mkdir(parents=True, exist_ok=True)
     
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in ['.DS_Store', 'model_interpretation']])
@@ -1109,6 +1113,16 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         models = load_saved_models(model_dir, str(filter_key), data_dict['X_full'].shape[1])
         if not models:
             print(f"  [-] Skipping visualisations for {exp_path.name}: No compatible saved models found.")
+            continue
+
+        pca_path = global_vis_dir / f"01_latent_space_pca_{exp_path.name}.png"
+        tsne_path = global_vis_dir / f"02_latent_space_tsne_{exp_path.name}.png"
+        saliency_base = global_vis_dir / f"04_saliency_{exp_path.name}.png"
+        expected_outputs = [pca_path, tsne_path] + [
+            Path(str(saliency_base).replace('.png', f'_{model_name}.png')) for model_name in models
+        ]
+        if not force_rerun and all(p.exists() for p in expected_outputs):
+            print(f"  [-] Skipping {exp_path.name}: outputs already exist (use --force_rerun to regenerate).")
             continue
 
         batch_size = min(512, len(data_dict['X_full']))
@@ -1166,10 +1180,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="XAI Visualization Pipeline for DDM Models")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--normalize", action="store_true", help="Whether to normalize the saliency maps")
-    
+    parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
+
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
     normalize = args.normalize
-    
+
     print(exp_folder)
-    run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=None, normalize=normalize)
+    run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=None, normalize=normalize, force_rerun=args.force_rerun)

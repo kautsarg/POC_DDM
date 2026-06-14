@@ -12,6 +12,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+import config
+
 def denormalized(df):
     df_unscaled = df.copy()
 
@@ -94,13 +96,13 @@ def plot_melt_curves(df, NMETA, ylim, filename):
     df_melt_curve_no_ntc = df.loc[(df.Target!="ntc") & (df.PrimerMix=="PM9.8")]
 
     for i, (target, df) in enumerate(df_melt_curve_no_ntc.groupby('Target')):
-        ax[i].set_title(f"{target}", fontsize=16, weight='bold', c=f"C{i}")
+        ax[i].set_title(f"{target}", fontsize=16, weight='bold', c=config.WELL_COLORS[i % len(config.WELL_COLORS)])
         curves = df.iloc[:, NMETA:].transpose()
 
         # down-sample number of curves to show
 #         curves = curves.sample(200, axis='columns')
 
-        ax[i].plot( curves.index.astype(float), curves.values, c=f"C{i}")
+        ax[i].plot( curves.index.astype(float), curves.values, c=config.WELL_COLORS[i % len(config.WELL_COLORS)])
         ax[i].grid(alpha=0.5)
         ax[i].set_ylim(ylim)
         if i>0:
@@ -130,7 +132,7 @@ def plot_standard_curves(df, NMETA, filename):
     fig, ax = plt.subplots(1, 1, figsize=(10, 3.5), dpi=300, constrained_layout=True)
     sns.scatterplot(ax=ax, x='Target_enc', y='CT', 
                     data=df_ampl_temp_av, style='Conc.', s=150,  zorder=100,
-                    hue='Target_enc', palette=[f'C{i}' for i in range(9)])
+                    hue='Target_enc', palette=config.WELL_COLORS[:9])
 
     ax.set_xlim((-1, 9.3))
     ax.set_xticks(np.arange(9))
@@ -169,7 +171,7 @@ def plot_melt_peak_distributions(df, filename):
 
     for i, (target, df_) in enumerate(df.groupby('Target')):  
         if COLORFUL:
-            color = f'C{i}'
+            color = config.WELL_COLORS[i % len(config.WELL_COLORS)]
         else:
             color = 'black'
 
@@ -228,7 +230,7 @@ def plot_amplification_curves(df, ylim, NMETA=0, target_column="well", filename=
     ax = ax.flatten()
 
     for i, (target, df_t) in enumerate(df.groupby(target_column)):
-        ax[i].set_title(f"{target_column}-{target}\n(n={df_t.shape[0]})", fontsize=16, weight='bold', c=f"C{i}")
+        ax[i].set_title(f"{target_column}-{target}\n(n={df_t.shape[0]})", fontsize=16, weight='bold', c=config.WELL_COLORS[i % len(config.WELL_COLORS)])
         curves = df_t.filter(like='Cycle')
         
         curves.columns = curves.columns.str.replace('Cycle', '') 
@@ -237,7 +239,7 @@ def plot_amplification_curves(df, ylim, NMETA=0, target_column="well", filename=
         else:
             curves = curves.transpose()
         
-        ax[i].plot(curves.index.astype(float), curves.values, c=f"C{i}")
+        ax[i].plot(curves.index.astype(float), curves.values, c=config.WELL_COLORS[i % len(config.WELL_COLORS)])
         ax[i].grid(alpha=0.5)
         ax[i].set_ylim(ylim)
 

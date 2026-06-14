@@ -106,8 +106,7 @@ def plot_resampling_check(parts, resampler, well_to_label, save_prefix, max_line
 
     # --- Per-well mean, colored by mapped target label ---
     labels = sorted(set(well_to_label.values()))
-    palette = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    label_colors = {lbl: palette[i % len(palette)] for i, lbl in enumerate(labels)}
+    label_colors = config.get_palette(labels)
 
     fig, axes = plt.subplots(n, 2, figsize=(10, 3 * n), squeeze=False)
     for i, p in enumerate(parts):

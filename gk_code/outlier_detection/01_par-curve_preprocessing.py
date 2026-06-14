@@ -5,8 +5,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import joblib 
+import joblib
 from pathlib import Path
 from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
@@ -378,7 +377,7 @@ def plot_interactive_sigmoid_grids(exp_path, unique_wells, ori_well, ori_timesta
         output_file(filename, title=f"Well {well} Sigmoid Curves")
         
         mask = (ori_well == well)
-        hex_color = mcolors.to_hex(plt.cm.tab10(row_idx % 10))
+        hex_color = config.WELL_COLORS[row_idx % len(config.WELL_COLORS)]
         num_curves = np.sum(mask)
         
         data_dict = {'xs': [ts_ds for _ in range(num_curves)], 'color': [hex_color] * num_curves}
