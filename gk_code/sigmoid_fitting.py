@@ -534,6 +534,11 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         dy_xp1 = dy_dx_vals[xp1_idx]
         d2y_xp1 = d2y_dx2_vals[xp1_idx]
     else:
+        # No interior local max in d2y/dx2 (e.g. boundary max on noisy/atypical
+        # curves). Fall back to the global argmax so xp1_idx stays a valid
+        # index for accel_fwhm below, while keeping xp1/dy_xp1/d2y_xp1 as NaN
+        # to signal "no proper peak found".
+        xp1_idx = np.argmax(d2y_dx2_vals)
         xp1, dy_xp1, d2y_xp1 = np.nan, np.nan, np.nan
 
     peaks_neg, _ = find_peaks(-d2y_dx2_vals)

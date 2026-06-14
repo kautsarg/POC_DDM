@@ -87,17 +87,11 @@ def prepare_dataset(exp_path, filter_key):
     X_man_scaled = np.empty_like(X_man)
     X_man_scaled[train_idx] = scaler.fit_transform(X_man[train_idx])
     X_man_scaled[test_idx] = scaler.transform(X_man[test_idx])
-    
-    # Extract temporal timestamps for features if available in the dataframe
-    T_man = None
-    time_cols = [f"{feat}_time_idx" for feat in top_10_features]
-    if all(col in features_df_masked.columns for col in time_cols):
-        T_man = features_df_masked[time_cols].values
 
     return {
         "X_full": X, "X_man_full": X_man_scaled, "y_full": y,
         "timestamps": timestamps, "dataset_name": dataset_name,
-        "top_10_features": top_10_features, "T_man_full": T_man
+        "top_10_features": top_10_features
     }
 
 def load_saved_models(model_dir, filter_key, expected_seq_len):
@@ -417,8 +411,9 @@ def extract_xai_artifacts(models, X_batch, X_man_batch):
 # ====================================================================
 # MODULE 5: YOUR RESTORED VISUALIZATION FUNCTIONS (Optimized)
 # ====================================================================
-def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_features, mean_curve, std_curve, dataset_name, base_save_path, normalize=False):
-    """Restores your exact 3-subplot layout for LF/Dual architectures using the optimized artifact dict."""
+def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_features, mean_curve, std_curve, X_batch, y_batch, dataset_name, base_save_path, normalize=False):
+    """Restores your exact 3-subplot layout for LF/Dual architectures using the optimized artifact dict,
+    plus an extra top panel showing the average input curve per label."""
     art = artifacts.get(model_name)
     if not art: return
 
@@ -430,6 +425,24 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
     master_sal = art["master_saliency"]
     vmin, vmax = (0, 1) if normalize else (None, None)
 
+    # Per-label average curves for the new top panel
+    labels = np.unique(y_batch)
+    label_curves = []
+    for lab in labels:
+        curve = np.squeeze(np.mean(X_batch[y_batch == lab], axis=0))
+        if curve.ndim > 1:
+            curve = curve.mean(axis=-1)
+        label_curves.append(curve)
+
+    def _plot_label_curves(ax):
+        for lab, curve in zip(labels, label_curves):
+            ax.plot(t, curve, color=config.WELL_COLORS[int(lab) % config.N_WELLS], lw=1.2, label=f"Label {lab}")
+        ax.set_title(f"{model_name.upper()} - Average Input Curve per Label", fontsize=12, fontweight='bold', pad=15)
+        ax.set_xlim(t_start, t_end)
+        ax.grid(True, color='grey', alpha=0.3, linestyle='--')
+        ax.legend(fontsize=8, ncol=min(len(labels), 5), loc='upper left', framealpha=0.8)
+        plt.setp(ax.get_xticklabels(), visible=False)
+
     if art["is_type"] == "lf":
         heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
         heatmap_man = np.array([np.mean(m, axis=0) for m in art["raw_saliency_man"]])
@@ -437,8 +450,11 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
             heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
             heatmap_man = normalize_heatmap(heatmap_man, method='row')
 
-        fig, (ax_curve, ax_heat_c, ax_heat_m) = plt.subplots(3, 1, figsize=(9, 12), gridspec_kw={'height_ratios': [1, 2.5, 2.5]})
-        ax_heat_c.sharex(ax_curve)
+        fig, (ax_label, ax_curve, ax_heat_c, ax_heat_m) = plt.subplots(4, 1, figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 2.5, 2.5]})
+        ax_curve.sharex(ax_label)
+        ax_heat_c.sharex(ax_label)
+
+        _plot_label_curves(ax_label)
 
         ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
         ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
@@ -462,10 +478,11 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
         ax_heat_m.set_xticklabels(top_10_features, rotation=45, ha='right', fontsize=9, fontweight='bold')
         ax_heat_m.grid(True, color='grey', alpha=0.3, linestyle='--')
 
+        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
         cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
         fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
         fig.colorbar(im_m, cax=make_axes_locatable(ax_heat_m).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_curve, ax_heat_c, ax_heat_m]) 
+        fig.align_ylabels([ax_label, ax_curve, ax_heat_c, ax_heat_m])
 
     elif art["is_type"] == "dual":
         heatmap_cnn = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
@@ -474,8 +491,10 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
             heatmap_cnn = normalize_heatmap(heatmap_cnn, method='row')
             heatmap_rnn = normalize_heatmap(heatmap_rnn, method='row')
 
-        fig, (ax_curve, ax_heat_c, ax_heat_r) = plt.subplots(3, 1, figsize=(9, 12), gridspec_kw={'height_ratios': [1, 2.5, 2.5]}, sharex=True)
-        
+        fig, (ax_label, ax_curve, ax_heat_c, ax_heat_r) = plt.subplots(4, 1, figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 2.5, 2.5]}, sharex=True)
+
+        _plot_label_curves(ax_label)
+
         ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
         ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
         # ax_curve_twin = ax_curve.twinx()
@@ -498,18 +517,21 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
         ax_heat_r.set_xlabel("Time", fontsize=10, fontweight='bold')
         ax_heat_r.grid(True, color='grey', alpha=0.3, linestyle='--')
 
+        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
         cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
         fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
         fig.colorbar(im_r, cax=make_axes_locatable(ax_heat_r).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_curve, ax_heat_c, ax_heat_r]) 
+        fig.align_ylabels([ax_label, ax_curve, ax_heat_c, ax_heat_r])
 
     else:
         heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
         if normalize:
             heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
 
-        fig, (ax_curve, ax_heat) = plt.subplots(2, 1, figsize=(9, 8), gridspec_kw={'height_ratios': [1, 3]}, sharex=True)
-        
+        fig, (ax_label, ax_curve, ax_heat) = plt.subplots(3, 1, figsize=(9, 10), gridspec_kw={'height_ratios': [1, 1, 3]}, sharex=True)
+
+        _plot_label_curves(ax_label)
+
         ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
         ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
         # ax_curve_twin = ax_curve.twinx()
@@ -525,109 +547,13 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
         ax_heat.set_ylabel("Rank (1 = Highest Impact)", fontsize=10)
         ax_heat.set_xlabel("Time", fontsize=10, fontweight='bold')
         
+        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
         cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
         fig.colorbar(im, cax=make_axes_locatable(ax_heat).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_curve, ax_heat]) 
+        fig.align_ylabels([ax_label, ax_curve, ax_heat])
 
     fig.suptitle(f"{dataset_name} | {model_name.upper()} Causal Saliency", fontsize=14, fontweight='bold', y=0.98)
     plt.subplots_adjust(hspace=0.25 if art["is_type"] != "base" else 0.15)
-    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-
-def plot_concept_alignment_matrix(artifacts, model_name, X_man_batch, top_10_features, dataset_name, base_save_path):
-    art = artifacts.get(model_name)
-    if not art: return
-    
-    save_path = str(base_save_path).replace('.png', f'_concept_alignment_{model_name}.png')
-    TOP_K = min(15, len(art["curve_order"]))
-    
-    z_np = art["z_curve"]
-    order = art["curve_order"][:TOP_K]
-    imp_shape = art["curve_imp_shape"]
-    
-    z_traces = []
-    is_3d = len(imp_shape) == 2
-    for flat_idx in order:
-        if is_3d:
-            row, col = np.unravel_index(int(flat_idx), imp_shape)
-            z_traces.append(z_np[:, row, col])
-        else:
-            z_traces.append(z_np[:, int(flat_idx)])
-            
-    z_traces = np.array(z_traces) # (TOP_K, Batch)
-    num_feats = X_man_batch.shape[1]
-    correlation_matrix = np.zeros((TOP_K, num_feats))
-    
-    for i in range(TOP_K):
-        for j in range(num_feats):
-            corr, _ = scipy.stats.spearmanr(z_traces[i], X_man_batch[:, j])
-            correlation_matrix[i, j] = 0.0 if np.isnan(corr) else corr
-            
-    fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(np.abs(correlation_matrix), cmap='Blues', aspect='auto', vmin=0, vmax=1)
-    
-    ax.set_xticks(np.arange(num_feats))
-    ax.set_yticks(np.arange(TOP_K))
-    ax.set_xticklabels(top_10_features, rotation=45, ha="right", fontsize=10, fontweight='bold')
-    ax.set_yticklabels([f"Latent Dim {d}" for d in order], fontsize=10, fontweight='bold')
-    
-    ax.set_title(f"Concept Alignment: {model_name.upper()}\nTop Causal Latent Dims vs. Manual Features", fontsize=14, fontweight='bold', pad=15)
-    for i in range(TOP_K):
-        for j in range(num_feats):
-            val = correlation_matrix[i, j]
-            text_color = "white" if np.abs(val) > 0.6 else "black"
-            ax.text(j, i, f"{val:.2f}", ha="center", va="center", color=text_color, fontsize=8)
-
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.2)
-    fig.colorbar(im, cax=cax).set_label("Absolute Spearman Correlation ($|\\rho|$)", rotation=270, labelpad=15, fontweight='bold')
-
-    plt.tight_layout()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-
-def plot_temporal_alignment_matrix(artifacts, model_name, T_man_batch, top_10_features, dataset_name, base_save_path):
-    if T_man_batch is None: 
-        return # Skips gracefully if the user doesn't pass T_man
-        
-    art = artifacts.get(model_name)
-    if not art: return
-    
-    save_path = str(base_save_path).replace('.png', f'_temporal_alignment_{model_name}.png')
-    TOP_K = min(15, len(art["curve_order"]))
-    raw_maps = art["raw_saliency_curve"][:TOP_K] 
-    order = art["curve_order"][:TOP_K]
-    
-    num_feats = T_man_batch.shape[1]
-    temporal_error_matrix = np.zeros((TOP_K, num_feats))
-    
-    for idx, batch_saliency in enumerate(raw_maps):
-        t_peaks = np.argmax(batch_saliency, axis=1) # Shape: (Batch,)
-        
-        for j in range(num_feats):
-            time_distances = np.abs(t_peaks - T_man_batch[:, j])
-            temporal_error_matrix[idx, j] = np.mean(time_distances)
-
-    fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(temporal_error_matrix, cmap='viridis_r', aspect='auto', vmin=0, vmax=100) 
-    
-    ax.set_xticks(np.arange(num_feats))
-    ax.set_yticks(np.arange(TOP_K))
-    ax.set_xticklabels(top_10_features, rotation=45, ha="right", fontsize=10, fontweight='bold')
-    ax.set_yticklabels([f"Latent Dim {d}" for d in order], fontsize=10, fontweight='bold')
-    
-    ax.set_title(f"Temporal Grounding: {model_name.upper()}\nDistance between Saliency Peak and Manual Feature Timestamp", fontsize=14, fontweight='bold', pad=15)
-    for i in range(TOP_K):
-        for j in range(num_feats):
-            val = temporal_error_matrix[i, j]
-            text_color = "white" if val < 30 else "black" 
-            ax.text(j, i, f"{val:.1f} steps", ha="center", va="center", color=text_color, fontsize=8)
-
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.2)
-    fig.colorbar(im, cax=cax).set_label("Mean Temporal Error (Time-Steps)", rotation=270, labelpad=15, fontweight='bold')
-
-    plt.tight_layout()
     fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
@@ -793,13 +719,20 @@ def plot_latent_feature_mapping(
     feat_matrix, feat_sensitivity, feat_names,
     mean_curve, std_curve,
     dataset_name, base_save_path,
-    TOP_K=10,
+    TOP_K=25,
     w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
 ):
     """
-    For each of the TOP_K most-important latent dimensions, draw one row:
+    For each of the TOP_K most-important latent dimensions (same ranking and
+    latent spaces as plot_latent_saliency_heatmap, i.e. art["*_order"] /
+    art["z_*"] / art["raw_saliency_*"]), draw one row:
       LEFT  – mini curve panel: mean input curve + ±1σ + latent saliency overlay
       RIGHT – horizontal score bar: combined mapping score vs every kinetic feature
+
+    For "dual" architectures (CNN+GRU / CNN+Transformer), the CNN branch and
+    the recurrent/transformer branch are ranked and scored independently and
+    stacked as two TOP_K-row sections in the same figure, mirroring the two
+    heatmap panels in plot_latent_saliency_heatmap.
 
     Parameters
     ----------
@@ -814,7 +747,7 @@ def plot_latent_feature_mapping(
     std_curve        : (T,)
     dataset_name     : str
     base_save_path   : Path or str
-    TOP_K            : rows to show (default 10)
+    TOP_K            : rows to show per branch (default 25)
     w_*              : score weights, must sum to 1
     """
     from sklearn.feature_selection import mutual_info_regression
@@ -834,87 +767,105 @@ def plot_latent_feature_mapping(
     t_end   = t[-1] + t_step / 2
 
     n_feats = len(feat_names)
-    TOP_K   = min(TOP_K, len(art["curve_order"]))
 
     # ------------------------------------------------------------------
-    # 1. Gather latent activation traces  (TOP_K, Batch)
+    # 0. Branch sections — same ranking ("*_order") and latent spaces used
+    #    by plot_latent_saliency_heatmap. Dual models get one section per
+    #    branch (CNN + GRU/Transformer); base/lf models get a single section.
     # ------------------------------------------------------------------
-    z_np      = art["z_curve"]
-    order     = art["curve_order"][:TOP_K]
-    imp_shape = art["curve_imp_shape"]
-    is_3d     = len(imp_shape) == 2
+    if art["is_type"] == "dual":
+        rnn_label = "Transformer" if "trans" in model_name else "GRU"
+        branch_sections = [
+            ("CNN",      art["curve_order"], art["curve_imp_shape"], art["z_curve"], art["raw_saliency_curve"]),
+            (rnn_label,  art["rnn_order"],   art["rnn_imp_shape"],   art["z_rnn"],   art["raw_saliency_rnn"]),
+        ]
+    else:
+        branch_sections = [
+            (None, art["curve_order"], art["curve_imp_shape"], art["z_curve"], art["raw_saliency_curve"]),
+        ]
 
-    z_traces = []
-    for flat_idx in order:
-        if is_3d:
-            r, c = np.unravel_index(int(flat_idx), imp_shape)
-            z_traces.append(z_np[:, r, c])
-        else:
-            z_traces.append(z_np[:, int(flat_idx)])
-    z_traces = np.array(z_traces)   # (TOP_K, Batch)
-
-    # ------------------------------------------------------------------
-    # 2. Mean saliency profiles  (TOP_K, T)
-    # ------------------------------------------------------------------
-    raw_maps     = art["raw_saliency_curve"][:TOP_K]
-    sal_profiles = np.array([np.mean(m, axis=0) for m in raw_maps])  # (TOP_K, T)
-    for i in range(TOP_K):
-        mx = sal_profiles[i].max()
-        if mx > 0:
-            sal_profiles[i] /= mx
-
-    # ------------------------------------------------------------------
-    # 3. Score matrices  (TOP_K, n_feats)
-    # ------------------------------------------------------------------
-    spearman_m = np.zeros((TOP_K, n_feats))
-    mi_m       = np.zeros((TOP_K, n_feats))
-    cosine_m   = np.zeros((TOP_K, n_feats))
-
-    # Mask columns that are entirely NaN across the batch
+    # Mask columns that are entirely NaN across the batch (shared across branches)
     valid_col = np.array([
         np.sum(np.isfinite(feat_matrix[:, j])) >= 5
         for j in range(n_feats)
     ])
 
-    for i in range(TOP_K):
-        z_i = z_traces[i]
-        for j in range(n_feats):
-            if not valid_col[j]:
-                continue
-            f_j = feat_matrix[:, j]
-            mask = np.isfinite(f_j)
-            if mask.sum() < 5:
-                continue
+    # ------------------------------------------------------------------
+    # 1. Per-branch latent traces, saliency profiles & combined scores
+    # ------------------------------------------------------------------
+    sections = []
+    for label, order, imp_shape, z_np, raw_maps in branch_sections:
+        k     = min(TOP_K, len(order))
+        order = order[:k]
+        is_3d = len(imp_shape) == 2
 
-            corr, _ = scipy.stats.spearmanr(z_i[mask], f_j[mask])
-            spearman_m[i, j] = 0.0 if np.isnan(corr) else abs(corr)
+        z_traces = []
+        for flat_idx in order:
+            if is_3d:
+                r, c = np.unravel_index(int(flat_idx), imp_shape)
+                z_traces.append(z_np[:, r, c])
+            else:
+                z_traces.append(z_np[:, int(flat_idx)])
+        z_traces = np.array(z_traces)   # (k, Batch)
 
-            try:
-                mi = mutual_info_regression(
-                    z_i[mask].reshape(-1, 1), f_j[mask], random_state=0
-                )[0]
-            except Exception:
-                mi = 0.0
-            mi_m[i, j] = mi
+        raw_maps_k   = raw_maps[:k]
+        sal_profiles = np.array([np.mean(m, axis=0) for m in raw_maps_k])  # (k, T)
+        for i in range(k):
+            mx = sal_profiles[i].max()
+            if mx > 0:
+                sal_profiles[i] /= mx
 
-            cosine_m[i, j] = max(0.0, _cosine_sim(sal_profiles[i], feat_sensitivity[j]))
+        spearman_m = np.zeros((k, n_feats))
+        mi_m       = np.zeros((k, n_feats))
+        cosine_m   = np.zeros((k, n_feats))
 
-    mi_max = mi_m.max()
-    if mi_max > 0:
-        mi_m /= mi_max
+        for i in range(k):
+            z_i = z_traces[i]
+            for j in range(n_feats):
+                if not valid_col[j]:
+                    continue
+                f_j = feat_matrix[:, j]
+                mask = np.isfinite(f_j)
+                if mask.sum() < 5:
+                    continue
 
-    combined = w_spearman * spearman_m + w_mi * mi_m + w_cosine * cosine_m
+                corr, _ = scipy.stats.spearmanr(z_i[mask], f_j[mask])
+                spearman_m[i, j] = 0.0 if np.isnan(corr) else abs(corr)
 
-    best_feat_idx = np.argmax(combined, axis=1)   # (TOP_K,)
-    best_score    = combined[np.arange(TOP_K), best_feat_idx]
+                try:
+                    mi = mutual_info_regression(
+                        z_i[mask].reshape(-1, 1), f_j[mask], random_state=0
+                    )[0]
+                except Exception:
+                    mi = 0.0
+                mi_m[i, j] = mi
+
+                cosine_m[i, j] = max(0.0, _cosine_sim(sal_profiles[i], feat_sensitivity[j]))
+
+        mi_max = mi_m.max()
+        if mi_max > 0:
+            mi_m /= mi_max
+
+        combined = w_spearman * spearman_m + w_mi * mi_m + w_cosine * cosine_m
+
+        best_feat_idx = np.argmax(combined, axis=1)   # (k,)
+        best_score    = combined[np.arange(k), best_feat_idx]
+
+        sections.append({
+            "label": label, "order": order, "k": k,
+            "sal_profiles": sal_profiles, "combined": combined,
+            "best_feat_idx": best_feat_idx, "best_score": best_score,
+        })
+
+    total_rows = sum(sec["k"] for sec in sections)
 
     # ------------------------------------------------------------------
-    # 4. Build figure:  TOP_K rows × 2 columns
+    # 2. Build figure:  total_rows × 2 columns
     #    col 0 (width 1): mini curve + saliency overlay
     #    col 1 (width 4): horizontal score bar across all features
     # ------------------------------------------------------------------
     row_h   = 1.6          # inches per row
-    fig_h   = TOP_K * row_h + 1.8   # +title space
+    fig_h   = total_rows * row_h + 1.8   # +title space
     fig_w   = 22
     bar_w_ratio = 5        # right panel is 5× wider than the mini curve
 
@@ -925,9 +876,9 @@ def plot_latent_feature_mapping(
         fontsize=12, fontweight='bold', y=1.0
     )
 
-    # GridSpec: TOP_K rows, 2 cols
+    # GridSpec: total_rows rows, 2 cols
     gs = fig.add_gridspec(
-        TOP_K, 2,
+        total_rows, 2,
         width_ratios=[1, bar_w_ratio],
         hspace=0.15,
         wspace=0.04,
@@ -987,86 +938,125 @@ def plot_latent_feature_mapping(
 
     x_positions = np.arange(n_feats)
 
-    for i in range(TOP_K):
-        flat_idx   = order[i]
-        sal_prof   = sal_profiles[i]        # (T,)
-        scores_row = combined[i]            # (n_feats,)
-        best_j     = best_feat_idx[i]
-        score_best = best_score[i]
+    global_row = 0
+    for sec in sections:
+        label         = sec["label"]
+        order         = sec["order"]
+        k             = sec["k"]
+        sal_profiles  = sec["sal_profiles"]
+        combined      = sec["combined"]
+        best_feat_idx = sec["best_feat_idx"]
+        best_score    = sec["best_score"]
 
-        # --- Left panel: mini curve + saliency ---
-        ax_curve = fig.add_subplot(gs[i, 0])
-        ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve,
-                               color='#b0b0b0', alpha=0.4)
-        ax_curve.plot(t, mean_curve, color='black', lw=1.0)
-        ax_curve.set_xlim(t_start, t_end)
-        ax_curve.set_yticks([])
-        ax_curve.tick_params(axis='x', labelsize=6)
-        ax_curve.spines[['top', 'right']].set_visible(False)
+        for i in range(k):
+            flat_idx   = order[i]
+            sal_prof   = sal_profiles[i]        # (T,)
+            scores_row = combined[i]            # (n_feats,)
+            best_j     = best_feat_idx[i]
+            score_best = best_score[i]
 
-        # Saliency overlay on twin axis
-        ax_sal = ax_curve.twinx()
-        ax_sal.fill_between(t, 0, sal_prof, color='#e84040', alpha=0.45, lw=0)
-        ax_sal.plot(t, sal_prof, color='#e84040', lw=0.8)
-        ax_sal.set_ylim(0, sal_prof.max() * 2.0 if sal_prof.max() > 0 else 1)
-        ax_sal.set_yticks([])
-        ax_sal.spines[['top', 'right']].set_visible(False)
+            # --- Left panel: mini curve + saliency ---
+            ax_curve = fig.add_subplot(gs[global_row, 0])
+            ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve,
+                                   color='#b0b0b0', alpha=0.4)
+            ax_curve.plot(t, mean_curve, color='black', lw=1.0)
+            ax_curve.set_xlim(t_start, t_end)
+            ax_curve.set_yticks([])
+            ax_curve.tick_params(axis='x', labelsize=6)
+            ax_curve.spines[['top', 'right']].set_visible(False)
 
-        # Y-label: latent dim + rank
-        ax_curve.set_ylabel(
-            f"Rank {i+1}\n(dim {flat_idx})",
-            fontsize=7, fontweight='bold', rotation=0,
-            labelpad=38, va='center'
-        )
-        if i < TOP_K - 1:
-            plt.setp(ax_curve.get_xticklabels(), visible=False)
-        else:
-            ax_curve.set_xlabel("Time", fontsize=7)
+            # Saliency overlay on twin axis
+            ax_sal = ax_curve.twinx()
+            ax_sal.fill_between(t, 0, sal_prof, color='#e84040', alpha=0.45, lw=0)
+            ax_sal.plot(t, sal_prof, color='#e84040', lw=0.8)
+            ax_sal.set_ylim(0, sal_prof.max() * 2.0 if sal_prof.max() > 0 else 1)
+            ax_sal.set_yticks([])
+            ax_sal.spines[['top', 'right']].set_visible(False)
 
-        # --- Right panel: horizontal score bar ---
-        ax_bar = fig.add_subplot(gs[i, 1])
+            # If the best-matched feature is itself a timestamp (e.g. xms, Ct,
+            # t50, ...), mark its median value on the time axis so the saliency
+            # peak can be visually compared against where that feature is defined.
+            best_name = feat_names[best_j]
+            if _FEAT_GROUP.get(best_name) == 'timing':
+                t_vals = feat_matrix[:, best_j]
+                t_vals = t_vals[np.isfinite(t_vals)]
+                if len(t_vals) > 0:
+                    t_mark = np.median(t_vals)
+                    if t_start <= t_mark <= t_end:
+                        ax_curve.axvline(t_mark, color=_GROUP_COLOURS['timing'],
+                                          lw=1.2, linestyle=':', zorder=5)
 
-        # Draw each feature as a vertical bar coloured by score
-        bar_colours = [cmap_bar(s) for s in scores_row]
-        ax_bar.bar(x_positions, scores_row, color=bar_colours,
-                   width=0.85, linewidth=0)
+            # Section header (dual models): label the first row of each branch
+            if i == 0 and label is not None:
+                ax_curve.set_title(f"{label} Branch", fontsize=10,
+                                    fontweight='bold', loc='left', pad=4)
 
-        # Highlight best assignment
-        ax_bar.bar(best_j, scores_row[best_j], color=cmap_bar(scores_row[best_j]),
-                   width=0.85, linewidth=1.5, edgecolor='#222222')
-        ax_bar.text(
-            best_j, scores_row[best_j] + 0.02,
-            f"★ {feat_names[best_j]}\n({score_best:.2f})",
-            ha='center', va='bottom', fontsize=6.5, fontweight='bold',
-            color='#222222',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                      edgecolor='#888888', alpha=0.85, linewidth=0.7)
-        )
+            # Y-label: latent dim + rank
+            ax_curve.set_ylabel(
+                f"Rank {i+1}\n(dim {flat_idx})",
+                fontsize=7, fontweight='bold', rotation=0,
+                labelpad=38, va='center'
+            )
+            if global_row < total_rows - 1:
+                plt.setp(ax_curve.get_xticklabels(), visible=False)
+            else:
+                ax_curve.set_xlabel("Time", fontsize=7)
 
-        ax_bar.set_xlim(-0.5, n_feats - 0.5)
-        ax_bar.set_ylim(0, 1.15)
-        ax_bar.set_yticks([0, 0.5, 1.0])
-        ax_bar.tick_params(axis='y', labelsize=6)
-        ax_bar.spines[['top', 'right']].set_visible(False)
-        ax_bar.axhline(0.5, color='#aaaaaa', lw=0.5, linestyle='--')
+            # --- Right panel: horizontal score bar ---
+            ax_bar = fig.add_subplot(gs[global_row, 1])
 
-        if i < TOP_K - 1:
-            ax_bar.set_xticks([])
-        else:
-            # Only the bottom row gets x-tick labels
-            ax_bar.set_xticks(x_positions)
-            ax_bar.set_xticklabels(feat_names, rotation=60, ha='right',
-                                    fontsize=6.5)
-            for tick, col in zip(ax_bar.get_xticklabels(), tick_colours):
-                tick.set_color(col)
+            # Draw each feature as a vertical bar coloured by score
+            bar_colours = [cmap_bar(s) for s in scores_row]
+            ax_bar.bar(x_positions, scores_row, color=bar_colours,
+                       width=0.85, linewidth=0)
+
+            # Highlight best assignment
+            ax_bar.bar(best_j, scores_row[best_j], color=cmap_bar(scores_row[best_j]),
+                       width=0.85, linewidth=1.5, edgecolor='#222222')
+            ax_bar.text(
+                best_j, scores_row[best_j] + 0.02,
+                f"★ {feat_names[best_j]}\n({score_best:.2f})",
+                ha='center', va='bottom', fontsize=6.5, fontweight='bold',
+                color='#222222',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                          edgecolor='#888888', alpha=0.85, linewidth=0.7)
+            )
+
+            ax_bar.set_xlim(-0.5, n_feats - 0.5)
+            ax_bar.set_ylim(0, 1.15)
+            ax_bar.set_yticks([0, 0.5, 1.0])
+            ax_bar.tick_params(axis='y', labelsize=6)
+            ax_bar.spines[['top', 'right']].set_visible(False)
+            ax_bar.axhline(0.5, color='#aaaaaa', lw=0.5, linestyle='--')
+
+            if i == 0 and label is not None:
+                ax_bar.set_title(f"{label} branch — Top {k} latent dims by |dY/dZ|",
+                                  fontsize=9, loc='left', pad=4, color='#555555')
+
+            if global_row < total_rows - 1:
+                ax_bar.set_xticks([])
+            else:
+                # Only the bottom row gets x-tick labels
+                ax_bar.set_xticks(x_positions)
+                ax_bar.set_xticklabels(feat_names, rotation=60, ha='right',
+                                        fontsize=6.5)
+                for tick, col in zip(ax_bar.get_xticklabels(), tick_colours):
+                    tick.set_color(col)
+
+            global_row += 1
 
     # Colour legend for feature groups
     from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
     legend_handles = [
         Patch(facecolor=col, label=grp.capitalize())
         for grp, col in _GROUP_COLOURS.items()
         if grp != 'other'
     ]
+    legend_handles.append(
+        Line2D([0], [0], color=_GROUP_COLOURS['timing'], lw=1.2, linestyle=':',
+               label='Best-match timestamp\n(if timing feature)')
+    )
     fig.legend(
         handles=legend_handles,
         title="Feature group", title_fontsize=8,
@@ -1131,7 +1121,6 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         
         X_batch = data_dict['X_full'][idx]
         X_man_batch = data_dict['X_man_full'][idx]
-        T_man_batch = data_dict['T_man_full'][idx] if data_dict['T_man_full'] is not None else None
         y_batch = data_dict['y_full'][idx]
         
         mean_curve = np.squeeze(np.mean(X_batch, axis=0))
@@ -1151,30 +1140,28 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
 
         # 2. Advanced Heatmaps (Optimized)
         for model_name in models.keys():
-            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, exp_path.name, global_vis_dir / f"04_saliency_{exp_path.name}.png", normalize=normalize)
-            # plot_concept_alignment_matrix(artifacts, model_name, X_man_batch, data_dict["top_10_features"], exp_path.name, global_vis_dir / f"05_concept_{exp_path.name}.png")
-            # plot_temporal_alignment_matrix(artifacts, model_name, T_man_batch, data_dict["top_10_features"], exp_path.name, global_vis_dir / f"06_temporal_{exp_path.name}.png")
+            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, global_vis_dir / f"04_saliency_{exp_path.name}.png", normalize=normalize)
 
         # 3. Latent → Feature mapping (new)
         # compute_kinetic_feature_cache runs extract_kinetic_parameters_original on
         # every sample and builds the finite-diff sensitivity profiles.  It is
         # dataset-level (independent of the model) so we compute it once and reuse.
-        # print(f"  -> Computing kinetic feature cache for {exp_path.name} ...")
-        # feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(
-        #     X_batch, data_dict["timestamps"]
-        # )
-        # for model_name in models.keys():
-        #     plot_latent_feature_mapping(
-        #         artifacts, model_name,
-        #         X_batch, data_dict["timestamps"],
-        #         feat_matrix, feat_sensitivity, feat_names,
-        #         mean_curve, std_curve,
-        #         exp_path.name,
-        #         global_vis_dir / f"07_latent_mapping_{exp_path.name}.png",
-        #     )
+        print(f"  -> Computing kinetic feature cache for {exp_path.name} ...")
+        feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(
+            X_batch, data_dict["timestamps"]
+        )
+        for model_name in models.keys():
+            plot_latent_feature_mapping(
+                artifacts, model_name,
+                X_batch, data_dict["timestamps"],
+                feat_matrix, feat_sensitivity, feat_names,
+                mean_curve, std_curve,
+                exp_path.name,
+                global_vis_dir / f"07_latent_mapping_{exp_path.name}.png",
+            )
 
-        # print(f"  [✓] Processed {exp_path.name}")
-        # tf.keras.backend.clear_session()
+        print(f"  [✓] Processed {exp_path.name}")
+        tf.keras.backend.clear_session()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="XAI Visualization Pipeline for DDM Models")

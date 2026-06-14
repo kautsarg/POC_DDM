@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a40
+#SBATCH --partition=a100
 #SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
