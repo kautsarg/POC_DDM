@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --partition a30
  
-#SBATCH --array=5-6,8-9
+#SBATCH --array=0-4
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -31,9 +31,14 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi 
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_wells 10 --n_a_type v04
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_splits 1
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v04
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_wells 10 --n_a_type v06
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $((SLURM_ARRAY_TASK_ID+5)) --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v04
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $((SLURM_ARRAY_TASK_ID+5)) --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_wells 10 --n_a_type v06
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $((SLURM_ARRAY_TASK_ID+10)) --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_wells 10 --n_a_type v04
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/01_par-curve_preprocessing_v6.py --task_id $((SLURM_ARRAY_TASK_ID+10)) --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_wells 10 --n_a_type v06
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/02_par-outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init 
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init --n_splits 1
 
 
 deactivate

@@ -30,7 +30,10 @@ DATASETS_ROOT="/vol/bitbucket/gk225/POC_DDM_datasets"
 mapfile -t EXP_FOLDERS < <(find "$DATASETS_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 
 EXP_FOLDER="${DATASETS_ROOT}/${EXP_FOLDERS[$((SLURM_ARRAY_TASK_ID-1))]}"
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/model_for_xai.py --exp_folder "$EXP_FOLDER"
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/attribution_vis_all.py --exp_folder "$EXP_FOLDER" --force_rerun
+
+for curve_type in ori_curve ori_curve_avg; do
+    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/model_for_xai.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/attribution_vis_all.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type" --force_rerun
+done
 
 deactivate
