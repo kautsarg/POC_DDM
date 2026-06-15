@@ -25,9 +25,6 @@ export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_
 
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-# REAL_TASK_ID=6
-# REAL_TASK_ID=8
-# REAL_TASK_ID=10
 REAL_TASK_ID=$SLURM_ARRAY_TASK_ID
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi
