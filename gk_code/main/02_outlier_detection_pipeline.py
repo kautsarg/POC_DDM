@@ -593,32 +593,33 @@ if __name__ == "__main__":
 
     ae_filtered_names, ae_filtered_dataset = [], []
     for name, data in zip(dataset_name, dataset):
-        if name == 'ori_curves':
+        if name in ('ori_curves', 'ori_curves_avg'):
             ae_filtered_names.append(name)
             ae_filtered_dataset.append(data)
 
     ae_dataset_name = ae_filtered_names
     ae_dataset = ae_filtered_dataset
-    
+    ae_dataset_idx = [list(dataset_name).index(name) for name in ae_dataset_name]
+
     # -------------------------------------------------------------
     # 6.1: OUTLIER DETECTION METHODS
     # -------------------------------------------------------------
-    
+
     # --- CNN AutoEncoder Per Well ---
-    expected_cnn_pw = [f"cnn_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_cnn_pw = [pct for pct, label in zip(ae_configs, expected_cnn_pw) if label not in kinetic_features[0].columns]
-    if missing_cnn_pw:
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
-        for i, name in enumerate(ae_dataset_name): 
-            master_idx = list(dataset_name).index(name)
-            features_to_concat[master_idx].append(extracted_dfs[i])
-        flush_and_save_progress()
-    else:
-        print("  -> [SKIP] CNN AutoEncoder (Per-Well): Already calculated.")
+    # expected_cnn_pw = [f"cnn_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+    # missing_cnn_pw = [pct for pct, label in zip(ae_configs, expected_cnn_pw) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
+    # if missing_cnn_pw:
+    #     extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
+    #     for i, name in enumerate(ae_dataset_name): 
+    #         master_idx = list(dataset_name).index(name)
+    #         features_to_concat[master_idx].append(extracted_dfs[i])
+    #     flush_and_save_progress()
+    # else:
+    #     print("  -> [SKIP] CNN AutoEncoder (Per-Well): Already calculated.")
 
     # --- CNN AutoEncoder Whole Chip ---
     expected_cnn_glb = [f"cnn_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_cnn_glb = [pct for pct, label in zip(ae_configs, expected_cnn_glb) if label not in kinetic_features[0].columns]
+    missing_cnn_glb = [pct for pct, label in zip(ae_configs, expected_cnn_glb) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
     if missing_cnn_glb:
         extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
         for i, name in enumerate(ae_dataset_name): 
@@ -629,20 +630,20 @@ if __name__ == "__main__":
         print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
     # --- LSTM AutoEncoder Per Well ---
-    expected_lstm_pw = [f"lstm_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_lstm_pw = [pct for pct, label in zip(ae_configs, expected_lstm_pw) if label not in kinetic_features[0].columns]
-    if missing_lstm_pw:
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
-        for i, name in enumerate(ae_dataset_name): 
-            master_idx = list(dataset_name).index(name)
-            features_to_concat[master_idx].append(extracted_dfs[i])
-        flush_and_save_progress()
-    else:
-        print("  -> [SKIP] LSTM AutoEncoder (Per-Well): Already calculated.")
+    # expected_lstm_pw = [f"lstm_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
+    # missing_lstm_pw = [pct for pct, label in zip(ae_configs, expected_lstm_pw) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
+    # if missing_lstm_pw:
+    #     extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
+    #     for i, name in enumerate(ae_dataset_name): 
+    #         master_idx = list(dataset_name).index(name)
+    #         features_to_concat[master_idx].append(extracted_dfs[i])
+    #     flush_and_save_progress()
+    # else:
+    #     print("  -> [SKIP] LSTM AutoEncoder (Per-Well): Already calculated.")
     
     # --- LSTM AutoEncoder Whole Chip ---
     expected_lstm_glb = [f"lstm_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_lstm_glb = [pct for pct, label in zip(ae_configs, expected_lstm_glb) if label not in kinetic_features[0].columns]
+    missing_lstm_glb = [pct for pct, label in zip(ae_configs, expected_lstm_glb) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
     if missing_lstm_glb:
         extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
         for i, name in enumerate(ae_dataset_name): 
@@ -729,22 +730,6 @@ if __name__ == "__main__":
             for i in range(len(dataset_name)): 
                 features_to_concat[i].append(extracted_dfs[i])
         flush_and_save_progress()
-
-    # --- Propagate AE-derived outlier labels to 'ori_curves_avg' ---
-    # AE pipelines only train on 'ori_curves' (ae_dataset_name); the resulting
-    # per-sample labels describe samples, not the curve shape, so they apply
-    # unchanged to 'ori_curves_avg'.
-    if "ori_curves_avg" in list(dataset_name):
-        ori_idx = list(dataset_name).index("ori_curves")
-        avg_idx = list(dataset_name).index("ori_curves_avg")
-        ae_label_cols = [c for c in kinetic_features[ori_idx].columns
-                         if c.startswith(("cnn_ae_", "lstm_ae_")) and c not in kinetic_features[avg_idx].columns]
-        if ae_label_cols:
-            copy_df = kinetic_features[ori_idx][ae_label_cols].reset_index(drop=True)
-            kinetic_features[avg_idx] = pd.concat([kinetic_features[avg_idx].reset_index(drop=True), copy_df], axis=1)
-            pipeline_state["kinetic_features"] = kinetic_features
-            joblib.dump(pipeline_state, unified_save_path, compress=3)
-            print("  -> Propagated AE-derived outlier labels to 'ori_curves_avg'.")
 
     # -------------------------------------------------------------
     # 7. FINAL FLUSH
