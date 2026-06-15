@@ -19,8 +19,8 @@ set_global_determinism(0)
 # ============================================================
 # HELPERS
 # ============================================================
-def load_ori_curves(exp_path):
-    """Load the 'ori_curves' dataset, kinetic_features, and label-mapped Y_well for one experiment folder."""
+def load_curve_data(exp_path, curve_type):
+    """Load the requested curve dataset, kinetic_features, and label-mapped Y_well for one experiment folder."""
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     if not os.path.exists(data_path):
         print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
@@ -28,10 +28,11 @@ def load_ori_curves(exp_path):
 
     data = joblib.load(data_path)
     dataset_name = list(data["dataset_name"])
-    if "ori_curves" not in dataset_name:
-        print(f"  -> Skipping {exp_path.name}: 'ori_curves' not found.")
+    try:
+        idx, _ = config.resolve_curve_dataset_idx(curve_type, dataset_name)
+    except ValueError as e:
+        print(f"  -> Skipping {exp_path.name}: {e}")
         return None
-    idx = dataset_name.index("ori_curves")
 
     if exp_path.name not in config.LABEL_MAPPINGS:
         print(f"  -> Skipping {exp_path.name}: no LABEL_MAPPINGS entry found (required for cross-dataset grouping).")
@@ -51,8 +52,8 @@ def load_ori_curves(exp_path):
     }
 
 
-def combine_group(exp_paths, group_name):
-    """Concatenate ori_curves data for all folders in a group, validating they share one label mapping.
+def combine_group(exp_paths, group_name, curve_type="ori_curve"):
+    """Concatenate curve data for all folders in a group, validating they share one label mapping.
 
     Datasets may have different timestamp grids, so curves are first resampled
     onto a single common time grid (fitted across the whole group) via
@@ -61,7 +62,7 @@ def combine_group(exp_paths, group_name):
     parts = []
     ref_mapping = None
     for exp_path in exp_paths:
-        d = load_ori_curves(exp_path)
+        d = load_curve_data(exp_path, curve_type)
         if d is None:
             continue
         if ref_mapping is None:
@@ -143,6 +144,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--mode", type=str, default="both", choices=["lofo", "well_cv", "both"])
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
+    parser.add_argument("--curve_type", type=str, default="ori_curve", help="Which curve dataset to train on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     args = parser.parse_args()
 
     group_names = list(config.CROSS_DATASET_GROUPS.keys())
@@ -157,17 +159,17 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    print(f"\n\n{'#'*80}\nCROSS-DATASET CV FOR GROUP: {group_name}\nFolders: {folder_names}\n{'#'*80}")
+    print(f"\n\n{'#'*80}\nCROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {args.curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
-    combined = combine_group(exp_paths, group_name)
+    combined = combine_group(exp_paths, group_name, curve_type=args.curve_type)
     if combined is None:
         sys.exit(0)
 
     out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
-    plot_dir = out_dir / "model_performance"
+    plot_dir = out_dir / f"model_performance_{args.curve_type}"
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH
+    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=args.curve_type)
     joblib.dump(combined["resampler"], resampler_path, compress=3)
     print(f"  [*] Saved curve resampler -> {resampler_path}")
 
@@ -187,7 +189,7 @@ if __name__ == "__main__":
     # Each CV mode (lofo / wellcv) is checkpointed to its own joblib file so the
     # two robustness modes can be loaded and compared independently later.
     results_file_paths = {
-        m: out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=m)
+        m: out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=m, curve_type=args.curve_type)
         for m in ("lofo", "wellcv")
     }
 

@@ -89,9 +89,9 @@ def build_html(title, filter_names, img_buffers, save_path):
         f.write(html)
 
 
-def process_experiment(exp_path, force_rerun):
+def process_experiment(exp_path, force_rerun, curve_type="ori_curve"):
     out_dir = config.get_viz_dir(exp_path.parent, "outlier_visualisation")
-    out_path = out_dir / f"{exp_path.name}_outlier.html"
+    out_path = out_dir / f"{exp_path.name}_{curve_type}_outlier.html"
 
     if out_path.exists() and not force_rerun:
         print(f"  -> [SKIP] Report already exists: {out_path}")
@@ -102,7 +102,7 @@ def process_experiment(exp_path, force_rerun):
         print(f"  -> Skipping {exp_path.name}: '{config.TRAINING_DATA_PATH}' not found.")
         return
 
-    print(f"\n{'#'*80}\nGENERATING OUTLIER VISUALIZATION REPORT FOR: {exp_path.name}\n{'#'*80}")
+    print(f"\n{'#'*80}\nGENERATING OUTLIER VISUALIZATION REPORT FOR: {exp_path.name} (curve_type: {curve_type})\n{'#'*80}")
     try:
         state = joblib.load(state_path)
     except Exception as e:
@@ -114,21 +114,25 @@ def process_experiment(exp_path, force_rerun):
     Y_well = np.asarray(state["Y_well"])
     kinetic_features = state["kinetic_features"]
 
-    ori_idx = dataset_name.index("ori_curves") if "ori_curves" in dataset_name else 0
+    try:
+        curve_idx, _ = config.resolve_curve_dataset_idx(curve_type, dataset_name)
+    except ValueError as e:
+        print(f"  -> [SKIP] {e}")
+        return
 
-    filter_cols = available_filter_columns(kinetic_features[ori_idx])
+    filter_cols = available_filter_columns(kinetic_features[curve_idx])
     if not filter_cols:
         print(f"  -> No outlier filter columns found for {exp_path.name}. Skipping.")
         return
 
     label_map = config.LABEL_MAPPINGS.get(exp_path.name, {})
-    curves = dataset[ori_idx]
+    curves = dataset[curve_idx]
 
     img_buffers = []
     panel_titles = []
     for filter_col in filter_cols:
         print(f"  -> Rendering: {filter_col}")
-        labels = kinetic_features[ori_idx][filter_col].values
+        labels = kinetic_features[curve_idx][filter_col].values
         img_buffers.append(render_filter_plot(curves, labels, Y_well, label_map, filter_col))
 
         n_inliers = int((labels == 1).sum())
@@ -140,7 +144,7 @@ def process_experiment(exp_path, force_rerun):
         )
 
     os.makedirs(out_dir, exist_ok=True)
-    build_html(f"Outlier Filter Visualization: {exp_path.name}", panel_titles, img_buffers, out_path)
+    build_html(f"Outlier Filter Visualization: {exp_path.name} ({curve_type})", panel_titles, img_buffers, out_path)
     print(f"  -> [SAVED] {out_path}")
 
 
@@ -148,6 +152,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Static Outlier Filter Visualization Report")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Regenerate the HTML reports even if they already exist")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     args = parser.parse_args()
 
     exp_paths = sorted([
@@ -156,4 +161,5 @@ if __name__ == "__main__":
     ])
 
     for exp_path in exp_paths:
-        process_experiment(exp_path, args.force_rerun)
+        for curve_type in args.curve_type:
+            process_experiment(exp_path, args.force_rerun, curve_type=curve_type)

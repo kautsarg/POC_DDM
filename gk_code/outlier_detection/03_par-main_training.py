@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--n_splits", type=int, default=1)
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
+    parser.add_argument("--training_mode", type=str, nargs="+", choices=["native", "reference"], default=["native"], help="Which training mode(s) to run: 'native' (train on this dataset's own curves) and/or 'reference' (train on the original ori_curves, using this dataset's outlier filters)")
     args = parser.parse_args()
 
     exp_paths = get_exp_paths(args.exp_folder)
@@ -102,7 +103,8 @@ if __name__ == "__main__":
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well)
 
-    outlier_filters = config.OUTLIER_FILTERS
+    # outlier_filters = config.OUTLIER_FILTERS
+    outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
@@ -116,16 +118,8 @@ if __name__ == "__main__":
     total_samples = len(y_full)
     trained_curve = dataset[0].copy()
 
-    # --- OPTIMIZATION: Extract existing baseline if script was restarted ---
-    shared_ref_baseline = None
-    for ct in all_ml_results:
-        if "Reference" in all_ml_results[ct] and None in all_ml_results[ct]["Reference"]:
-            shared_ref_baseline = all_ml_results[ct]["Reference"][None]
-            print("  [*] Found cached Reference Baseline. Will skip redundant baseline training for all datasets.")
-            break
-
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-        if(name=="ori_curves"): # or name =='original_fitted_full'):
+        if(name in ["ori_curves", "ori_curves_avg"]): # or name =='original_fitted_full'):
             clean_title = name.replace("_", " ").title()
             progress_pct = ((idx + 1) / total_datasets) * 100
             
@@ -152,86 +146,81 @@ if __name__ == "__main__":
             
             print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-            # ---------------------------------------------------------
-            # NATIVE TRAINING (Raw Original Curves)
-            # ---------------------------------------------------------
-            # print(f"\n  [MODE 1/2] NATIVE TRAINING")
-            # cached_native = all_ml_results[clean_title].get("Native", {})
-            
-            # checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
+            models = ["knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
 
-            # # 3. Train models on original un-fitted curves (curves_2d)
-            # res_native = evaluate_outlier_filters(
-            #     X_curves=curves_2d,              
-            #     features_df=features_df, 
-            #     y_encoded=y_full, 
-            #     outlier_filters=outlier_filters,
-            #     dataset_name=clean_title, 
-            #     mode_name="Native", 
-            #     cached_results=cached_native, 
-            #     models=["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
-            #     checkpoint_fn=checkpoint_native,
-            #     KFS=top_10_features,
-            #     rerun_models=config.RERUN_MODELS,
-            #     n_splits=args.n_splits
-            # )
-            
-            # # 4. Final Save
-            # all_ml_results[clean_title]["Native"] = res_native
-            # joblib.dump(all_ml_results, results_file_path, compress=3)
-                
-            # # 5. Generate and Save Visualizations
-            # prefix_native = os.path.join(model_plot_path, f"{name}_Native")
-            # plot_ml_results(
-            #     results_dict=all_ml_results[clean_title]["Native"], 
-            #     outlier_filters=outlier_filters,       # FIXED: Use the local list
-            #     dataset_name=clean_title, 
-            #     mode_name="Native Training", 
-            #     total_count=total_samples, 
-            #     save_prefix=prefix_native
-            # )
+            # --- REFERENCE TRAINING (this dataset's outlier filters, trained on the original curves) ---
+            if "reference" in args.training_mode:
+                print(f"\n  [MODE] REFERENCE TRAINING")
+                cached_ref = all_ml_results[clean_title].get("Reference", {})
 
-            # --- REFERENCE TRAINING ---
-            print(f"\n  [MODE 2/2] REFERENCE TRAINING")
-            cached_ref = all_ml_results[clean_title].get("Reference", {})
-    
-            # Inject the shared baseline so it immediately hits the cache inside evaluate_outlier_filters
-            if shared_ref_baseline is not None and None not in cached_ref:
-                cached_ref[None] = shared_ref_baseline
-    
-            checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
-            
-            res_ref = evaluate_outlier_filters(
-                X_curves=trained_curve, 
-                features_df=features_df, 
-                y_encoded=y_full, 
-                outlier_filters=outlier_filters, 
-                dataset_name=clean_title, 
-                mode_name="Reference", 
-                cached_results=cached_ref, 
-                models=["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"],
-                checkpoint_fn=checkpoint_ref,
-                KFS=top_10_features,
-                rerun_models=config.RERUN_MODELS,
-                n_splits=args.n_splits
-            )
-            
-            # Capture the baseline after the first dataset runs it, so subsequent iterations skip it
-            if shared_ref_baseline is None and None in res_ref:
-                shared_ref_baseline = res_ref[None]
-    
-            all_ml_results[clean_title]["Reference"] = res_ref
-            
-            joblib.dump(all_ml_results, results_file_path, compress=3)
-                
-            prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
-            plot_ml_results(
-                results_dict=all_ml_results[clean_title]["Reference"], 
-                outlier_filters=outlier_filters, 
-                dataset_name=clean_title, 
-                mode_name="Reference Training", 
-                total_count=total_samples, 
-                save_prefix=prefix_ref
-            )
-            
+                checkpoint_ref = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Reference")
+
+                res_ref = evaluate_outlier_filters(
+                    X_curves=trained_curve,
+                    features_df=features_df,
+                    y_encoded=y_full,
+                    outlier_filters=outlier_filters,
+                    dataset_name=clean_title,
+                    mode_name="Reference",
+                    cached_results=cached_ref,
+                    models=models,
+                    checkpoint_fn=checkpoint_ref,
+                    KFS=top_10_features,
+                    rerun_models=config.RERUN_MODELS,
+                    n_splits=args.n_splits
+                )
+
+                all_ml_results[clean_title]["Reference"] = res_ref
+
+                joblib.dump(all_ml_results, results_file_path, compress=3)
+
+                prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
+                plot_ml_results(
+                    results_dict=all_ml_results[clean_title]["Reference"],
+                    outlier_filters=outlier_filters,
+                    dataset_name=clean_title,
+                    mode_name="Reference Training",
+                    total_count=total_samples,
+                    save_prefix=prefix_ref
+                )
+
+            # --- NATIVE TRAINING (this dataset's outlier filters AND training curves) ---
+            if "native" in args.training_mode:
+                print(f"\n  [MODE] NATIVE TRAINING")
+                cached_reference = all_ml_results[clean_title].get("Reference")
+                if np.array_equal(curves_2d, trained_curve) and cached_reference:
+                    print(f"  [*] '{clean_title}' curves are identical to the Reference training curves. Reusing saved Reference results, skipping retraining.")
+                    res_native = cached_reference
+                else:
+                    cached_native = all_ml_results[clean_title].get("Native", {})
+                    checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
+
+                    res_native = evaluate_outlier_filters(
+                        X_curves=curves_2d,
+                        features_df=features_df,
+                        y_encoded=y_full,
+                        outlier_filters=outlier_filters,
+                        dataset_name=clean_title,
+                        mode_name="Native",
+                        cached_results=cached_native,
+                        models=models,
+                        checkpoint_fn=checkpoint_native,
+                        KFS=top_10_features,
+                        rerun_models=config.RERUN_MODELS,
+                        n_splits=args.n_splits
+                    )
+
+                all_ml_results[clean_title]["Native"] = res_native
+                joblib.dump(all_ml_results, results_file_path, compress=3)
+
+                prefix_native = os.path.join(model_plot_path, f"{name}_Native")
+                plot_ml_results(
+                    results_dict=all_ml_results[clean_title]["Native"],
+                    outlier_filters=outlier_filters,
+                    dataset_name=clean_title,
+                    mode_name="Native Training",
+                    total_count=total_samples,
+                    save_prefix=prefix_native
+                )
+
         gc.collect()

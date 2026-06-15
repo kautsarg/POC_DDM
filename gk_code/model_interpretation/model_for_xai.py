@@ -18,20 +18,20 @@ from model_utils import (
     set_global_determinism
 )
 
-def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
+def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve"):
     out_subdir = "model_interpretation"
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in config.EXCLUDED_FOLDERS])
 
     filter_key = None
-    filter_str = str(filter_key) 
+    filter_str = str(filter_key)
 
     for exp_path in exp_paths:
-        print(f"\n{'='*60}\n[*] Processing Dataset: {exp_path.name}\n{'='*60}")
+        print(f"\n{'='*60}\n[*] Processing Dataset: {exp_path.name} (curve_type: {curve_type})\n{'='*60}")
         out_dir = exp_path / out_subdir
-        out_dir.mkdir(parents=True, exist_ok=True) 
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Localized Joblib Path (Saved inside each specific exp_path)
-        joblib_path = out_dir / "model_interpretation.joblib"
+        joblib_path = out_dir / f"model_interpretation_{curve_type}.joblib"
 
         if joblib_path.exists():
             print(f"[*] Loading local tracking file from {joblib_path}")
@@ -41,8 +41,13 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
             data_package = None
 
         data = joblib.load(exp_path / config.TRAINING_DATA_PATH)
-        dataset_name = data["dataset_name"][0]
-        
+        dataset_name_list = list(data["dataset_name"])
+        try:
+            curve_idx, dataset_name = config.resolve_curve_dataset_idx(curve_type, dataset_name_list)
+        except ValueError as e:
+            print(f"  -> [SKIP] {e}")
+            continue
+
         # 2. Check if the loaded package matches the current dataset
         if data_package is not None and data_package.get("dataset_name") == dataset_name:
             if filter_str not in data_package.get("model_paths", {}):
@@ -54,8 +59,8 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
             print(f"[+] Creating new entry with filter '{filter_str}'.")
             data_package = {
                 "dataset_name" : dataset_name,
-                "dataset" : data["dataset"][0],
-                "features_df" : data["kinetic_features"][0],
+                "dataset" : data["dataset"][curve_idx],
+                "features_df" : data["kinetic_features"][curve_idx],
                 "y_well" : data["Y_well"],
                 "timestamps" : data["timestamps"],
                 "model_paths" : {filter_str: {}},
@@ -149,7 +154,7 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
         }
         
         for name, builder_func in model_builders.items():
-            model_filename = f"{name}_{filter_str}_model.keras"
+            model_filename = f"{name}_{filter_str}_{curve_type}_model.keras"
             model_save_path = out_dir / model_filename
 
             if model_save_path.exists():
@@ -188,8 +193,10 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER)):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model for XAI Training Script")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to train on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
     print(exp_folder)
-    main(exp_folder=exp_folder)
+    for curve_type in args.curve_type:
+        main(exp_folder=exp_folder, curve_type=curve_type)

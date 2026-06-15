@@ -27,16 +27,22 @@ WELL_CMAP = ListedColormap(config.WELL_COLORS)
 
 
 # ====================================================================
-# MODULE 1: ORIGINAL DATA & MODEL LOADING 
+# MODULE 1: ORIGINAL DATA & MODEL LOADING
 # ====================================================================
-def prepare_dataset(exp_path, filter_key):
+def prepare_dataset(exp_path, filter_key, curve_type="ori_curve"):
     """Loads dataset, extracts cached features from the LOCAL joblib, and returns splits."""
     data_path = exp_path / config.TRAINING_DATA_PATH
     if not data_path.exists():
         return None
 
     data = joblib.load(data_path)
-    
+
+    try:
+        curve_idx, dataset_name = config.resolve_curve_dataset_idx(curve_type, list(data["dataset_name"]))
+    except ValueError as e:
+        print(f"  -> [SKIP] {e}")
+        return None
+
     Y_well = data["Y_well"]
     if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
         print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
@@ -48,22 +54,21 @@ def prepare_dataset(exp_path, filter_key):
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well)
 
-    features_df = data["kinetic_features"][0]
+    features_df = data["kinetic_features"][curve_idx]
     if filter_key is None:
         mask = np.ones(len(y_full), dtype=bool)
     else:
         mask = (features_df[filter_key] == 1).fillna(False).values
-    
-    X = data["dataset"][0][mask].astype(np.float32)[..., None]
+
+    X = data["dataset"][curve_idx][mask].astype(np.float32)[..., None]
     y = y_full[mask]
     features_df_masked = features_df[mask]
     timestamps = data["timestamps"]
-    dataset_name = data["dataset_name"][0]
 
     splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
     train_idx, test_idx = next(splitter.split(X, y))
 
-    joblib_path = exp_path / "model_interpretation" / "model_interpretation.joblib"
+    joblib_path = exp_path / "model_interpretation" / f"model_interpretation_{curve_type}.joblib"
     saved_top_10 = None
     
     if joblib_path.exists():
@@ -94,7 +99,7 @@ def prepare_dataset(exp_path, filter_key):
         "top_10_features": top_10_features
     }
 
-def load_saved_models(model_dir, filter_key, expected_seq_len):
+def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_curve"):
     """Loads models and strictly checks shape to prevent ValueError crashes."""
     models = {}
     model_names = [
@@ -102,9 +107,9 @@ def load_saved_models(model_dir, filter_key, expected_seq_len):
         'cnn_lf', 'bigru_lf', 'transformer_lf',
         'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual'
     ]
-    
+
     for name in model_names:
-        model_path = model_dir / f"{name}_{filter_key}_model.keras"
+        model_path = model_dir / f"{name}_{filter_key}_{curve_type}_model.keras"
         if model_path.exists():
             try:
                 model = tf.keras.models.load_model(model_path)
@@ -1081,28 +1086,28 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False, curve_type="ori_curve"):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
     exp_folder = Path(exp_folder_path)
     global_vis_dir = config.get_viz_dir(exp_folder, "model_interpretation")
     global_vis_dir.mkdir(parents=True, exist_ok=True)
-    
+
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in ['.DS_Store', 'model_interpretation']])
 
-    filter_suffix = f"_{filter_key}"
+    filter_suffix = f"_{filter_key}_{curve_type}"
 
     for exp_path in exp_paths:
-        print(f"\n{'='*70}\n[*] PROCESSING DATASET: {exp_path.name}\n{'='*70}")
+        print(f"\n{'='*70}\n[*] PROCESSING DATASET: {exp_path.name} (curve_type: {curve_type})\n{'='*70}")
         model_dir = exp_path / "model_interpretation"
 
-        data_dict = prepare_dataset(exp_path, filter_key)
+        data_dict = prepare_dataset(exp_path, filter_key, curve_type=curve_type)
         if not data_dict: continue
         print(f"  -> Data Loaded | X: {data_dict['X_full'].shape}, y: {data_dict['y_full'].shape}")
 
         print("  -> Loading Pre-Trained Models...")
-        models = load_saved_models(model_dir, str(filter_key), data_dict['X_full'].shape[1])
+        models = load_saved_models(model_dir, str(filter_key), data_dict['X_full'].shape[1], curve_type=curve_type)
         if not models:
             print(f"  [-] Skipping visualisations for {exp_path.name}: No compatible saved models found.")
             continue
@@ -1171,10 +1176,12 @@ if __name__ == "__main__":
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--normalize", action="store_true", help="Whether to normalize the saliency maps")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
     normalize = args.normalize
 
     print(exp_folder)
-    run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=normalize, force_rerun=args.force_rerun)
+    for curve_type in args.curve_type:
+        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=normalize, force_rerun=args.force_rerun, curve_type=curve_type)

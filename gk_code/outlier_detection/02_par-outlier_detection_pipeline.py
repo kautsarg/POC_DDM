@@ -75,7 +75,7 @@ def get_send(timestamps, curves_2d, send_n=[5, 10, 15, 20, 25]):
     dy_dx_list = Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
         delayed(sp.calculate_first_derivative)(timestamps, y) for y in curves_2d
     )
-    dy_dx = np.array(dy_dx_list) 
+    dy_dx = np.array(dy_dx_list)
     send_dict = {}
 
     with warnings.catch_warnings():
@@ -84,6 +84,18 @@ def get_send(timestamps, curves_2d, send_n=[5, 10, 15, 20, 25]):
             send_dict[f"send_{n}"] = np.nanmean(dy_dx[:, -n:], axis=1)
             send_dict[f"send_abs_{n}"] = np.nanmean(np.abs(dy_dx[:, -n:]), axis=1)
     return send_dict
+
+def build_kinetic_features(curves_2d, timestamps, metadata_df):
+    """Extract kinetic parameters + 'Send' aliases + metadata for one dataset entry."""
+    features_df = extract_kinetic_features(timestamps, curves_2d).reset_index(drop=True)
+    meta_clean = metadata_df.reset_index(drop=True)
+
+    add_features = get_send(timestamps, curves_2d)
+    add_features["FFI"] = curves_2d[:, -1]
+    add_features["F_range"] = curves_2d[:, -1] - curves_2d[:, 0]
+
+    df_new_features = pd.DataFrame(add_features).reset_index(drop=True)
+    return pd.concat([features_df, meta_clean, df_new_features], axis=1)
 
 def feature_boxplot(features_df, well_labels, feature_columns, target="well", title="", save_path=None):
     plot_data = features_df.copy()
@@ -237,27 +249,59 @@ if __name__ == "__main__":
         metadata_df = pd.DataFrame(data["metadata"])
         
         dataset_name = ["ori_curves"]
-        dataset = [data["curves"]["ori_curves"]] 
-        
+        dataset = [data["curves"]["ori_curves"]]
+
+        if "ori_curves_avg" in data["curves"]:
+            dataset_name.append("ori_curves_avg")
+            dataset.append(data["curves"]["ori_curves_avg"])
+
         for k, v in data["sigmoid_curves"].items():
             dataset_name.append(f"{k}_fitted_full")
             dataset.append(v["fitted_full"])
             dataset_name.append(f"{k}_fitted_stretched")
             dataset.append(v["fitted_stretched"])
-            
+
         pipeline_state["dataset_name"] = np.array(dataset_name)
         pipeline_state["dataset"] = np.array(dataset)
         pipeline_state["Y_well"] = Y_well
         pipeline_state["timestamps"] = timestamps
         pipeline_state["metadata_df"] = metadata_df
-        
-        del data 
+
+        del data
     else:
         dataset_name = pipeline_state["dataset_name"]
         dataset = pipeline_state["dataset"]
         Y_well = pipeline_state["Y_well"]
         timestamps = pipeline_state["timestamps"]
         metadata_df = pipeline_state["metadata_df"]
+
+        # Patch caches created before 'ori_curves_avg' existed: insert it now,
+        # carrying over any outlier-filter label columns already computed on
+        # 'ori_curves' so the expensive filter pipelines aren't re-triggered.
+        if "ori_curves_avg" not in dataset_name:
+            curve_path = Path(exp_path, config.PREPROCESSED_CURVES_PATH)
+            if curve_path.exists():
+                cached_data = joblib.load(curve_path)
+                if "ori_curves_avg" in cached_data["curves"]:
+                    print("  -> Patching cached state: inserting 'ori_curves_avg' dataset.")
+                    ori_idx = list(dataset_name).index("ori_curves")
+                    avg_curves = cached_data["curves"]["ori_curves_avg"]
+                    avg_features = build_kinetic_features(avg_curves, timestamps, metadata_df)
+
+                    kinetic_features = pipeline_state["kinetic_features"]
+                    extra_cols = [c for c in kinetic_features[ori_idx].columns if c not in avg_features.columns]
+                    if extra_cols:
+                        avg_features = pd.concat([avg_features, kinetic_features[ori_idx][extra_cols].reset_index(drop=True)], axis=1)
+
+                    dataset_name = np.insert(dataset_name, ori_idx + 1, "ori_curves_avg")
+                    dataset = np.insert(dataset, ori_idx + 1, avg_curves, axis=0)
+                    kinetic_features.insert(ori_idx + 1, avg_features)
+
+                    pipeline_state["dataset_name"] = dataset_name
+                    pipeline_state["dataset"] = dataset
+                    pipeline_state["kinetic_features"] = kinetic_features
+                    joblib.dump(pipeline_state, unified_save_path, compress=3)
+                del cached_data
 
     # Ensure aligned lengths
     assert len(dataset_name) == len(dataset), "dataset_name and dataset length mismatch"
@@ -281,18 +325,7 @@ if __name__ == "__main__":
         dataset = pipeline_state["dataset"]
     else:
         print("  -> Extracting initial kinetic features (CPU Bound)...")
-        kinetic_features = [extract_kinetic_features(timestamps, curves) for curves in dataset]
-
-        for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
-            features_df = features_df.reset_index(drop=True)
-            meta_clean = metadata_df.reset_index(drop=True)
-            
-            add_features = get_send(timestamps, curves_2d)
-            add_features["FFI"] = curves_2d[:, -1]    
-            add_features["F_range"] = curves_2d[:, -1] - curves_2d[:, 0]
-            
-            df_new_features = pd.DataFrame(add_features).reset_index(drop=True)
-            kinetic_features[idx] = pd.concat([features_df, meta_clean, df_new_features], axis=1)
+        kinetic_features = [build_kinetic_features(curves_2d, timestamps, metadata_df) for curves_2d in dataset]
 
         filtered_names, filtered_dataset, filtered_features = [], [], []
         for name, data, features in zip(dataset_name, dataset, kinetic_features):
@@ -689,6 +722,22 @@ if __name__ == "__main__":
             for i in range(len(dataset_name)): 
                 features_to_concat[i].append(extracted_dfs[i])
         flush_and_save_progress()
+
+    # --- Propagate AE-derived outlier labels to 'ori_curves_avg' ---
+    # AE pipelines only train on 'ori_curves' (ae_dataset_name); the resulting
+    # per-sample labels describe samples, not the curve shape, so they apply
+    # unchanged to 'ori_curves_avg'.
+    if "ori_curves_avg" in list(dataset_name):
+        ori_idx = list(dataset_name).index("ori_curves")
+        avg_idx = list(dataset_name).index("ori_curves_avg")
+        ae_label_cols = [c for c in kinetic_features[ori_idx].columns
+                         if c.startswith(("cnn_ae_", "lstm_ae_")) and c not in kinetic_features[avg_idx].columns]
+        if ae_label_cols:
+            copy_df = kinetic_features[ori_idx][ae_label_cols].reset_index(drop=True)
+            kinetic_features[avg_idx] = pd.concat([kinetic_features[avg_idx].reset_index(drop=True), copy_df], axis=1)
+            pipeline_state["kinetic_features"] = kinetic_features
+            joblib.dump(pipeline_state, unified_save_path, compress=3)
+            print("  -> Propagated AE-derived outlier labels to 'ori_curves_avg'.")
 
     # -------------------------------------------------------------
     # 7. FINAL FLUSH

@@ -362,8 +362,16 @@ if __name__ == "__main__":
 
     margin = (config.WINDOW_SIZE_1STDER - 1) // 2
 
-    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) 
+    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder)
                         if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)])
+
+    if args.nc_subtract:
+        exp_folder_root = Path(args.exp_folder)
+        nc_subtract_root = exp_folder_root.parent / f"{exp_folder_root.name}_nc_subtract"
+        # Pre-create all sibling folders so downstream pipelines see a consistent,
+        # fully-mirrored folder listing regardless of array-task execution order.
+        for p in exp_paths:
+            os.makedirs(nc_subtract_root / p.name, exist_ok=True)
 
     curve_labels = ["Original Curve", "1st Derivative", "1st Derivative Moving Avg", "Cleaned Curve", 
                     "Cleaned Curve (Lowest Crossing)"] 
@@ -375,8 +383,7 @@ if __name__ == "__main__":
     exp_path = exp_paths[args.task_id]
     
     if args.nc_subtract:
-        save_exp_path = Path(str(exp_path) + "_nc_subtract")
-        os.makedirs(save_exp_path, exist_ok=True)
+        save_exp_path = nc_subtract_root / exp_path.name
     else:
         save_exp_path = exp_path
         

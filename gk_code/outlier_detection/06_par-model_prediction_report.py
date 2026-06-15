@@ -156,12 +156,12 @@ def build_html(title, panel_titles, img_buffers, save_path):
         f.write(html)
 
 
-def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
+def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, curve_type="ori_curve"):
     out_dir = config.get_viz_dir(exp_path.parent, "model_performance_viz")
 
     mode_key = mode.strip().title()
     filter_tag = "none" if outlier_filter is None else re.sub(r"[^A-Za-z0-9._-]+", "_", outlier_filter)
-    out_path = out_dir / f"{exp_path.name}__{mode_key}__{filter_tag}__nsplits{n_splits}.html"
+    out_path = out_dir / f"{exp_path.name}__{curve_type}__{mode_key}__{filter_tag}__nsplits{n_splits}.html"
 
     if out_path.exists() and not force_rerun:
         print(f"  -> [SKIP] Report already exists: {out_path}")
@@ -177,7 +177,7 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
         print(f"  -> Skipping {exp_path.name}: '{config.TRAINING_DATA_PATH}' not found.")
         return
 
-    print(f"\n{'#'*80}\nGENERATING MODEL PREDICTION REPORT FOR: {exp_path.name}\n{'#'*80}")
+    print(f"\n{'#'*80}\nGENERATING MODEL PREDICTION REPORT FOR: {exp_path.name} (curve_type: {curve_type})\n{'#'*80}")
 
     try:
         all_ml_results = joblib.load(results_path)
@@ -191,9 +191,13 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
     Y_well_raw = np.asarray(state["Y_well"])
     kinetic_features = state["kinetic_features"]
 
-    ori_idx = dataset_name.index("ori_curves") if "ori_curves" in dataset_name else 0
-    curves = dataset[ori_idx]
-    features_df = kinetic_features[ori_idx]
+    try:
+        curve_idx, resolved_name = config.resolve_curve_dataset_idx(curve_type, dataset_name)
+    except ValueError as e:
+        print(f"  -> [SKIP] {e}")
+        return
+    curves = dataset[curve_idx]
+    features_df = kinetic_features[curve_idx]
 
     Y_well_mapped = list(Y_well_raw)
     if exp_path.name in config.LABEL_MAPPINGS:
@@ -203,7 +207,7 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(Y_well_mapped)
 
-    clean_title = "Ori Curves"
+    clean_title = resolved_name.replace("_", " ").title()
 
     if clean_title not in all_ml_results or mode_key not in all_ml_results[clean_title]:
         print(f"  -> No '{mode_key}' results found for {exp_path.name}. Skipping.")
@@ -282,7 +286,7 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun):
 
     os.makedirs(out_dir, exist_ok=True)
     filter_label = outlier_filter if outlier_filter else "None (Baseline)"
-    title = f"Model Prediction Visualization: {exp_path.name} | Mode: {mode_key} | Filter: {filter_label}"
+    title = f"Model Prediction Visualization: {exp_path.name} | Curve: {curve_type} | Mode: {mode_key} | Filter: {filter_label}"
     build_html(title, panel_titles, img_buffers, out_path)
     print(f"  -> [SAVED] {out_path}")
 
@@ -294,7 +298,9 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="Reference", help="'Native' or 'Reference'")
     parser.add_argument("--outlier_filter", type=str, default=None, help="Outlier filter column to visualize (default: None / baseline)")
     parser.add_argument("--n_splits", type=int, default=1, help="Must match the --n_splits used for the corresponding 03 training run")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     args = parser.parse_args()
 
     for exp_path in get_exp_paths(args.exp_folder):
-        process_experiment(exp_path, args.mode, args.outlier_filter, args.n_splits, args.force_rerun)
+        for curve_type in args.curve_type:
+            process_experiment(exp_path, args.mode, args.outlier_filter, args.n_splits, args.force_rerun, curve_type=curve_type)

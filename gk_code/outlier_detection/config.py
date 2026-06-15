@@ -34,6 +34,23 @@ def get_viz_dir(path, subdir):
     rel = Path(path).relative_to(BASE_FOLDER)
     return Path(VIZ_BASE_FOLDER) / rel / subdir
 
+
+# Friendly aliases for the most common curve types used as the `--curve_type`
+# CLI arg. Any other value is used verbatim as a 'dataset_name' entry (e.g.
+# 'sigmoid4pl_fitted_full').
+CURVE_TYPE_ALIASES = {
+    "ori_curve": "ori_curves",
+    "ori_curve_avg": "ori_curves_avg",
+}
+
+
+def resolve_curve_dataset_idx(curve_type, dataset_name_list):
+    """Resolve a `--curve_type` value to (index, dataset_name) within `dataset_name_list`."""
+    target = CURVE_TYPE_ALIASES.get(curve_type, curve_type)
+    if target not in dataset_name_list:
+        raise ValueError(f"curve_type '{curve_type}' (resolved to '{target}') not found in dataset_name {list(dataset_name_list)}")
+    return list(dataset_name_list).index(target), target
+
 # Global Experiment Parameters
 N_WELLS = 10
 N_A_TYPE = "v06"
@@ -98,8 +115,8 @@ PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
 TRAINING_DATA_PATH = 'curve_for_training_nonorm.joblib'
 TRAINING_RESULT_PATH = 'classification_performances_nonorm.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold_nonorm.joblib'
-CROSS_DATASET_RESULT_PATH = 'classification_performances_cross_dataset_{mode}.joblib'
-CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resampler.joblib'
+CROSS_DATASET_RESULT_PATH = 'classification_performances_cross_dataset_{mode}_{curve_type}.joblib'
+CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resampler_{curve_type}.joblib'
 
 # File paths
 # PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
