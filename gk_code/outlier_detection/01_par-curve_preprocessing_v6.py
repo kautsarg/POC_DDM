@@ -389,21 +389,27 @@ if __name__ == "__main__":
         
     save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
     if os.path.exists(save_path) and not args.force_rerun:
-        existing_data = joblib.load(save_path)
-        if "ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data:
-            print(f"Cache hit: {save_exp_path}")
+        try:
+            existing_data = joblib.load(save_path)
+        except Exception as e:
+            print(f"  -> [WARNING] Cached file at {save_path} is corrupted ({e}). Recomputing from scratch...")
+            existing_data = None
+
+        if existing_data is not None:
+            if "ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data:
+                print(f"Cache hit: {save_exp_path}")
+                print("  ✓ Experiment complete!\n")
+                sys.exit(0)
+
+            print(f"Cache hit: {save_exp_path} (patching missing 'ori_curves_avg'/'window_size_ori')")
+            existing_data["curves"]["ori_curves_avg"] = moving_average_vec(
+                existing_data["curves"]["ori_curves"], config.WINDOW_SIZE_ORI
+            )
+            existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
+            joblib.dump(existing_data, save_path, compress=3)
+            print(f"  -> Patched {save_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
-
-        print(f"Cache hit: {save_exp_path} (patching missing 'ori_curves_avg'/'window_size_ori')")
-        existing_data["curves"]["ori_curves_avg"] = moving_average_vec(
-            existing_data["curves"]["ori_curves"], config.WINDOW_SIZE_ORI
-        )
-        existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
-        joblib.dump(existing_data, save_path, compress=3)
-        print(f"  -> Patched {save_path}")
-        print("  ✓ Experiment complete!\n")
-        sys.exit(0)
 
     print(f"Processing Experiment: {exp_path}")
 

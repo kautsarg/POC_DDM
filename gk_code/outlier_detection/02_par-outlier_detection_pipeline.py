@@ -280,27 +280,33 @@ if __name__ == "__main__":
         # 'ori_curves' so the expensive filter pipelines aren't re-triggered.
         if "ori_curves_avg" not in dataset_name:
             curve_path = Path(exp_path, config.PREPROCESSED_CURVES_PATH)
+            cached_data = None
             if curve_path.exists():
-                cached_data = joblib.load(curve_path)
-                if "ori_curves_avg" in cached_data["curves"]:
-                    print("  -> Patching cached state: inserting 'ori_curves_avg' dataset.")
-                    ori_idx = list(dataset_name).index("ori_curves")
-                    avg_curves = cached_data["curves"]["ori_curves_avg"]
-                    avg_features = build_kinetic_features(avg_curves, timestamps, metadata_df)
+                try:
+                    cached_data = joblib.load(curve_path)
+                except Exception as e:
+                    print(f"  -> [WARNING] Failed to load {curve_path} for 'ori_curves_avg' patch ({e}). Skipping patch for now.")
 
-                    kinetic_features = pipeline_state["kinetic_features"]
-                    extra_cols = [c for c in kinetic_features[ori_idx].columns if c not in avg_features.columns]
-                    if extra_cols:
-                        avg_features = pd.concat([avg_features, kinetic_features[ori_idx][extra_cols].reset_index(drop=True)], axis=1)
+            if cached_data is not None and "ori_curves_avg" in cached_data["curves"]:
+                print("  -> Patching cached state: inserting 'ori_curves_avg' dataset.")
+                ori_idx = list(dataset_name).index("ori_curves")
+                avg_curves = cached_data["curves"]["ori_curves_avg"]
+                avg_features = build_kinetic_features(avg_curves, timestamps, metadata_df)
 
-                    dataset_name = np.insert(dataset_name, ori_idx + 1, "ori_curves_avg")
-                    dataset = np.insert(dataset, ori_idx + 1, avg_curves, axis=0)
-                    kinetic_features.insert(ori_idx + 1, avg_features)
+                kinetic_features = pipeline_state["kinetic_features"]
+                extra_cols = [c for c in kinetic_features[ori_idx].columns if c not in avg_features.columns]
+                if extra_cols:
+                    avg_features = pd.concat([avg_features, kinetic_features[ori_idx][extra_cols].reset_index(drop=True)], axis=1)
 
-                    pipeline_state["dataset_name"] = dataset_name
-                    pipeline_state["dataset"] = dataset
-                    pipeline_state["kinetic_features"] = kinetic_features
-                    joblib.dump(pipeline_state, unified_save_path, compress=3)
+                dataset_name = np.insert(dataset_name, ori_idx + 1, "ori_curves_avg")
+                dataset = np.insert(dataset, ori_idx + 1, avg_curves, axis=0)
+                kinetic_features.insert(ori_idx + 1, avg_features)
+
+                pipeline_state["dataset_name"] = dataset_name
+                pipeline_state["dataset"] = dataset
+                pipeline_state["kinetic_features"] = kinetic_features
+                joblib.dump(pipeline_state, unified_save_path, compress=3)
+            if cached_data is not None:
                 del cached_data
 
     # Ensure aligned lengths
