@@ -1,5 +1,11 @@
 import os
+import sys
 from pathlib import Path
+
+# model_utils.py lives alongside this file's package; ensure it is importable
+# regardless of the caller's own sys.path setup.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "utils" / "model_training"))
+
 from model_utils import set_global_determinism
 set_global_determinism(0)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import joblib
 
-sys.path.insert(0, "../..")
+sys.path.insert(0, "../../..")
 from titan_v4.load_and_preprocessing import titan_load_and_preprocessing
 
 sys.path.insert(0, "..")

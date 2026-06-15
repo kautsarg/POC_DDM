@@ -77,7 +77,7 @@ def reconstruct_data(all_exp_data, attr_str):
         return None, np.array([]), None
         
     X_time = all_exp_data[0].wells_list[0].time
-    
+
     arrays_to_stack = []
     Y_well_list = []
 
@@ -513,6 +513,9 @@ if __name__ == "__main__":
         # Update main tracking array for the rest of the pipeline
         X_2d_bs_active = subtracted_curves
         print("  [✓] Truncation and NC baseline subtraction complete.")
+
+    # Shift timestamps so they start from 0 (post-truncation, if any)
+    X_time = X_time - X_time[0]
 
     baseline_value = 0
 
