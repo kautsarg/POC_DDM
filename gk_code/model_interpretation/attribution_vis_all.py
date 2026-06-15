@@ -1090,11 +1090,13 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
     global_vis_dir.mkdir(parents=True, exist_ok=True)
     
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in ['.DS_Store', 'model_interpretation']])
-    
+
+    filter_suffix = f"_{filter_key}"
+
     for exp_path in exp_paths:
         print(f"\n{'='*70}\n[*] PROCESSING DATASET: {exp_path.name}\n{'='*70}")
         model_dir = exp_path / "model_interpretation"
-        
+
         data_dict = prepare_dataset(exp_path, filter_key)
         if not data_dict: continue
         print(f"  -> Data Loaded | X: {data_dict['X_full'].shape}, y: {data_dict['y_full'].shape}")
@@ -1105,9 +1107,9 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             print(f"  [-] Skipping visualisations for {exp_path.name}: No compatible saved models found.")
             continue
 
-        pca_path = global_vis_dir / f"01_latent_space_pca_{exp_path.name}.png"
-        tsne_path = global_vis_dir / f"02_latent_space_tsne_{exp_path.name}.png"
-        saliency_base = global_vis_dir / f"04_saliency_{exp_path.name}.png"
+        pca_path = global_vis_dir / f"01_latent_space_pca_{exp_path.name}{filter_suffix}.png"
+        tsne_path = global_vis_dir / f"02_latent_space_tsne_{exp_path.name}{filter_suffix}.png"
+        saliency_base = global_vis_dir / f"04_saliency_{exp_path.name}{filter_suffix}.png"
         expected_outputs = [pca_path, tsne_path] + [
             Path(str(saliency_base).replace('.png', f'_{model_name}.png')) for model_name in models
         ]
@@ -1135,12 +1137,12 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         print(f"  -> Generating Visualizations into {global_vis_dir.name}/ ...")
         
         # 1. Base Plots (Original Logic Unchanged)
-        plot_latent_pca(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], global_vis_dir / f"01_latent_space_pca_{exp_path.name}.png")
-        plot_latent_tsne(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], global_vis_dir / f"02_latent_space_tsne_{exp_path.name}.png")
+        # plot_latent_pca(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], pca_path)
+        plot_latent_tsne(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], tsne_path)
 
         # 2. Advanced Heatmaps (Optimized)
         for model_name in models.keys():
-            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, global_vis_dir / f"04_saliency_{exp_path.name}.png", normalize=normalize)
+            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, saliency_base, normalize=normalize)
 
         # 3. Latent → Feature mapping (new)
         # compute_kinetic_feature_cache runs extract_kinetic_parameters_original on
@@ -1157,7 +1159,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
                 feat_matrix, feat_sensitivity, feat_names,
                 mean_curve, std_curve,
                 exp_path.name,
-                global_vis_dir / f"07_latent_mapping_{exp_path.name}.png",
+                global_vis_dir / f"07_latent_mapping_{exp_path.name}{filter_suffix}.png",
             )
 
         print(f"  [✓] Processed {exp_path.name}")
@@ -1166,6 +1168,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="XAI Visualization Pipeline for DDM Models")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
+    parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--normalize", action="store_true", help="Whether to normalize the saliency maps")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
 
@@ -1174,4 +1177,4 @@ if __name__ == "__main__":
     normalize = args.normalize
 
     print(exp_folder)
-    run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=None, normalize=normalize, force_rerun=args.force_rerun)
+    run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=normalize, force_rerun=args.force_rerun)
