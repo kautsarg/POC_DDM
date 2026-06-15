@@ -1,11 +1,15 @@
 # POC_DDM Pipeline
 
 This pipeline turns raw Lacewing chip readouts into trained classifiers and
-interpretability reports. Scripts live in `gk_code/outlier_detection/` and
-`gk_code/model_interpretation/`, are numbered in run order, and are normally
-launched as a SLURM array job (see `slurm_jobs/`). Each stage caches its
-result as a `.joblib` (or report file) inside the experiment folder, so
-re-running a stage is a no-op unless `--force_rerun` is passed.
+interpretability reports. Scripts live in `gk_code/main/`, are numbered in
+run order, and are normally launched as a SLURM array job (see
+`slurm_jobs/`). Shared dependencies live in `gk_code/main/utils/`, split into
+`01_curve_preprocessing/`, `02_outlier_detection/`, and `model_training/`
+subfolders matching the stages that use them. The lighter-weight
+interpretability variant lives in `gk_code/main/light_pipeline/`, and
+superseded/unused scripts have been moved to `gk_code/legacy/`. Each
+stage caches its result as a `.joblib` (or report file) inside the experiment
+folder, so re-running a stage is a no-op unless `--force_rerun` is passed.
 
 ```
 01v6  raw chip data        -> preprocessed_curves_nonorm.joblib
@@ -14,12 +18,12 @@ re-running a stage is a no-op unless `--force_rerun` is passed.
   v   (kinetic features + outlier labels)
 03    + model training       -> classification_performances_nonorm.joblib
   v
-03b   (optional) cross-dataset CV -> cross_dataset_cv/<group>/...
+04    (optional) cross-dataset CV -> cross_dataset_cv/<group>/...
 05/06/07/attribution_vis_all  -> HTML/PNG reports
 ```
 
-## `outlier_detection/01_par-curve_preprocessing_v6.py`
-Loads raw chip data (`v05`/`v06`, or `v04` via `titan`), reconstructs each
+## `main/01_curve_preprocessing_v6.py`
+Loads raw chip data (`v05`/`v06` via `titan_v6`, or `v04` via `titan_v4`), reconstructs each
 well's amplification curve, computes derivatives/moving averages, and fits
 5-parameter sigmoid curves.
 
@@ -33,7 +37,7 @@ well's amplification curve, computes derivatives/moving averages, and fits
 - Old caches missing `ori_curves_avg`/`window_size_ori` are patched in place.
   A corrupted cache file triggers a full recompute instead of crashing.
 
-## `outlier_detection/02_par-outlier_detection_pipeline.py`
+## `main/02_outlier_detection_pipeline.py`
 Builds the unified training dataset: extracts kinetic features for
 `ori_curves`, `ori_curves_avg`, and each sigmoid-fit variant, then runs the
 outlier-filter pipelines (autoencoder, spatial kNN/grid consistency, MSC/AMF)
@@ -49,7 +53,7 @@ and attaches per-sample outlier labels as extra feature columns.
   outlier-filter labels already computed on `ori_curves`. This patch step
   tolerates a corrupted preprocessed-curves cache (skips with a warning).
 
-## `outlier_detection/03_par-main_training.py`
+## `main/03_main_training.py`
 Trains/evaluates the classifier suite (kNN, CNN, GRU, Transformer, CNN+GRU /
 CNN+Transformer dual-branch, plus late-fusion variants) on `ori_curves` and
 `ori_curves_avg`, for each outlier filter in `config.OUTLIER_FILTERS`.
@@ -69,7 +73,7 @@ Two training modes (`--training_mode`, default `["native"]`):
 - **Key args**: `--task_id`, `--exp_folder`, `--n_splits`, `--training_mode`,
   `--force_rerun`.
 
-## `outlier_detection/03b_par-cross_dataset_training.py`
+## `main/04_cross_dataset_training.py`
 Cross-dataset robustness check. Combines curves from multiple experiment
 folders sharing an identical well→label mapping
 (`config.CROSS_DATASET_GROUPS`), resamples them onto a common time grid
@@ -88,7 +92,7 @@ folders sharing an identical well→label mapping
   `--exp_folder`, `--mode` (`lofo`/`well_cv`/`both`), `--curve_type` (e.g.
   `ori_curve`, `ori_curve_avg`), `--force_rerun`.
 
-## `outlier_detection/05_par-outlier_visualization_report.py`
+## `main/05_outlier_visualization_report.py`
 Static HTML report: for each filter in `config.OUTLIER_FILTERS`, plots
 inlier vs. outlier curves per well (one row per well, inliers | outliers).
 
@@ -98,7 +102,7 @@ inlier vs. outlier curves per well (one row per well, inliers | outliers).
 - **Key args**: `--exp_folder`, `--curve_type` (nargs, default
   `["ori_curve", "ori_curve_avg"]`), `--force_rerun`.
 
-## `outlier_detection/06_par-model_prediction_report.py`
+## `main/06_model_prediction_report.py`
 Static HTML report of trained-model predictions from `03` — per-architecture
 panels (CNN/LSTM/GRU/RNN/Transformer/kNN/RF + late-fusion/dual-branch
 variants) for a given training mode and outlier filter.
@@ -108,15 +112,15 @@ variants) for a given training mode and outlier filter.
   `--outlier_filter`, `--n_splits` (must match the `03` run), `--curve_type`
   (nargs, default `["ori_curve", "ori_curve_avg"]`), `--force_rerun`.
 
-## `outlier_detection/07_par-resampling_check.py`
-Sanity-check plots for `CurveResampler` (used by `03b`) — `ori_curves` before
+## `main/07_resampling_check.py`
+Sanity-check plots for `CurveResampler` (used by `04`) — `ori_curves` before
 vs. after resampling onto a common time grid, overall and per well.
 
 - **Output**: `resampling_check_overall.png` and `resampling_check_by_well.png`
   in the experiment folder's viz directory.
 - **Key args**: `--task_id`, `--exp_folder`.
 
-## `model_interpretation/attribution_vis_all.py`
+## `main/attribution_vis_all.py`
 XAI/interpretability report for the trained deep models — latent-space
 PCA/t-SNE, per-class kinetic-feature distributions, and gradient-based
 saliency maps over the input curves for each architecture.

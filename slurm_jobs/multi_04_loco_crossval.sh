@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=chip_init_03_train
+#SBATCH --job-name=multi_04_loco_crossval
 #SBATCH --time=48:00:00
 
 # Request resources for a single job
@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30
-#SBATCH --array=0,7
+#SBATCH --partition=a100
+#SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -16,16 +16,12 @@
 
 mkdir -p "logs/${SLURM_JOB_NAME}"
 
-cd /vol/bitbucket/gk225/POC_DDM/
-
 # Activate venv
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
-
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init
-
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi/ --mode lofo --task_id $SLURM_ARRAY_TASK_ID
 deactivate

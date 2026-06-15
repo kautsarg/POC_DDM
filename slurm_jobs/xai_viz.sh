@@ -23,7 +23,7 @@ source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 
 # Run python script
-cd /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation
+cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 # Map SLURM_ARRAY_TASK_ID -> dataset subfolder under POC_DDM_datasets (sorted, discovered at runtime)
 DATASETS_ROOT="/vol/bitbucket/gk225/POC_DDM_datasets"
@@ -32,8 +32,8 @@ mapfile -t EXP_FOLDERS < <(find "$DATASETS_ROOT" -mindepth 1 -maxdepth 1 -type d
 EXP_FOLDER="${DATASETS_ROOT}/${EXP_FOLDERS[$((SLURM_ARRAY_TASK_ID-1))]}"
 
 for curve_type in ori_curve ori_curve_avg; do
-    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/model_for_xai.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type"
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/model_interpretation/attribution_vis_all.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type" --force_rerun
+    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/model_for_xai.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/attribution_vis_all.py --exp_folder "$EXP_FOLDER" --curve_type "$curve_type" --force_rerun
 done
 
 deactivate

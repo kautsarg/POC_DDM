@@ -19,8 +19,8 @@ mkdir -p "logs/${SLURM_JOB_NAME}"
 # Activate venv
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
-cd /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection
+cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/outlier_detection/03_par-main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi --n_splits 1
 
 deactivate
