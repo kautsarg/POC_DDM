@@ -77,20 +77,17 @@ Two training modes (`--training_mode`, default `["native"]`):
 Cross-dataset robustness check. Combines curves from multiple experiment
 folders sharing an identical well→label mapping
 (`config.CROSS_DATASET_GROUPS`), resamples them onto a common time grid
-(`CurveResampler`), and evaluates:
-
-- **`lofo`** (leave-one-folder-out): train on all-but-one folder, test on the
-  held-out folder.
-- **`well_cv`** (leave-one-well-out CV): folds hold out one well-index per
-  target class across the combined dataset.
+(`CurveResampler`), and runs leave-one-folder-out (LOFO) CV: train on
+all-but-one folder, test on the held-out folder.
 
 - **Output**: under `<exp_folder>/cross_dataset_cv/<group_name>/` —
-  `classification_performances_cross_dataset_{lofo,wellcv}_{curve_type}.joblib`,
+  `classification_performances_cross_dataset_lofo_{curve_type}.joblib`,
   `classification_performances_cross_dataset_resampler_{curve_type}.joblib`,
-  plus per-fold plots.
+  per-fold plots, and `model_interpretation/<fold_label>/` with `.keras`
+  models + XAI snapshots for use with `07_attribution_vis_all.py`.
 - **Key args**: `--task_id` (index into `CROSS_DATASET_GROUPS`),
-  `--exp_folder`, `--mode` (`lofo`/`well_cv`/`both`), `--curve_type` (e.g.
-  `ori_curve`, `ori_curve_avg`), `--force_rerun`.
+  `--exp_folder`, `--curve_type` (e.g. `ori_curve`, `ori_curve_avg`),
+  `--force_rerun`.
 
 ## `main/05_outlier_visualization_report.py`
 Static HTML report: for each filter in `config.OUTLIER_FILTERS`, plots

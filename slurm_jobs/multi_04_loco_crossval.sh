@@ -22,6 +22,6 @@ source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_chip_init
-python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --mode lofo --task_id $SLURM_ARRAY_TASK_ID
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id $SLURM_ARRAY_TASK_ID --force_rerun
+
 deactivate

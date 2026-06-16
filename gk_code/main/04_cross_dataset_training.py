@@ -48,8 +48,8 @@ def load_curve_data(exp_path, curve_type):
         "features_df": data["kinetic_features"][idx].reset_index(drop=True),
         "Y_well_raw": Y_well_raw,
         "Y_mapped": Y_mapped,
-        "well_to_label": mapping,
         "timestamps": np.asarray(data["timestamps"], dtype=float),
+        "dataset_id": exp_path.name,
     }
 
 
@@ -67,14 +67,7 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
         if d is None:
             continue
         if ref_mapping is None:
-            ref_mapping = d["well_to_label"]
-        elif d["well_to_label"] != ref_mapping:
-            raise ValueError(
-                f"[{group_name}] LABEL_MAPPINGS for '{exp_path.name}' differs from the first "
-                f"dataset in the group. Cross-dataset CV requires an identical well->label mapping "
-                f"across every folder in a CROSS_DATASET_GROUPS entry."
-            )
-        d["dataset_id"] = exp_path.name
+            ref_mapping = d["well_to_label"] if "well_to_label" in d else None
         parts.append(d)
 
     if len(parts) < 2:
@@ -92,9 +85,7 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
         "curves": np.concatenate([p["curves"] for p in parts], axis=0),
         "features_df": pd.concat([p["features_df"] for p in parts], axis=0, ignore_index=True),
         "Y_mapped": np.concatenate([p["Y_mapped"] for p in parts], axis=0),
-        "well_idx": np.concatenate([p["Y_well_raw"] for p in parts], axis=0),
         "dataset_id": np.concatenate([np.full(len(p["Y_mapped"]), p["dataset_id"], dtype=object) for p in parts], axis=0),
-        "well_to_label": ref_mapping,
         "dataset_names": [p["dataset_id"] for p in parts],
         "resampler": resampler,
     }
@@ -110,40 +101,13 @@ def build_lofo_splits(dataset_id):
     return splits
 
 
-def build_well_cv_splits(well_idx, well_to_label):
-    """
-    Group well indices by their mapped target label, then build folds by
-    pairing one well-index per target class together (cycling if class
-    well-counts differ). Each fold's test set = every sample whose well
-    index is one of the chosen indices, across ALL datasets in the group
-    -> (n_targets x n_datasets) wells held out per fold.
-    """
-    label_to_wells = {}
-    for w, label in well_to_label.items():
-        label_to_wells.setdefault(label, []).append(w)
-    for label in label_to_wells:
-        label_to_wells[label] = sorted(label_to_wells[label])
-
-    n_folds = max(len(wells) for wells in label_to_wells.values())
-
-    splits = {}
-    for fold in range(n_folds):
-        test_wells = sorted({wells[fold % len(wells)] for wells in label_to_wells.values()})
-        test_mask = np.isin(well_idx, test_wells)
-        test_idx = np.where(test_mask)[0]
-        train_idx = np.where(~test_mask)[0]
-        splits[f"wellcv_fold{fold}_wells{test_wells}"] = (train_idx, test_idx)
-    return splits
-
-
 # ============================================================
 # MAIN
 # ============================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Cross-Dataset Robustness Training (LOFO + Leave-One-Well-Out CV)")
+    parser = argparse.ArgumentParser(description="Cross-Dataset Leave-One-Folder-Out (LOFO) Training")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID -> index into CROSS_DATASET_GROUPS")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
-    parser.add_argument("--mode", type=str, default="both", choices=["lofo", "well_cv", "both"])
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--curve_type", type=str, nargs='+', default=['ori_curve', 'ori_curve_avg'], help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
     args = parser.parse_args()
@@ -161,7 +125,7 @@ if __name__ == "__main__":
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
     for curve_type in args.curve_type:
-        print(f"\n\n{'#'*80}\nCROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
+        print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
         combined = combine_group(exp_paths, group_name, curve_type=curve_type)
         if combined is None:
@@ -188,47 +152,32 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        # Each CV mode (lofo / wellcv) is checkpointed to its own joblib file so the
-        # two robustness modes can be loaded and compared independently later.
-        results_file_paths = {
-            m: out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=m, curve_type=curve_type)
-            for m in ("lofo", "wellcv")
-        }
+        results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
+        if args.force_rerun:
+            print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")
+            lofo_results = {}
+        else:
+            lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
 
-        all_ml_results = {}
-        for m, path in results_file_paths.items():
-            if args.force_rerun:
-                print(f"  -> [FORCE RERUN] Ignoring presaved results at {path}. Recomputing everything...")
-                all_ml_results[m] = {}
-            else:
-                all_ml_results[m] = joblib.load(path) if path.exists() else {}
-
-        fold_specs = {}
-        if args.mode in ("lofo", "both"):
-            for fold_label, split in build_lofo_splits(combined["dataset_id"]).items():
-                fold_specs[fold_label] = ("lofo", split)
-        if args.mode in ("well_cv", "both"):
-            for fold_label, split in build_well_cv_splits(combined["well_idx"], combined["well_to_label"]).items():
-                fold_specs[fold_label] = ("wellcv", split)
-
-        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow'] # config.OUTLIER_FILTERS
-        # models = ["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
+        lofo_splits = build_lofo_splits(combined["dataset_id"])
+        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
         models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
 
-        total_folds = len(fold_specs)
-        for fold_idx, (fold_label, (cv_mode, (train_idx, test_idx))) in enumerate(fold_specs.items()):
+        total_folds = len(lofo_splits)
+        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
             progress_pct = ((fold_idx + 1) / total_folds) * 100
             print(f"\n{'='*75}")
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
             print(f"{'='*75}")
 
-            results_file_path = results_file_paths[cv_mode]
-            mode_results = all_ml_results[cv_mode]
-            cached_fold = mode_results.get(fold_label, {})
+            cached_fold = lofo_results.get(fold_label, {})
 
-            def checkpoint(updated_results, fold_label=fold_label, mode_results=mode_results, results_file_path=results_file_path):
-                mode_results[fold_label] = updated_results
-                joblib.dump(mode_results, results_file_path, compress=3)
+            def checkpoint(updated_results, fold_label=fold_label):
+                lofo_results[fold_label] = updated_results
+                joblib.dump(lofo_results, results_file_path, compress=3)
+
+            lofo_model_dir = out_dir / "model_interpretation" / fold_label
+            lofo_model_dir.mkdir(parents=True, exist_ok=True)
 
             res = evaluate_outlier_filters(
                 X_curves=combined["curves"],
@@ -243,18 +192,53 @@ if __name__ == "__main__":
                 KFS=top_10_features,
                 rerun_models=config.RERUN_MODELS,
                 cv_splits=[(train_idx, test_idx)],
+                save_model_dir=lofo_model_dir,
+                save_model_curve_type=curve_type,
             )
 
-            mode_results[fold_label] = res
-            joblib.dump(mode_results, results_file_path, compress=3)
+            lofo_results[fold_label] = res
+            joblib.dump(lofo_results, results_file_path, compress=3)
+
+            # XAI metadata joblib (same format as 03 — 07 reads top_10_features from here)
+            xai_joblib_path = lofo_model_dir / f"model_interpretation_{curve_type}.joblib"
+            xai_pkg = joblib.load(xai_joblib_path) if xai_joblib_path.exists() else {}
+            if "top_10_features" not in xai_pkg:
+                xai_pkg["top_10_features"] = {}
+            for f in outlier_filters:
+                xai_pkg["top_10_features"][str(f)] = top_10_features
+            joblib.dump(xai_pkg, xai_joblib_path)
+
+            # Test-fold snapshot so 07 can run attribution without re-running combine_group.
+            features_df_all = combined["features_df"]
+            X_man_train = np.nan_to_num(
+                features_df_all.iloc[train_idx][top_10_features].values,
+                nan=0.0, posinf=0.0, neginf=0.0,
+            ).astype(np.float32)
+            X_man_test = np.nan_to_num(
+                features_df_all.iloc[test_idx][top_10_features].values,
+                nan=0.0, posinf=0.0, neginf=0.0,
+            ).astype(np.float32)
+            snapshot_path = lofo_model_dir / f"xai_data_{curve_type}.joblib"
+            joblib.dump({
+                "X_curves_test": combined["curves"][test_idx].astype(np.float32),
+                "features_df_test": features_df_all.iloc[test_idx].reset_index(drop=True),
+                "X_man_train": X_man_train,
+                "X_man_test": X_man_test,
+                "y_test": y_full[test_idx],
+                "timestamps": combined["resampler"].t_grid,
+                "top_10_features": top_10_features,
+                "group_name": group_name,
+                "fold_label": fold_label,
+            }, snapshot_path, compress=3)
+            print(f"  [XAI] Saved LOFO test snapshot -> {snapshot_path}")
 
             plot_ml_results(
-                results_dict=mode_results[fold_label],
+                results_dict=lofo_results[fold_label],
                 outlier_filters=outlier_filters,
                 dataset_name=group_name,
                 mode_name=fold_label,
                 total_count=total_count,
-                save_prefix=os.path.join(plot_dir, fold_label)
+                save_prefix=os.path.join(plot_dir, fold_label),
             )
 
             gc.collect()
