@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=multi_04_loco_crossval
-#SBATCH --time=48:00:00
+#SBATCH --time=72:00:00
 
 # Request resources for a single job
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a100
+#SBATCH --partition=a40
 #SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
@@ -22,6 +22,6 @@ source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id $SLURM_ARRAY_TASK_ID --force_rerun
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id $SLURM_ARRAY_TASK_ID
 
 deactivate
