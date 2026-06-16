@@ -18,7 +18,7 @@ from model_utils import (
     set_global_determinism
 )
 
-def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve"):
+def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve", force_rerun=False):
     out_subdir = "model_interpretation"
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in config.EXCLUDED_FOLDERS])
 
@@ -33,11 +33,14 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve"):
         # 1. Localized Joblib Path (Saved inside each specific exp_path)
         joblib_path = out_dir / f"model_interpretation_{curve_type}.joblib"
 
-        if joblib_path.exists():
+        if not force_rerun and joblib_path.exists():
             print(f"[*] Loading local tracking file from {joblib_path}")
             data_package = joblib.load(joblib_path)
         else:
-            print("[*] No local tracking file found. Creating new one.")
+            if force_rerun and joblib_path.exists():
+                print(f"[*] [FORCE RERUN] Ignoring existing tracking file at {joblib_path}.")
+            else:
+                print("[*] No local tracking file found. Creating new one.")
             data_package = None
 
         data = joblib.load(exp_path / config.TRAINING_DATA_PATH)
@@ -157,7 +160,7 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve"):
             model_filename = f"{name}_{filter_str}_{curve_type}_model.keras"
             model_save_path = out_dir / model_filename
 
-            if model_save_path.exists():
+            if not force_rerun and model_save_path.exists():
                 print(f"  [-] Skipping {name}: Model already trained and saved.")
                 data_package["model_paths"][filter_str][name] = str(model_save_path)
                 continue
@@ -194,9 +197,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model for XAI Training Script")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to train on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--force_rerun", action="store_true", help="Retrain all models and overwrite existing .keras files and tracking joblib")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
     print(exp_folder)
     for curve_type in args.curve_type:
-        main(exp_folder=exp_folder, curve_type=curve_type)
+        main(exp_folder=exp_folder, curve_type=curve_type, force_rerun=args.force_rerun)

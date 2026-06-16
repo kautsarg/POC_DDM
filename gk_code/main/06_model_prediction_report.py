@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import argparse
 import base64
 from io import BytesIO
@@ -293,14 +294,23 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Static Model Prediction Visualization Report")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Regenerate the HTML reports even if they already exist")
     parser.add_argument("--mode", type=str, default="Reference", help="'Native' or 'Reference'")
-    parser.add_argument("--outlier_filter", type=str, default=None, help="Outlier filter column to visualize (default: None / baseline)")
+    parser.add_argument("--outlier_filter", type=str, nargs="*", default=[None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow'], help="Outlier filter(s) to visualize. Pass 'None' for baseline. Default: all four filters.")
     parser.add_argument("--n_splits", type=int, default=1, help="Must match the --n_splits used for the corresponding 03 training run")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     args = parser.parse_args()
 
-    for exp_path in get_exp_paths(args.exp_folder):
-        for curve_type in args.curve_type:
-            process_experiment(exp_path, args.mode, args.outlier_filter, args.n_splits, args.force_rerun, curve_type=curve_type)
+    outlier_filters = [None if f == 'None' else f for f in args.outlier_filter]
+
+    exp_paths = get_exp_paths(args.exp_folder)
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+        sys.exit(0)
+    exp_path = exp_paths[args.task_id]
+
+    for curve_type in args.curve_type:
+        for outlier_filter in outlier_filters:
+            process_experiment(exp_path, args.mode, outlier_filter, args.n_splits, args.force_rerun, curve_type=curve_type)

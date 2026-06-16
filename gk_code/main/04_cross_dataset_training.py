@@ -145,7 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--mode", type=str, default="both", choices=["lofo", "well_cv", "both"])
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
-    parser.add_argument("--curve_type", type=str, default="ori_curve", help="Which curve dataset to train on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--curve_type", type=str, nargs='+', default=['ori_curve', 'ori_curve_avg'], help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
     args = parser.parse_args()
 
     group_names = list(config.CROSS_DATASET_GROUPS.keys())
@@ -160,100 +160,101 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    print(f"\n\n{'#'*80}\nCROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {args.curve_type})\nFolders: {folder_names}\n{'#'*80}")
+    for curve_type in args.curve_type:
+        print(f"\n\n{'#'*80}\nCROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
-    combined = combine_group(exp_paths, group_name, curve_type=args.curve_type)
-    if combined is None:
-        sys.exit(0)
+        combined = combine_group(exp_paths, group_name, curve_type=curve_type)
+        if combined is None:
+            continue
 
-    out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
-    plot_dir = out_dir / f"model_performance_{args.curve_type}"
-    plot_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
+        plot_dir = out_dir / f"model_performance_{curve_type}"
+        plot_dir.mkdir(parents=True, exist_ok=True)
 
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=args.curve_type)
-    joblib.dump(combined["resampler"], resampler_path, compress=3)
-    print(f"  [*] Saved curve resampler -> {resampler_path}")
+        resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+        joblib.dump(combined["resampler"], resampler_path, compress=3)
+        print(f"  [*] Saved curve resampler -> {resampler_path}")
 
-    encoder = LabelEncoder()
-    y_full = encoder.fit_transform(combined["Y_mapped"])
-    total_count = len(y_full)
+        encoder = LabelEncoder()
+        y_full = encoder.fit_transform(combined["Y_mapped"])
+        total_count = len(y_full)
 
-    # --- FEATURE SELECTION (MUTUAL INFORMATION) on the combined pool ---
-    print(f"\n  [*] Calculating Mutual Information for Top 10 Features...")
-    X_candidates = combined["features_df"][config.LD_FEATURES].values
-    X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
-    mi_scores = mutual_info_classif(X_candidates_clean, y_full, random_state=0)
-    top_10_idx = np.argsort(mi_scores)[-10:][::-1]
-    top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
-    print(f"  [*] Selected Top 10 Features: {top_10_features}")
+        # --- FEATURE SELECTION (MUTUAL INFORMATION) on the combined pool ---
+        print(f"\n  [*] Calculating Mutual Information for Top 10 Features...")
+        X_candidates = combined["features_df"][config.LD_FEATURES].values
+        X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
+        mi_scores = mutual_info_classif(X_candidates_clean, y_full, random_state=0)
+        top_10_idx = np.argsort(mi_scores)[-10:][::-1]
+        top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
+        print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-    # Each CV mode (lofo / wellcv) is checkpointed to its own joblib file so the
-    # two robustness modes can be loaded and compared independently later.
-    results_file_paths = {
-        m: out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=m, curve_type=args.curve_type)
-        for m in ("lofo", "wellcv")
-    }
+        # Each CV mode (lofo / wellcv) is checkpointed to its own joblib file so the
+        # two robustness modes can be loaded and compared independently later.
+        results_file_paths = {
+            m: out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=m, curve_type=curve_type)
+            for m in ("lofo", "wellcv")
+        }
 
-    all_ml_results = {}
-    for m, path in results_file_paths.items():
-        if args.force_rerun:
-            print(f"  -> [FORCE RERUN] Ignoring presaved results at {path}. Recomputing everything...")
-            all_ml_results[m] = {}
-        else:
-            all_ml_results[m] = joblib.load(path) if path.exists() else {}
+        all_ml_results = {}
+        for m, path in results_file_paths.items():
+            if args.force_rerun:
+                print(f"  -> [FORCE RERUN] Ignoring presaved results at {path}. Recomputing everything...")
+                all_ml_results[m] = {}
+            else:
+                all_ml_results[m] = joblib.load(path) if path.exists() else {}
 
-    fold_specs = {}
-    if args.mode in ("lofo", "both"):
-        for fold_label, split in build_lofo_splits(combined["dataset_id"]).items():
-            fold_specs[fold_label] = ("lofo", split)
-    if args.mode in ("well_cv", "both"):
-        for fold_label, split in build_well_cv_splits(combined["well_idx"], combined["well_to_label"]).items():
-            fold_specs[fold_label] = ("wellcv", split)
+        fold_specs = {}
+        if args.mode in ("lofo", "both"):
+            for fold_label, split in build_lofo_splits(combined["dataset_id"]).items():
+                fold_specs[fold_label] = ("lofo", split)
+        if args.mode in ("well_cv", "both"):
+            for fold_label, split in build_well_cv_splits(combined["well_idx"], combined["well_to_label"]).items():
+                fold_specs[fold_label] = ("wellcv", split)
 
-    outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow'] # config.OUTLIER_FILTERS
-    # models = ["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
-    models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
+        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow'] # config.OUTLIER_FILTERS
+        # models = ["knn", "cnn", "cnn_lf", "gru", "gru_lf", "transformer", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
+        models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
 
-    total_folds = len(fold_specs)
-    for fold_idx, (fold_label, (cv_mode, (train_idx, test_idx))) in enumerate(fold_specs.items()):
-        progress_pct = ((fold_idx + 1) / total_folds) * 100
-        print(f"\n{'='*75}")
-        print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
-        print(f"{'='*75}")
+        total_folds = len(fold_specs)
+        for fold_idx, (fold_label, (cv_mode, (train_idx, test_idx))) in enumerate(fold_specs.items()):
+            progress_pct = ((fold_idx + 1) / total_folds) * 100
+            print(f"\n{'='*75}")
+            print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
+            print(f"{'='*75}")
 
-        results_file_path = results_file_paths[cv_mode]
-        mode_results = all_ml_results[cv_mode]
-        cached_fold = mode_results.get(fold_label, {})
+            results_file_path = results_file_paths[cv_mode]
+            mode_results = all_ml_results[cv_mode]
+            cached_fold = mode_results.get(fold_label, {})
 
-        def checkpoint(updated_results, fold_label=fold_label, mode_results=mode_results, results_file_path=results_file_path):
-            mode_results[fold_label] = updated_results
+            def checkpoint(updated_results, fold_label=fold_label, mode_results=mode_results, results_file_path=results_file_path):
+                mode_results[fold_label] = updated_results
+                joblib.dump(mode_results, results_file_path, compress=3)
+
+            res = evaluate_outlier_filters(
+                X_curves=combined["curves"],
+                features_df=combined["features_df"],
+                y_encoded=y_full,
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name=fold_label,
+                cached_results=cached_fold,
+                models=models,
+                checkpoint_fn=checkpoint,
+                KFS=top_10_features,
+                rerun_models=config.RERUN_MODELS,
+                cv_splits=[(train_idx, test_idx)],
+            )
+
+            mode_results[fold_label] = res
             joblib.dump(mode_results, results_file_path, compress=3)
 
-        res = evaluate_outlier_filters(
-            X_curves=combined["curves"],
-            features_df=combined["features_df"],
-            y_encoded=y_full,
-            outlier_filters=outlier_filters,
-            dataset_name=group_name,
-            mode_name=fold_label,
-            cached_results=cached_fold,
-            models=models,
-            checkpoint_fn=checkpoint,
-            KFS=top_10_features,
-            rerun_models=config.RERUN_MODELS,
-            cv_splits=[(train_idx, test_idx)],
-        )
+            plot_ml_results(
+                results_dict=mode_results[fold_label],
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name=fold_label,
+                total_count=total_count,
+                save_prefix=os.path.join(plot_dir, fold_label)
+            )
 
-        mode_results[fold_label] = res
-        joblib.dump(mode_results, results_file_path, compress=3)
-
-        plot_ml_results(
-            results_dict=mode_results[fold_label],
-            outlier_filters=outlier_filters,
-            dataset_name=group_name,
-            mode_name=fold_label,
-            total_count=total_count,
-            save_prefix=os.path.join(plot_dir, fold_label)
-        )
-
-        gc.collect()
+            gc.collect()

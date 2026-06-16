@@ -408,13 +408,37 @@ def _remap_global_splits(global_splits, mask, valid_mask=None):
     return remapped
 
 
+# Maps evaluate_outlier_filters internal model keys to the canonical names used
+# when saving .keras files for attribution_vis_all.
+_XAI_SAVE_NAME = {
+    'cnn': 'cnn',
+    'gru': 'bigru',
+    'transformer': 'transformer',
+    'cnn_lf': 'cnn_lf',
+    'gru_lf': 'bigru_lf',
+    'trans_lf': 'transformer_lf',
+    'cnn_gru_dual': 'cnn_gru_dual',
+    'cnn_trans_dual': 'cnn_trans_dual',
+}
+
+
 def evaluate_outlier_filters(
     X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name,
     cached_results=None, models=["cnn", "cnn_lf"], n_splits=1,
-    checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None
+    checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None,
+    save_model_dir=None, save_model_curve_type="ori_curve",
 ):
+    """Train and evaluate models across outlier filters.
+
+    When save_model_dir is set, the trained Keras model from the first fold of
+    the None (baseline) filter is saved to disk so attribution_vis_all can load
+    it without a separate model_for_xai run.
+    """
+    if save_model_dir is not None:
+        Path(save_model_dir).mkdir(parents=True, exist_ok=True)
+
     X_FFI_full = X_curves[:, [-1]]
-    
+
     # Safely extract manual features if KFS is provided
     if KFS is not None:
         X_manual_full = features_df[KFS].values
@@ -543,17 +567,21 @@ def evaluate_outlier_filters(
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
             start_time = time.perf_counter()
-            
-            for train_idx, test_idx in splits:
+
+            for fold_idx, (train_idx, test_idx) in enumerate(splits):
                 X_train_curve = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
                 X_test_curve = X_FFI[test_idx] if m == 'ffi' else X_AC[test_idx]
                 y_train = y_true[train_idx]
-                
+
                 # Setup Manual Features (Scaled strictly on train fold)
                 if X_manual is not None:
                     scaler = StandardScaler()
                     X_train_man = scaler.fit_transform(X_manual[train_idx])
                     X_test_man = scaler.transform(X_manual[test_idx])
+
+                # Whether to save this model for XAI use (first fold only, all filters)
+                _do_xai_save = (save_model_dir is not None and fold_idx == 0
+                                and m in _XAI_SAVE_NAME)
 
                 # Train Standard vs. Late Fusion models
                 if m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
@@ -570,34 +598,44 @@ def evaluate_outlier_filters(
                     elif m == "gru_lf":
                         model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
                         epochs = 500
-                        
+
                     model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
-                    
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        model.save(_xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
                     prob = model.predict([X_test_curve, X_test_man], verbose=0)
                     pred = np.argmax(prob, axis=1)
                     cls = np.unique(y_encoded)
-                    
+
                     preds.append(pred)
                     probs.append(prob)
                     classes_list.append(cls)
 
                 elif m in ["cnn_gru_dual", "cnn_trans_dual"]:
                     tf.keras.backend.clear_session()
-                    
+
                     if m == "cnn_gru_dual":
                         model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
                         epochs = 500
                     elif m == "cnn_trans_dual":
                         model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes)
                         epochs = 500
-                        
+
                     # Notice we only pass X_train_curve here, not a list of inputs!
                     model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
-                    
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        model.save(_xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
                     cls = np.unique(y_encoded)
-                    
+
                     preds.append(pred)
                     probs.append(prob)
                     classes_list.append(cls)
@@ -614,12 +652,18 @@ def evaluate_outlier_filters(
                     elif m == "ffi": clf = LogisticRegression(max_iter=1000)
                     else:
                         raise ValueError(f"Model '{m}' is not properly defined in the training loop.")
-                        
+
                     clf.fit(X_train_curve, y_train)
+
+                    if _do_xai_save and m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        clf.model_.save(_xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
                     preds.append(clf.predict(X_test_curve))
                     probs.append(clf.predict_proba(X_test_curve))
                     classes_list.append(clf.classes_)
-                    
+
                     if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
                         tf.keras.backend.clear_session()
                     

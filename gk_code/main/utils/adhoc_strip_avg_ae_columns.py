@@ -22,6 +22,7 @@ AE_PREFIXES = ("cnn_ae_", "lstm_ae_")
 apply_changes = "--apply" in sys.argv
 
 for state_path in sorted(DATASETS_ROOT.rglob(STATE_FILENAME)):
+    print("-" * 80)
     try:
         state = joblib.load(state_path)
     except Exception as e:
@@ -31,6 +32,7 @@ for state_path in sorted(DATASETS_ROOT.rglob(STATE_FILENAME)):
     dataset_name = list(state.get("dataset_name", []))
     kinetic_features = state.get("kinetic_features")
     if "ori_curves_avg" not in dataset_name or kinetic_features is None:
+        print(f"[SKIP] {state_path}: no ori_curves_avg entry or missing kinetic_features")
         continue
 
     avg_idx = dataset_name.index("ori_curves_avg")

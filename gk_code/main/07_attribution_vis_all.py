@@ -1085,7 +1085,7 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False, curve_type="ori_curve"):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False, curve_type="ori_curve", task_id=None):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
@@ -1094,6 +1094,12 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
     global_vis_dir.mkdir(parents=True, exist_ok=True)
 
     exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in ['.DS_Store', 'model_interpretation']])
+
+    if task_id is not None:
+        if task_id >= len(exp_paths):
+            print(f"Task ID {task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+            return
+        exp_paths = [exp_paths[task_id]]
 
     filter_suffix = f"_{filter_key}_{curve_type}"
 
@@ -1171,6 +1177,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="XAI Visualization Pipeline for DDM Models")
+    parser.add_argument("--task_id", type=int, default=None, help="Array Job ID — index into sorted experiment folders (default: run all)")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--normalize", action="store_true", help="Whether to normalize the saliency maps")
@@ -1179,8 +1186,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
-    normalize = args.normalize
 
     print(exp_folder)
     for curve_type in args.curve_type:
-        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=normalize, force_rerun=args.force_rerun, curve_type=curve_type)
+        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=args.normalize, force_rerun=args.force_rerun, curve_type=curve_type, task_id=args.task_id)

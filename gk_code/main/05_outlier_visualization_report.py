@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import base64
 from io import BytesIO
@@ -150,6 +151,7 @@ def process_experiment(exp_path, force_rerun, curve_type="ori_curve"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Static Outlier Filter Visualization Report")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Regenerate the HTML reports even if they already exist")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
@@ -159,7 +161,10 @@ if __name__ == "__main__":
         Path(args.exp_folder, name) for name in os.listdir(args.exp_folder)
         if os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS
     ])
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+        sys.exit(0)
+    exp_path = exp_paths[args.task_id]
 
-    for exp_path in exp_paths:
-        for curve_type in args.curve_type:
-            process_experiment(exp_path, args.force_rerun, curve_type=curve_type)
+    for curve_type in args.curve_type:
+        process_experiment(exp_path, args.force_rerun, curve_type=curve_type)

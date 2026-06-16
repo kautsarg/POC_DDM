@@ -282,8 +282,8 @@ IMPORTANCE_METRICS = [
 ]
 
 SAVED_VIZ = [
-    "D20250808_E00_C00_F4500KHz_U_Sample_7",
-    "D20250820_E00_C00_F4500KHz_U_Sample_18_wet_3"
+    # "D20250808_E00_C00_F4500KHz_U_Sample_7",
+    # "D20250820_E00_C00_F4500KHz_U_Sample_18_wet_3"
 ]
 
 LD_FEATURES = [
@@ -480,7 +480,7 @@ LABEL_MAPPINGS = {
 # since the well-based CV folds rely on that mapping being consistent.
 CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
-    'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07_nc_subtract', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08_nc_subtract']
+    'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08']
 }
 
 EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old', 'outlier_visualisation', 'outlier_visualisation_old']
