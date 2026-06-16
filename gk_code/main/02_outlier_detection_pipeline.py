@@ -5,7 +5,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import gc
 import base64
 import argparse
-import joblib 
+import joblib
 import itertools
 from io import BytesIO
 from pathlib import Path
@@ -24,10 +24,8 @@ from sklearn.manifold import TSNE
 import tensorflow as tf
 from matplotlib.colors import ListedColormap
 
-# Import centralized config
 import config
 
-# --- CUSTOM MODULES ---
 sys.path.insert(0, 'utils/02_outlier_detection')
 sys.path.insert(0, 'utils/model_training')
 import chip_utilities as utils
@@ -44,27 +42,25 @@ from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipe
 from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
 from spatial_consistency_outlier import run_spatial_consistency_knn_pipeline, run_spatial_consistency_grid_pipeline
 
-# ====================================================================
-# GLOBAL CONSTANTS & CONFIGURATIONS
-# ====================================================================
-
 from model_utils import set_global_determinism
 set_global_determinism(0)
 
-# Shared colour-blind-safe matplotlib cycle + qualitative palette (sets
-# plt.rcParams['axes.prop_cycle'] as a side effect of import).
 WELL_CMAP = ListedColormap(config.WELL_COLORS)
 
 
 # ====================================================================
-# HELPER FUNCTIONS
+# FEATURE EXTRACTION HELPERS
 # ====================================================================
 
 def _process_single_row(y, X):
     valid = np.isfinite(X) & np.isfinite(y)
-    if np.sum(valid) < 3: return {}
-    try: return sp.extract_kinetic_parameters_original(X, y)
-    except Exception: return {}
+    if np.sum(valid) < 3:
+        return {}
+    try:
+        return sp.extract_kinetic_parameters_original(X, y)
+    except Exception:
+        return {}
+
 
 def extract_kinetic_features(timestamps, curves, n_jobs=-1):
     features = Parallel(n_jobs=n_jobs)(
@@ -72,13 +68,13 @@ def extract_kinetic_features(timestamps, curves, n_jobs=-1):
     )
     return pd.DataFrame(features)
 
-def get_send(timestamps, curves_2d, send_n=[5, 10, 15, 20, 25]):
+
+def get_send(timestamps, curves_2d, send_n=(5, 10, 15, 20, 25)):
     dy_dx_list = Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
         delayed(sp.calculate_first_derivative)(timestamps, y) for y in curves_2d
     )
     dy_dx = np.array(dy_dx_list)
     send_dict = {}
-
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Mean of empty slice")
         for n in send_n:
@@ -86,32 +82,37 @@ def get_send(timestamps, curves_2d, send_n=[5, 10, 15, 20, 25]):
             send_dict[f"send_abs_{n}"] = np.nanmean(np.abs(dy_dx[:, -n:]), axis=1)
     return send_dict
 
-def build_kinetic_features(curves_2d, timestamps, metadata_df):
-    """Extract kinetic parameters + 'Send' aliases + metadata for one dataset entry."""
-    features_df = extract_kinetic_features(timestamps, curves_2d).reset_index(drop=True)
-    meta_clean = metadata_df.reset_index(drop=True)
 
+def build_kinetic_features(curves_2d, timestamps, metadata_df):
+    """Extract kinetic parameters + Send derivatives + metadata for one dataset variant."""
+    features_df = extract_kinetic_features(timestamps, curves_2d).reset_index(drop=True)
     add_features = get_send(timestamps, curves_2d)
     add_features["FFI"] = curves_2d[:, -1]
     add_features["F_range"] = curves_2d[:, -1] - curves_2d[:, 0]
+    return pd.concat(
+        [features_df, metadata_df.reset_index(drop=True), pd.DataFrame(add_features).reset_index(drop=True)],
+        axis=1,
+    )
 
-    df_new_features = pd.DataFrame(add_features).reset_index(drop=True)
-    return pd.concat([features_df, meta_clean, df_new_features], axis=1)
+
+# ====================================================================
+# VISUALISATION HELPERS
+# ====================================================================
 
 def feature_boxplot(features_df, well_labels, feature_columns, target="well", title="", save_path=None):
     plot_data = features_df.copy()
     plot_data[target] = well_labels
     valid_features = [f for f in feature_columns if f in plot_data.columns]
-    
+
     if not valid_features:
         print(f"Skipping {title}: None of the requested features exist.")
         return None
 
     n_features = len(valid_features)
-    
+
     if n_features == 3:
         fig = plt.figure(figsize=(10, 8))
-        axes = [fig.add_subplot(2, 2, i+1) for i in range(3)]
+        axes = [fig.add_subplot(2, 2, i + 1) for i in range(3)]
         for i, feature in enumerate(valid_features):
             feature_data = plot_data.dropna(subset=[feature])
             if feature_data.empty:
@@ -125,20 +126,18 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
         f1, f2, f3 = valid_features
         unique_targets = np.unique(well_labels)
         palette = config.get_palette(unique_targets, config.WELL_COLOR_MAP if target == "well" else None)
-
         for val in unique_targets:
             subset = plot_data[plot_data[target] == val]
             ax4.scatter(subset[f1], subset[f2], subset[f3], label=f"Well {val}", color=palette[val], alpha=0.7, s=20)
-            
         ax4.set_xlabel(f1, fontweight='bold')
         ax4.set_ylabel(f2, fontweight='bold')
         ax4.set_zlabel(f3, fontweight='bold')
         ax4.set_title("3D Feature Space", fontweight='bold')
         ax4.legend(title=target, bbox_to_anchor=(1.15, 1), loc='upper left')
-
     else:
         fig, axes = plt.subplots(1, n_features, figsize=(n_features * 4, 3))
-        if n_features == 1: axes = [axes]
+        if n_features == 1:
+            axes = [axes]
         for i, feature in enumerate(valid_features):
             feature_data = plot_data.dropna(subset=[feature])
             if feature_data.empty:
@@ -147,11 +146,11 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
                 sns.boxplot(data=feature_data, x=target, y=feature, ax=axes[i])
             axes[i].set_title(feature, fontweight='bold')
             axes[i].grid(True, alpha=0.3, axis='y')
-            
+
     fig.suptitle(title, fontweight='bold', fontsize=14, y=1.02)
     plt.tight_layout()
-    
-    if save_path: 
+
+    if save_path:
         plt.savefig(save_path, bbox_inches='tight', dpi=300, facecolor='white')
         plt.close(fig)
         return None
@@ -162,93 +161,74 @@ def feature_boxplot(features_df, well_labels, feature_columns, target="well", ti
         buf.seek(0)
         return buf
 
+
 def save_html_report(save_path, title, subtitle, img_buffers, flex_layout=False):
-    html_content = f"""
+    width_style = ("width: 45%; min-width: 450px;" if flex_layout
+                   else "width: 95%; max-width: 1600px; margin: 40px auto;")
+    parts = [f"""
     <html>
     <head><title>{title}</title></head>
     <body style="font-family: Arial, sans-serif; background-color: #f4f4f9; text-align: center; margin: 0; padding: 20px;">
         <h1 style="color: #333; margin-bottom: 10px;">{title}</h1>
         {f'<p style="color: #666; margin-bottom: 40px;">{subtitle}</p>' if subtitle else ''}
-    """
+    """]
     if flex_layout:
-        html_content += "<div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>"
-        width_style = "width: 45%; min-width: 450px;"
-    else:
-        width_style = "width: 95%; max-width: 1600px; margin: 40px auto;"
-        
+        parts.append("<div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>")
     for buf in img_buffers:
-        img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        html_content += f'''
+        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        parts.append(f'''
         <div style="background: white; padding: 15px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); border-radius: 8px; {width_style}">
-            <img src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto;">
-        </div>
-        '''
-        buf.close() 
-        
-    if flex_layout: html_content += "</div>"
-    html_content += "</body></html>"
-    
+            <img src="data:image/png;base64,{img_b64}" style="width: 100%; height: auto;">
+        </div>''')
+        buf.close()
+    if flex_layout:
+        parts.append("</div>")
+    parts.append("</body></html>")
+
     with open(save_path, "w") as f:
-        f.write(html_content)
+        f.write("".join(parts))
 
 
 # ====================================================================
-# MASTER PIPELINE EXECUTION
+# PIPELINE STATE HELPERS
 # ====================================================================
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Outlier Detection Pipeline")
-    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
-    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
-    parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved unified state already exists")
-    args = parser.parse_args()
+def _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_save_path):
+    """Apply buffered feature DataFrames to pipeline_state and checkpoint to disk."""
+    merged_any = False
+    for i in range(len(dataset_name)):
+        if features_to_concat[i]:
+            pipeline_state["kinetic_features"][i] = pd.concat(
+                [pipeline_state["kinetic_features"][i]] + features_to_concat[i], axis=1
+            )
+            features_to_concat[i].clear()
+            merged_any = True
+    if merged_any:
+        joblib.dump(pipeline_state, unified_save_path, compress=3)
+        print("    [SAVED] Unified pipeline state updated.")
 
-    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder) if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)])
 
-    if args.task_id >= len(exp_paths):
-        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
-        sys.exit(0)
-
-    # Pick ONLY the specific folder for this specific node
-    exp_path = exp_paths[args.task_id]
-
-    # Safe save_plot_flag
-    saved_viz = getattr(config, "SAVED_VIZ", [])
-    save_plot_flag = bool(saved_viz) and np.any([saved in str(exp_path) for saved in saved_viz])
-
-    print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
-    
-    reports_dir = os.path.join(exp_path, "visual_reports")
-    os.makedirs(reports_dir, exist_ok=True)
-    
-    # -------------------------------------------------------------
-    # 1. LOAD OR INITIALIZE UNIFIED STATE
-    # -------------------------------------------------------------
-    unified_save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
+def _load_or_build_state(exp_path, unified_save_path, force_rerun):
+    """Load persisted pipeline state, or build a fresh one from preprocessed curves."""
     pipeline_state = {}
 
-    if args.force_rerun and os.path.exists(unified_save_path):
-        print(f"  -> [FORCE RERUN] Ignoring presaved unified state at {unified_save_path}. Recomputing everything...")
-    elif os.path.exists(unified_save_path):
+    if os.path.exists(unified_save_path) and not force_rerun:
         print(f"  -> Found unified state at {unified_save_path}. Loading...")
         try:
             pipeline_state = joblib.load(unified_save_path)
             print("  -> Unified state loaded successfully.")
         except Exception as e:
             print(f"  -> [WARNING] Failed to load state ({e}). Starting fresh.")
+    elif force_rerun and os.path.exists(unified_save_path):
+        print(f"  -> [FORCE RERUN] Ignoring presaved state. Recomputing everything...")
 
     if "dataset" not in pipeline_state:
-        curve_path = Path(exp_path, config.PREPROCESSED_CURVES_PATH)
+        curve_path = exp_path / config.PREPROCESSED_CURVES_PATH
         if not curve_path.exists():
             print(f"Skipping {exp_path.name} - '{config.PREPROCESSED_CURVES_PATH}' not found.")
             sys.exit(0)
-            
-        data = joblib.load(curve_path)
 
-        Y_well = data["well_labels"]
-        timestamps = data["timestamps"]
-        metadata_df = pd.DataFrame(data["metadata"])
-        
+        data = joblib.load(curve_path)
         dataset_name = ["ori_curves"]
         dataset = [data["curves"]["ori_curves"]]
 
@@ -262,481 +242,530 @@ if __name__ == "__main__":
             dataset_name.append(f"{k}_fitted_stretched")
             dataset.append(v["fitted_stretched"])
 
-        pipeline_state["dataset_name"] = np.array(dataset_name)
-        pipeline_state["dataset"] = np.array(dataset)
-        pipeline_state["Y_well"] = Y_well
-        pipeline_state["timestamps"] = timestamps
-        pipeline_state["metadata_df"] = metadata_df
-
+        pipeline_state.update({
+            "dataset_name": np.array(dataset_name),
+            "dataset": np.array(dataset),
+            "Y_well": data["well_labels"],
+            "timestamps": data["timestamps"],
+            "metadata_df": pd.DataFrame(data["metadata"]),
+        })
         del data
-    else:
-        dataset_name = pipeline_state["dataset_name"]
-        dataset = pipeline_state["dataset"]
-        Y_well = pipeline_state["Y_well"]
-        timestamps = pipeline_state["timestamps"]
-        metadata_df = pipeline_state["metadata_df"]
 
-        # Patch caches created before 'ori_curves_avg' existed: insert it now,
-        # carrying over any outlier-filter label columns already computed on
-        # 'ori_curves' so the expensive filter pipelines aren't re-triggered.
-        if "ori_curves_avg" not in dataset_name:
-            curve_path = Path(exp_path, config.PREPROCESSED_CURVES_PATH)
-            cached_data = None
-            if curve_path.exists():
-                try:
-                    cached_data = joblib.load(curve_path)
-                except Exception as e:
-                    print(f"  -> [WARNING] Failed to load {curve_path} for 'ori_curves_avg' patch ({e}). Skipping patch for now.")
+    return pipeline_state
 
-            if cached_data is not None and "ori_curves_avg" in cached_data["curves"]:
-                print("  -> Patching cached state: inserting 'ori_curves_avg' dataset.")
-                ori_idx = list(dataset_name).index("ori_curves")
-                avg_curves = cached_data["curves"]["ori_curves_avg"]
-                avg_features = build_kinetic_features(avg_curves, timestamps, metadata_df)
 
-                kinetic_features = pipeline_state["kinetic_features"]
-                extra_cols = [c for c in kinetic_features[ori_idx].columns if c not in avg_features.columns]
-                if extra_cols:
-                    avg_features = pd.concat([avg_features, kinetic_features[ori_idx][extra_cols].reset_index(drop=True)], axis=1)
 
-                dataset_name = np.insert(dataset_name, ori_idx + 1, "ori_curves_avg")
-                dataset = np.insert(dataset, ori_idx + 1, avg_curves, axis=0)
-                kinetic_features.insert(ori_idx + 1, avg_features)
+def _ensure_kinetic_features(pipeline_state, unified_save_path):
+    """Compute kinetic features for all dataset variants if not already cached."""
+    dataset_name = pipeline_state["dataset_name"]
+    Y_well = pipeline_state["Y_well"]
 
-                pipeline_state["dataset_name"] = dataset_name
-                pipeline_state["dataset"] = dataset
-                pipeline_state["kinetic_features"] = kinetic_features
-                joblib.dump(pipeline_state, unified_save_path, compress=3)
-            if cached_data is not None:
-                del cached_data
-
-    # Ensure aligned lengths
-    assert len(dataset_name) == len(dataset), "dataset_name and dataset length mismatch"
-
-    try:
-        colors = Y_well
-        if len(colors) != len(Y_well):
-            raise ValueError("Color length mismatch")
-        cmap = WELL_CMAP
-    except Exception:
-        colors = '#3498db'
-        cmap = None
-
-    # -------------------------------------------------------------
-    # 2. EXTRACT KINETICS & APPEND ALIASES
-    # -------------------------------------------------------------
-    if "kinetic_features" in pipeline_state and len(pipeline_state["kinetic_features"][0]) == len(Y_well):
+    cached = pipeline_state.get("kinetic_features")
+    if cached and len(cached[0]) == len(Y_well):
         print("  -> Using cached kinetic features from unified state.")
-        kinetic_features = pipeline_state["kinetic_features"]
-        dataset_name = pipeline_state["dataset_name"]
-        dataset = pipeline_state["dataset"]
+        return
+
+    print("  -> Extracting initial kinetic features (CPU Bound)...")
+    timestamps = pipeline_state["timestamps"]
+    metadata_df = pipeline_state["metadata_df"]
+    dataset = pipeline_state["dataset"]
+    kinetic_features = [build_kinetic_features(c, timestamps, metadata_df) for c in dataset]
+
+    # Drop legacy "avg_"-prefixed variants that may appear in older cache files.
+    keep = [(n, d, f) for n, d, f in zip(dataset_name, dataset, kinetic_features)
+            if not n.startswith("avg_")]
+    if keep:
+        names_k, data_k, feat_k = zip(*keep)
+        pipeline_state["dataset_name"] = np.array(names_k)
+        pipeline_state["dataset"] = np.array(data_k)
+        pipeline_state["kinetic_features"] = list(feat_k)
     else:
-        print("  -> Extracting initial kinetic features (CPU Bound)...")
-        kinetic_features = [build_kinetic_features(curves_2d, timestamps, metadata_df) for curves_2d in dataset]
+        pipeline_state["dataset_name"] = np.array([])
+        pipeline_state["dataset"] = np.array([])
+        pipeline_state["kinetic_features"] = []
 
-        filtered_names, filtered_dataset, filtered_features = [], [], []
-        for name, data, features in zip(dataset_name, dataset, kinetic_features):
-            if not name.startswith("avg_"):
-                filtered_names.append(name)
-                filtered_dataset.append(data)
-                filtered_features.append(features)
-
-        dataset_name = np.array(filtered_names)
-        dataset = np.array(filtered_dataset)
-        kinetic_features = filtered_features
-
-        pipeline_state["dataset_name"] = dataset_name
-        pipeline_state["dataset"] = dataset
-        pipeline_state["kinetic_features"] = kinetic_features
-        joblib.dump(pipeline_state, unified_save_path, compress=3)
+    joblib.dump(pipeline_state, unified_save_path, compress=3)
 
 
-    # -------------------------------------------------------------
-    # 3. GENERATE BOXPLOTS (MSC & AMF Features)
-    # -------------------------------------------------------------
-    if(save_plot_flag):
-        print("\n=== GENERATING FEATURE BOXPLOTS ===")
-        msc_features = ["Ct", "Cy0", "log_F0"]
-        amf_features_all = ["Fm", "Fb", "Sc", "Cs", "Send", "Send_abs", "Send_fit", "Send_fit_abs"]
-        
-        msc_plot_path = os.path.join(exp_path, "msc_outlier")
-        amf_plot_path = os.path.join(exp_path, "amf_outlier")
-        os.makedirs(msc_plot_path, exist_ok=True)
-        os.makedirs(amf_plot_path, exist_ok=True)
-        
-        for name, features_df in zip(dataset_name, kinetic_features):
-            clean_title = name.replace("_", " ").title()
-            
-            feature_boxplot(
-                features_df=features_df, well_labels=Y_well, feature_columns=msc_features, 
-                title=f"MSC Features: {clean_title}", save_path=os.path.join(msc_plot_path, f"{name}_msc_features.png")
-            )
-            feature_boxplot(
-                features_df=features_df, well_labels=Y_well, feature_columns=amf_features_all, 
-                title=f"AMF Features: {clean_title}", save_path=os.path.join(amf_plot_path, f"{name}_amf_features_boxplot.png")
-            )
+# ====================================================================
+# PIPELINE STEP FUNCTIONS
+# ====================================================================
+
+def _generate_boxplots(dataset_name, kinetic_features, Y_well, exp_path):
+    print("\n=== GENERATING FEATURE BOXPLOTS ===")
+    msc_features = ["Ct", "Cy0", "log_F0"]
+    amf_features_all = ["Fm", "Fb", "Sc", "Cs", "Send", "Send_abs", "Send_fit", "Send_fit_abs"]
+
+    msc_plot_path = exp_path / "msc_outlier"
+    amf_plot_path = exp_path / "amf_outlier"
+    msc_plot_path.mkdir(parents=True, exist_ok=True)
+    amf_plot_path.mkdir(parents=True, exist_ok=True)
+
+    for name, features_df in zip(dataset_name, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        feature_boxplot(features_df, Y_well, msc_features,
+                        title=f"MSC Features: {clean_title}",
+                        save_path=msc_plot_path / f"{name}_msc_features.png")
+        feature_boxplot(features_df, Y_well, amf_features_all,
+                        title=f"AMF Features: {clean_title}",
+                        save_path=amf_plot_path / f"{name}_amf_features_boxplot.png")
 
 
-    # -------------------------------------------------------------
-    # 4. CORRELATION & FEATURE IMPORTANCES
-    # -------------------------------------------------------------
-    if "linear_feature_combinations" in pipeline_state and "important_feature_combinations" in pipeline_state:
+def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save_path, save_plot_flag, reports_dir):
+    """Compute correlation triplets + RF importances; results cached into pipeline_state."""
+    if ("linear_feature_combinations" in pipeline_state
+            and "important_feature_combinations" in pipeline_state):
         print("  -> Using cached feature combinations and importance data from unified state.")
-        linear_feature_combinations = pipeline_state["linear_feature_combinations"]
-        important_feature_combinations = pipeline_state["important_feature_combinations"]
-        importance_dfs = pipeline_state["importance_dfs"]
-    else:
-        print("\n=== EXTRACTING BEST LINEAR TRIPLETS (CORRELATION) ===")
-        linear_feature_combinations = []
-        heatmap_buffers = []
-        
-        for name, features_df in zip(dataset_name, kinetic_features):
-            clean_title = name.replace("_", " ").title()
-            numeric_df = features_df.select_dtypes(include=['number', 'float', 'int'])
-            if numeric_df.shape[1] == 0:
-                print(f"  -> [SKIP] No numeric features for {clean_title}")
-                linear_feature_combinations.append([])
-                continue
+        return (
+            pipeline_state["linear_feature_combinations"],
+            pipeline_state["important_feature_combinations"],
+            pipeline_state["importance_dfs"],
+        )
 
-            corr = numeric_df.corr()
-            if corr.empty:
-                print(f"  -> [SKIP] Empty correlation matrix for {clean_title}")
-                linear_feature_combinations.append([])
-                continue
-
-            corr_matrix = corr.abs() 
-            
-            valid_features = [f for f in corr_matrix.columns if f not in config.EXCLUDED_FEATURES]
-            cannot_pair_with = {f: set() for f in valid_features}
-            for f in valid_features:
-                for group in config.FEATURE_GROUPS:
-                    if f in group: cannot_pair_with[f].update(group)
-                        
-            best_triplet, max_score = [], -1
-            for f1, f2, f3 in itertools.combinations(valid_features, 3):
-                if f2 in cannot_pair_with[f1] or f3 in cannot_pair_with[f1] or f3 in cannot_pair_with[f2]:
-                    continue 
-                score = corr_matrix.loc[f1, f2] + corr_matrix.loc[f1, f3] + corr_matrix.loc[f2, f3]
-                if score > max_score:
-                    max_score = score
-                    best_triplet = [f1, f2, f3]
-                    
-            linear_feature_combinations.append(best_triplet.copy() if best_triplet else [])
-            print(f"  -> {clean_title} Best Triplet: {best_triplet} (Avg Inter-Corr: {max_score/3:.3f})")
-            if(save_plot_flag):
-                fig, ax = plt.subplots(figsize=(24, 20))
-                sns.heatmap(corr.mask(corr.abs() < 0.5, 0), cmap="coolwarm", center=0, linewidths=0.5, cbar_kws={"shrink": .75}, ax=ax)
-                ax.tick_params(axis='x', rotation=90, labelsize=8); ax.tick_params(axis='y', rotation=0, labelsize=8)
-                plt.title(f"Correlation Matrix: {clean_title}", fontsize=22, fontweight='bold', pad=20)
-                
-                buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
-                buf.seek(0); heatmap_buffers.append(buf)
-                plt.close(fig); gc.collect()
-        
-        if(save_plot_flag):
-            save_html_report(os.path.join(reports_dir, "all_correlation_heatmaps.html"), "Experiment Correlation Heatmaps", None, heatmap_buffers)
-
-            print("\n=== GENERATING 3D COMBINATION PLOTS ===")
-            plot_3d_buffers = []
-            
-            for name, kf, dataset_combs in zip(dataset_name, kinetic_features, linear_feature_combinations):
-                if not dataset_combs: continue
-                    
-                clean_title = name.replace("_", " ").title()
-                x_feat, y_feat, z_feat = dataset_combs[:3]
-                
-                corr_matrix = kf[[x_feat, y_feat, z_feat]].corr(method='pearson').abs()
-                avg_corr = (corr_matrix.loc[x_feat, y_feat] + corr_matrix.loc[x_feat, z_feat] + corr_matrix.loc[y_feat, z_feat]) / 3
-                X_vals = kf[[x_feat, y_feat, z_feat]].replace([np.inf, -np.inf], np.nan).fillna(-9999).values
-                
-                fig = plt.figure(figsize=(8, 6))
-                ax = fig.add_subplot(111, projection='3d')
-                ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=30, alpha=0.8, edgecolor='k')
-                ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\nAvg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
-                ax.set_xlabel(x_feat, fontweight='bold', labelpad=10); ax.set_ylabel(y_feat, fontweight='bold', labelpad=10); ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
-                
-                buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-                buf.seek(0); plot_3d_buffers.append(buf)
-                plt.close(fig); gc.collect()
-
-            save_html_report(os.path.join(reports_dir, "best_feature_combinations_3D.html"), "Best 3D Feature Combinations", "Highest inter-correlated valid feature triplet for each experiment.", plot_3d_buffers, flex_layout=True)
-
-        print("\n=== EXTRACTING TOP 5 INDEPENDENT FEATURES (RANDOM FOREST) ===")
-        importance_dfs, rf_buffers = [], []
-        important_feature_combinations = []
-        
-        for name, features_df in zip(dataset_name, kinetic_features):
-            clean_title = name.replace("_", " ").title()
-            numeric_df = features_df.select_dtypes(include=['number', 'float', 'int']).replace([np.inf, -np.inf], np.nan).fillna(0)
-            
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(numeric_df)
-            rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
-            rf.fit(X_scaled, Y_well)
-            
-            importance_df = pd.DataFrame({'feature': numeric_df.columns, 'importance': rf.feature_importances_}).sort_values(by='importance', ascending=False)
-            importance_dfs.append(importance_df)
-            
-            if(save_plot_flag):
-                fig, ax = plt.subplots(figsize=(12, 18))
-                sns.barplot(data=importance_df.head(40), x='importance', y='feature', palette='viridis', ax=ax)
-                ax.set_title(f"Random Forest Importances: {clean_title}", fontsize=18, fontweight='bold', pad=20)
-                ax.set_xlabel("Importance Score", fontweight='bold'); ax.set_ylabel("Features", fontweight='bold')
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                
-                buf = BytesIO(); plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
-                buf.seek(0); rf_buffers.append(buf)
-                plt.close(fig); gc.collect()
-
-            # Greedy Top 5 Selection
-            valid_df = importance_df[~importance_df['feature'].isin(config.EXCLUDED_FEATURES)].copy()
-            cannot_pair_with = {f: set() for f in valid_df['feature']}
-            for f in valid_df['feature']:
-                for group in config.FEATURE_GROUPS:
-                    if f in group: cannot_pair_with[f].update(group)
-                        
-            selected_features = []
-            for _, row in valid_df.iterrows():
-                if not any(row['feature'] in cannot_pair_with[sel] for sel in selected_features):
-                    selected_features.append(row['feature'])
-                if len(selected_features) == 5: break
-                    
-            important_feature_combinations.append(selected_features)
-            print(f"  -> {clean_title}: {selected_features}")
-        
-        if(save_plot_flag):
-            save_html_report(os.path.join(reports_dir, "all_feature_importances.html"), "Feature Importance Analysis", None, rf_buffers)
-
-        # Update and save unified state
-        pipeline_state["linear_feature_combinations"] = linear_feature_combinations
-        pipeline_state["important_feature_combinations"] = important_feature_combinations
-        pipeline_state["importance_dfs"] = importance_dfs
-        joblib.dump(pipeline_state, unified_save_path, compress=3)
-
-
-    # -------------------------------------------------------------
-    # 5. TSNE & 3D FOR TOP 5 FEATURES
-    # -------------------------------------------------------------
-    if(save_plot_flag):
-        print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
-        tsne_buffers = []
-        for name, top_5_features, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
-            clean_title = name.replace("_", " ").title()
-            top_3_features = top_5_features[:3]
-            df_top5 = kf[top_5_features].replace([np.inf, -np.inf], np.nan).fillna(0)
-            
-            tsne = TSNE(n_components=2, random_state=0)
-            X_tsne = tsne.fit_transform(df_top5.values)
-            
-            fig = plt.figure(figsize=(22, 9))
-            ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-            ax1.scatter(df_top5[top_3_features[0]], df_top5[top_3_features[1]], df_top5[top_3_features[2]], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
-            ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3_features)})", fontsize=14, fontweight='bold', pad=15)
-            
-            ax2 = fig.add_subplot(1, 2, 2)
-            ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
-            ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5_features)})", fontsize=14, fontweight='bold', pad=15)
-            ax2.grid(True, linestyle='--', alpha=0.6)
-            
-            buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-            buf.seek(0); tsne_buffers.append(buf)
-            plt.close(fig); gc.collect()
-
-        save_html_report(os.path.join(reports_dir, "independent_features_tsne_and_3d.html"), "Top 5 Independent Features Dimensionality Reduction", "Visualizing the highest importance features after removing mathematical redundancies.", tsne_buffers)
-
-
-    # -------------------------------------------------------------
-    # 6. OUTLIER DETECTION PIPELINES
-    # -------------------------------------------------------------
-    print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
-    ref_curves = dataset[0]
-
-    # Buffer new dataframes instead of concatting in loops
-    features_to_concat = [[] for _ in range(len(dataset_name))]
-
-    def flush_and_save_progress():
-        """Applies buffered concatenations to the unified state and saves."""
-        merged_any = False
-        for i in range(len(dataset_name)):
-            if features_to_concat[i]:
-                pipeline_state["kinetic_features"][i] = pd.concat([pipeline_state["kinetic_features"][i]] + features_to_concat[i], axis=1)
-                features_to_concat[i] = [] # Reset buffer
-                merged_any = True
-                
-        if merged_any:
-            joblib.dump(pipeline_state, unified_save_path, compress=3)
-            print(f"    [SAVED] Unified pipeline state updated.")
-
-    # Active kinetic features reference (modifying this modifies the state dict via reference)
+    dataset_name = pipeline_state["dataset_name"]
     kinetic_features = pipeline_state["kinetic_features"]
 
-    # Guard missing kinetic_features
+    # --- Best correlated feature triplets ---
+    print("\n=== EXTRACTING BEST LINEAR TRIPLETS (CORRELATION) ===")
+    linear_feature_combinations = []
+    heatmap_buffers = []
+
+    for name, features_df in zip(dataset_name, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        numeric_df = features_df.select_dtypes(include=['number'])
+
+        if numeric_df.shape[1] == 0:
+            print(f"  -> [SKIP] No numeric features for {clean_title}")
+            linear_feature_combinations.append([])
+            continue
+
+        corr = numeric_df.corr()
+        if corr.empty:
+            print(f"  -> [SKIP] Empty correlation matrix for {clean_title}")
+            linear_feature_combinations.append([])
+            continue
+
+        corr_abs = corr.abs()
+        valid_features = [f for f in corr_abs.columns if f not in config.EXCLUDED_FEATURES]
+
+        cannot_pair_with = {f: set() for f in valid_features}
+        for f in valid_features:
+            for group in config.FEATURE_GROUPS:
+                if f in group:
+                    cannot_pair_with[f].update(group)
+
+        best_triplet, max_score = [], -1
+        for f1, f2, f3 in itertools.combinations(valid_features, 3):
+            if (f2 in cannot_pair_with[f1] or f3 in cannot_pair_with[f1]
+                    or f3 in cannot_pair_with[f2]):
+                continue
+            score = corr_abs.loc[f1, f2] + corr_abs.loc[f1, f3] + corr_abs.loc[f2, f3]
+            if score > max_score:
+                max_score = score
+                best_triplet = [f1, f2, f3]
+
+        linear_feature_combinations.append(best_triplet[:])
+        print(f"  -> {clean_title} Best Triplet: {best_triplet} (Avg Inter-Corr: {max_score / 3:.3f})")
+
+        if save_plot_flag:
+            fig, ax = plt.subplots(figsize=(24, 20))
+            sns.heatmap(corr.mask(corr_abs < 0.5, 0), cmap="coolwarm", center=0,
+                        linewidths=0.5, cbar_kws={"shrink": .75}, ax=ax)
+            ax.tick_params(axis='x', rotation=90, labelsize=8)
+            ax.tick_params(axis='y', rotation=0, labelsize=8)
+            plt.title(f"Correlation Matrix: {clean_title}", fontsize=22, fontweight='bold', pad=20)
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
+            buf.seek(0)
+            heatmap_buffers.append(buf)
+            plt.close(fig)
+            gc.collect()
+
+    if save_plot_flag and heatmap_buffers:
+        save_html_report(reports_dir / "all_correlation_heatmaps.html",
+                         "Experiment Correlation Heatmaps", None, heatmap_buffers)
+
+        print("\n=== GENERATING 3D COMBINATION PLOTS ===")
+        plot_3d_buffers = []
+        for name, kf, combos in zip(dataset_name, kinetic_features, linear_feature_combinations):
+            if not combos:
+                continue
+            clean_title = name.replace("_", " ").title()
+            x_feat, y_feat, z_feat = combos[:3]
+            corr_sub = kf[[x_feat, y_feat, z_feat]].corr(method='pearson').abs()
+            avg_corr = (corr_sub.loc[x_feat, y_feat] + corr_sub.loc[x_feat, z_feat]
+                        + corr_sub.loc[y_feat, z_feat]) / 3
+            X_vals = kf[[x_feat, y_feat, z_feat]].replace([np.inf, -np.inf], np.nan).fillna(-9999).values
+
+            fig = plt.figure(figsize=(8, 6))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(X_vals[:, 0], X_vals[:, 1], X_vals[:, 2],
+                       c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=30, alpha=0.8, edgecolor='k')
+            ax.set_title(f"{clean_title}\n[{x_feat}, {y_feat}, {z_feat}]\n"
+                         f"Avg Inter-Correlation: {avg_corr:.3f}", fontsize=14, fontweight='bold', pad=20)
+            ax.set_xlabel(x_feat, fontweight='bold', labelpad=10)
+            ax.set_ylabel(y_feat, fontweight='bold', labelpad=10)
+            ax.set_zlabel(z_feat, fontweight='bold', labelpad=15)
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+            buf.seek(0)
+            plot_3d_buffers.append(buf)
+            plt.close(fig)
+            gc.collect()
+
+        save_html_report(reports_dir / "best_feature_combinations_3D.html",
+                         "Best 3D Feature Combinations",
+                         "Highest inter-correlated valid feature triplet for each experiment.",
+                         plot_3d_buffers, flex_layout=True)
+
+    # --- Random Forest feature importances ---
+    print("\n=== EXTRACTING TOP 5 INDEPENDENT FEATURES (RANDOM FOREST) ===")
+    importance_dfs, rf_buffers, important_feature_combinations = [], [], []
+
+    for name, features_df in zip(dataset_name, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        numeric_df = (features_df.select_dtypes(include=['number'])
+                      .replace([np.inf, -np.inf], np.nan).fillna(0))
+
+        X_scaled = StandardScaler().fit_transform(numeric_df)
+        rf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
+        rf.fit(X_scaled, Y_well)
+
+        importance_df = (pd.DataFrame({'feature': numeric_df.columns, 'importance': rf.feature_importances_})
+                         .sort_values(by='importance', ascending=False))
+        importance_dfs.append(importance_df)
+
+        if save_plot_flag:
+            fig, ax = plt.subplots(figsize=(12, 18))
+            sns.barplot(data=importance_df.head(40), x='importance', y='feature', palette='viridis', ax=ax)
+            ax.set_title(f"Random Forest Importances: {clean_title}", fontsize=18, fontweight='bold', pad=20)
+            ax.set_xlabel("Importance Score", fontweight='bold')
+            ax.set_ylabel("Features", fontweight='bold')
+            ax.grid(axis='x', linestyle='--', alpha=0.6)
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=200, bbox_inches='tight', facecolor='white')
+            buf.seek(0)
+            rf_buffers.append(buf)
+            plt.close(fig)
+            gc.collect()
+
+        # Greedy selection: top-5 features with no within-group redundancy.
+        valid_df = importance_df[~importance_df['feature'].isin(config.EXCLUDED_FEATURES)].copy()
+        cannot_pair_with = {f: set() for f in valid_df['feature']}
+        for f in valid_df['feature']:
+            for group in config.FEATURE_GROUPS:
+                if f in group:
+                    cannot_pair_with[f].update(group)
+
+        selected_features = []
+        for _, row in valid_df.iterrows():
+            if not any(row['feature'] in cannot_pair_with[sel] for sel in selected_features):
+                selected_features.append(row['feature'])
+            if len(selected_features) == 5:
+                break
+
+        important_feature_combinations.append(selected_features)
+        print(f"  -> {clean_title}: {selected_features}")
+
+    if save_plot_flag and rf_buffers:
+        save_html_report(reports_dir / "all_feature_importances.html",
+                         "Feature Importance Analysis", None, rf_buffers)
+
+    pipeline_state["linear_feature_combinations"] = linear_feature_combinations
+    pipeline_state["important_feature_combinations"] = important_feature_combinations
+    pipeline_state["importance_dfs"] = importance_dfs
+    joblib.dump(pipeline_state, unified_save_path, compress=3)
+
+    return linear_feature_combinations, important_feature_combinations, importance_dfs
+
+
+def _generate_tsne_3d(dataset_name, important_feature_combinations, kinetic_features, colors, cmap, reports_dir):
+    """t-SNE + 3D scatter for the top-5 independent features of each dataset variant."""
+    print("\n=== GENERATING TSNE & 3D PLOTS FOR TOP 5 FEATURES ===")
+    tsne_buffers = []
+    for name, top_5, kf in zip(dataset_name, important_feature_combinations, kinetic_features):
+        clean_title = name.replace("_", " ").title()
+        top_3 = top_5[:3]
+        df_top5 = kf[top_5].replace([np.inf, -np.inf], np.nan).fillna(0)
+        X_tsne = TSNE(n_components=2, random_state=0).fit_transform(df_top5.values)
+
+        fig = plt.figure(figsize=(22, 9))
+        ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+        ax1.scatter(df_top5[top_3[0]], df_top5[top_3[1]], df_top5[top_3[2]],
+                    c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
+        ax1.set_title(f"{clean_title}\n(Top 3 Features: {', '.join(top_3)})",
+                      fontsize=14, fontweight='bold', pad=15)
+
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.scatter(X_tsne[:, 0], X_tsne[:, 1],
+                    c=colors, cmap=cmap, vmin=0, vmax=config.N_WELLS - 1, s=40, alpha=0.8, edgecolor='k')
+        ax2.set_title(f"{clean_title}\n(t-SNE on All 5: {', '.join(top_5)})",
+                      fontsize=14, fontweight='bold', pad=15)
+        ax2.grid(True, linestyle='--', alpha=0.6)
+
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+        buf.seek(0)
+        tsne_buffers.append(buf)
+        plt.close(fig)
+        gc.collect()
+
+    save_html_report(reports_dir / "independent_features_tsne_and_3d.html",
+                     "Top 5 Independent Features Dimensionality Reduction",
+                     "Visualizing the highest importance features after removing mathematical redundancies.",
+                     tsne_buffers)
+
+
+def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
+                            linear_feature_combinations, important_feature_combinations,
+                            ae_configs, knn_filter_config, spatial_knn_configs, spatial_grid_configs,
+                            downsample_factor, save_plot_flag):
+    """Run all outlier detection sub-pipelines, skipping columns already computed."""
+    print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
+
+    dataset_name = pipeline_state["dataset_name"]
+    dataset = pipeline_state["dataset"]
+    kinetic_features = pipeline_state["kinetic_features"]
+    Y_well = pipeline_state["Y_well"]
+    metadata_df = pipeline_state["metadata_df"]
+    ref_curves = dataset[0]
+
     if "kinetic_features" not in pipeline_state:
         print("  -> [ERROR] kinetic_features missing from pipeline_state. Aborting.")
         sys.exit(1)
 
-    # Configs
+    features_to_concat = [[] for _ in range(len(dataset_name))]
+
+    def flush():
+        _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_save_path)
+
+    # AE methods only run on original (non-fitted) curve variants.
+    ae_names = [n for n in dataset_name if n in ('ori_curves', 'ori_curves_avg')]
+    ae_dataset = [dataset[list(dataset_name).index(n)] for n in ae_names]
+    ae_idx = [list(dataset_name).index(n) for n in ae_names]
+
     msc_configs = [
         ("msc_linear_0.001", 0.001, linear_feature_combinations),
-        ("msc_baseline_0.001", 0.001, [["Ct", "Cy0", "log_F0"]] * len(dataset_name))
+        ("msc_baseline_0.001", 0.001, [["Ct", "Cy0", "log_F0"]] * len(dataset_name)),
     ]
     amf_configs = [
         ("amf_important", important_feature_combinations),
         ("amf_send_5", [["Fm", "Fb", "Sc", "Cs", "send_5"]] * len(dataset_name)),
     ]
-    mean_std_configs = [] # Add tuple entries to enable
-    knn_filter_config = [0.85, 0.90, 0.95]
-    ae_configs = ["elbow", 90, 95]
-    downsample_factor = config.AE_DOWNSAMPLE_FACTOR
-    spatial_knn_configs = ["elbow", 90, 95]
-    spatial_grid_configs = ["elbow", 90, 95]
+    mean_std_configs = []  # Add (label, num_std) tuples to enable
 
-    ae_filtered_names, ae_filtered_dataset = [], []
-    for name, data in zip(dataset_name, dataset):
-        if name in ('ori_curves', 'ori_curves_avg'):
-            ae_filtered_names.append(name)
-            ae_filtered_dataset.append(data)
+    def _missing_ae(prefix_fn):
+        """Return ae_configs entries whose column is absent from any AE dataset's features."""
+        return [pct for pct in ae_configs
+                if any(prefix_fn(pct) not in kinetic_features[idx].columns for idx in ae_idx)]
 
-    ae_dataset_name = ae_filtered_names
-    ae_dataset = ae_filtered_dataset
-    ae_dataset_idx = [list(dataset_name).index(name) for name in ae_dataset_name]
+    def _missing_global(label_fn):
+        """Return configs whose label column is absent from dataset[0]'s features."""
+        return [pct for pct in knn_filter_config if label_fn(pct) not in kinetic_features[0].columns]
 
-    # -------------------------------------------------------------
-    # 6.1: OUTLIER DETECTION METHODS
-    # -------------------------------------------------------------
-
-    # --- CNN AutoEncoder Per Well ---
-    # expected_cnn_pw = [f"cnn_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    # missing_cnn_pw = [pct for pct, label in zip(ae_configs, expected_cnn_pw) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
-    # if missing_cnn_pw:
-    #     extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
-    #     for i, name in enumerate(ae_dataset_name): 
-    #         master_idx = list(dataset_name).index(name)
-    #         features_to_concat[master_idx].append(extracted_dfs[i])
-    #     flush_and_save_progress()
-    # else:
-    #     print("  -> [SKIP] CNN AutoEncoder (Per-Well): Already calculated.")
-
-    # --- CNN AutoEncoder Whole Chip ---
-    expected_cnn_glb = [f"cnn_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_cnn_glb = [pct for pct, label in zip(ae_configs, expected_cnn_glb) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
+    # --- CNN AutoEncoder (Global) ---
+    missing_cnn_glb = _missing_ae(lambda p: f"cnn_ae_glb_ds{downsample_factor}_label_{p}")
     if missing_cnn_glb:
-        extracted_dfs = run_cnn_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_outlier", missing_cnn_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
-        for i, name in enumerate(ae_dataset_name): 
-            master_idx = list(dataset_name).index(name)
-            features_to_concat[master_idx].append(extracted_dfs[i])
-        flush_and_save_progress()
+        extracted_dfs = run_cnn_autoencoder_pipeline(
+            ae_names, ae_dataset, Y_well, ref_curves,
+            str(exp_path / "ae_outlier"), missing_cnn_glb,
+            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
+        for i, name in enumerate(ae_names):
+            features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
+        flush()
     else:
         print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
-    # --- LSTM AutoEncoder Per Well ---
-    # expected_lstm_pw = [f"lstm_ae_pw_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    # missing_lstm_pw = [pct for pct, label in zip(ae_configs, expected_lstm_pw) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
-    # if missing_lstm_pw:
-    #     extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_pw, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=True)
-    #     for i, name in enumerate(ae_dataset_name): 
-    #         master_idx = list(dataset_name).index(name)
-    #         features_to_concat[master_idx].append(extracted_dfs[i])
-    #     flush_and_save_progress()
-    # else:
-    #     print("  -> [SKIP] LSTM AutoEncoder (Per-Well): Already calculated.")
-    
-    # --- LSTM AutoEncoder Whole Chip ---
-    expected_lstm_glb = [f"lstm_ae_glb_ds{downsample_factor}_label_{pct}" for pct in ae_configs]
-    missing_lstm_glb = [pct for pct, label in zip(ae_configs, expected_lstm_glb) if any(label not in kinetic_features[idx].columns for idx in ae_dataset_idx)]
+    # --- LSTM AutoEncoder (Global) ---
+    missing_lstm_glb = _missing_ae(lambda p: f"lstm_ae_glb_ds{downsample_factor}_label_{p}")
     if missing_lstm_glb:
-        extracted_dfs = run_lstm_autoencoder_pipeline(ae_dataset_name, ae_dataset, Y_well, ref_curves, f"{exp_path}/ae_per_well_outlier", missing_lstm_glb, save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
-        for i, name in enumerate(ae_dataset_name): 
-            master_idx = list(dataset_name).index(name)
-            features_to_concat[master_idx].append(extracted_dfs[i])
-        flush_and_save_progress()
+        extracted_dfs = run_lstm_autoencoder_pipeline(
+            ae_names, ae_dataset, Y_well, ref_curves,
+            str(exp_path / "ae_per_well_outlier"), missing_lstm_glb,
+            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
+        for i, name in enumerate(ae_names):
+            features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
+        flush()
     else:
         print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
 
     # --- KNN Filter ---
-    expected_knn = [f"knn_top_{pct}" for pct in knn_filter_config]
-    missing_knn = [pct for pct, label in zip(knn_filter_config, expected_knn) if label not in kinetic_features[0].columns]
+    missing_knn = [pct for pct in knn_filter_config
+                   if f"knn_top_{pct}" not in kinetic_features[0].columns]
     if missing_knn:
-        extracted_dfs = run_knnfilter_pipeline(dataset_name, dataset, Y_well, ref_curves, os.path.join(exp_path, "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
+        extracted_dfs = run_knnfilter_pipeline(
+            dataset_name, dataset, Y_well, ref_curves,
+            str(exp_path / "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
         for i in range(len(dataset_name)):
             features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
     else:
         print("  -> [SKIP] KNN Filter: Already calculated.")
 
     # --- Spatial Consistency Filter (KNN neighbors) ---
-    expected_spatial_knn = [f"spatial_knn_label_{pct}" for pct in spatial_knn_configs]
-    missing_spatial_knn = [pct for pct, label in zip(spatial_knn_configs, expected_spatial_knn) if label not in kinetic_features[0].columns]
+    missing_spatial_knn = [pct for pct in spatial_knn_configs
+                           if f"spatial_knn_label_{pct}" not in kinetic_features[0].columns]
     if missing_spatial_knn:
-        extracted_dfs = run_spatial_consistency_knn_pipeline(dataset_name, dataset, Y_well, ref_curves, metadata_df, os.path.join(exp_path, "spatial_knn_outlier"), missing_spatial_knn, k_neighbors=config.SPATIAL_CONSISTENCY_KNN_K, save_plot=save_plot_flag)
+        extracted_dfs = run_spatial_consistency_knn_pipeline(
+            dataset_name, dataset, Y_well, ref_curves, metadata_df,
+            str(exp_path / "spatial_knn_outlier"), missing_spatial_knn,
+            k_neighbors=config.SPATIAL_CONSISTENCY_KNN_K, save_plot=save_plot_flag)
         for i in range(len(dataset_name)):
             features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
     else:
         print("  -> [SKIP] Spatial Consistency Filter (KNN): Already calculated.")
 
     # --- Spatial Consistency Filter (Grid neighbors) ---
-    expected_spatial_grid = [f"spatial_grid_label_{pct}" for pct in spatial_grid_configs]
-    missing_spatial_grid = [pct for pct, label in zip(spatial_grid_configs, expected_spatial_grid) if label not in kinetic_features[0].columns]
+    missing_spatial_grid = [pct for pct in spatial_grid_configs
+                            if f"spatial_grid_label_{pct}" not in kinetic_features[0].columns]
     if missing_spatial_grid:
-        extracted_dfs = run_spatial_consistency_grid_pipeline(dataset_name, dataset, Y_well, ref_curves, metadata_df, os.path.join(exp_path, "spatial_grid_outlier"), missing_spatial_grid, window=config.SPATIAL_CONSISTENCY_GRID_WINDOW, save_plot=save_plot_flag)
+        extracted_dfs = run_spatial_consistency_grid_pipeline(
+            dataset_name, dataset, Y_well, ref_curves, metadata_df,
+            str(exp_path / "spatial_grid_outlier"), missing_spatial_grid,
+            window=config.SPATIAL_CONSISTENCY_GRID_WINDOW, save_plot=save_plot_flag)
         for i in range(len(dataset_name)):
             features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
     else:
         print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
 
     # --- MSC Filter ---
-    msc_configs_to_run = []
+    msc_to_run, msc_skip = [], []
     for exp_label, p_val, feats in msc_configs:
-        if f"msc_label_{exp_label}" not in kinetic_features[0].columns:
-            msc_configs_to_run.append((exp_label, p_val, feats))
-        else:
-            print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
-            
-    if msc_configs_to_run:
-        for exp_label, p_val, feats in msc_configs_to_run:
-            extracted_dfs = run_msc_pipeline(exp_label, p_val, ref_curves, os.path.join(exp_path, "msc_outlier"), dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
-            for i in range(len(dataset_name)): 
+        (msc_to_run if f"msc_label_{exp_label}" not in kinetic_features[0].columns
+         else msc_skip).append((exp_label, p_val, feats))
+    for exp_label, _, __ in msc_skip:
+        print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
+    if msc_to_run:
+        for exp_label, p_val, feats in msc_to_run:
+            extracted_dfs = run_msc_pipeline(
+                exp_label, p_val, ref_curves, str(exp_path / "msc_outlier"),
+                dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
+            for i in range(len(dataset_name)):
                 features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
 
     # --- AMF Filter ---
-    amf_configs_to_run = []
+    amf_to_run, amf_skip = [], []
     for exp_label, feats in amf_configs:
-        if f"amf_label_{exp_label}" not in kinetic_features[0].columns:
-            amf_configs_to_run.append((exp_label, feats))
-        else:
-            print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
-            
-    if amf_configs_to_run:
-        for exp_label, feats in amf_configs_to_run:
-            extracted_dfs = run_amf_pipeline(exp_label, feats, ref_curves, os.path.join(exp_path, "amf_outlier"), dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
-            for i in range(len(dataset_name)): 
+        (amf_to_run if f"amf_label_{exp_label}" not in kinetic_features[0].columns
+         else amf_skip).append((exp_label, feats))
+    for exp_label, _ in amf_skip:
+        print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
+    if amf_to_run:
+        for exp_label, feats in amf_to_run:
+            extracted_dfs = run_amf_pipeline(
+                exp_label, feats, ref_curves, str(exp_path / "amf_outlier"),
+                dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
+            for i in range(len(dataset_name)):
                 features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
 
     # --- Mean/Std Filter ---
-    mean_std_configs_to_run = []
+    mean_std_to_run, mean_std_skip = [], []
     for exp_label, num_std in mean_std_configs:
-        if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns:
-            mean_std_configs_to_run.append((exp_label, num_std))
-        else:
-            print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
-            
-    if mean_std_configs_to_run:
-        for exp_label, num_std in mean_std_configs_to_run:
-            extracted_dfs = run_meanstd_pipeline(exp_label, num_std, ref_curves, os.path.join(exp_path, "meanstd_outlier"), dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
-            for i in range(len(dataset_name)): 
+        (mean_std_to_run if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns
+         else mean_std_skip).append((exp_label, num_std))
+    for exp_label, _ in mean_std_skip:
+        print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
+    if mean_std_to_run:
+        for exp_label, num_std in mean_std_to_run:
+            extracted_dfs = run_meanstd_pipeline(
+                exp_label, num_std, ref_curves, str(exp_path / "meanstd_outlier"),
+                dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
+            for i in range(len(dataset_name)):
                 features_to_concat[i].append(extracted_dfs[i])
-        flush_and_save_progress()
+        flush()
 
-    # -------------------------------------------------------------
-    # 7. FINAL FLUSH
-    # -------------------------------------------------------------
-    flush_and_save_progress()
-    
+    # Safety flush for anything not yet checkpointed.
+    flush()
+
+
+# ====================================================================
+# MASTER PIPELINE
+# ====================================================================
+
+def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False):
+    """End-to-end outlier detection pipeline for a single experiment folder."""
+    exp_path = Path(exp_path)
+    print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
+
+    unified_save_path = exp_path / config.TRAINING_DATA_PATH
+    reports_dir = config.get_viz_dir(exp_path, "visual_reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Load or build initial state from preprocessed curves.
+    pipeline_state = _load_or_build_state(exp_path, unified_save_path, force_rerun)
+
+    assert len(pipeline_state["dataset_name"]) == len(pipeline_state["dataset"]), \
+        "dataset_name / dataset length mismatch"
+
+    # 3. Ensure kinetic features are computed for all variants.
+    _ensure_kinetic_features(pipeline_state, unified_save_path)
+
+    dataset_name = pipeline_state["dataset_name"]
+    kinetic_features = pipeline_state["kinetic_features"]
+    Y_well = pipeline_state["Y_well"]
+    colors = Y_well
+    cmap = WELL_CMAP
+
+    # 4. Optional boxplots.
+    if save_plot_flag:
+        _generate_boxplots(dataset_name, kinetic_features, Y_well, exp_path)
+
+    # 5. Correlation triplets + RF feature importances.
+    linear_feature_combinations, important_feature_combinations, _ = _compute_feature_analysis(
+        pipeline_state, Y_well, colors, cmap, unified_save_path, save_plot_flag, reports_dir
+    )
+
+    # 6. Optional t-SNE / 3D visualisations.
+    if save_plot_flag:
+        _generate_tsne_3d(dataset_name, important_feature_combinations, kinetic_features,
+                          colors, cmap, reports_dir)
+
+    # 7. Outlier detection.
+    _run_outlier_pipelines(
+        exp_path, pipeline_state, unified_save_path,
+        linear_feature_combinations, important_feature_combinations,
+        ae_configs=["elbow", 90, 95],
+        knn_filter_config=[0.85, 0.90, 0.95],
+        spatial_knn_configs=["elbow", 90, 95],
+        spatial_grid_configs=["elbow", 90, 95],
+        downsample_factor=config.AE_DOWNSAMPLE_FACTOR,
+        save_plot_flag=save_plot_flag,
+    )
+
     print(f"\nExperiment {exp_path.name} finished gracefully!")
-    
     tf.keras.backend.clear_session()
     gc.collect()
+
+
+# ====================================================================
+# ENTRY POINT
+# ====================================================================
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Outlier Detection Pipeline")
+    parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
+    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
+    parser.add_argument("--force_rerun", action="store_true",
+                        help="Recompute and overwrite even if a presaved unified state already exists")
+    args = parser.parse_args()
+
+    exp_paths = sorted([
+        Path(args.exp_folder, name)
+        for name in os.listdir(args.exp_folder)
+        if os.path.isdir(os.path.join(args.exp_folder, name))
+        and name not in config.EXCLUDED_FOLDERS
+    ])
+
+    if args.task_id >= len(exp_paths):
+        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
+        sys.exit(0)
+
+    exp_path = exp_paths[args.task_id]
+    saved_viz = getattr(config, "SAVED_VIZ", [])
+    save_plot_flag = bool(saved_viz) and any(s in str(exp_path) for s in saved_viz)
+
+    run_pipeline(exp_path, force_rerun=args.force_rerun, save_plot_flag=save_plot_flag)
