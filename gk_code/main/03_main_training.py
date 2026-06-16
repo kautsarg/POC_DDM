@@ -245,7 +245,7 @@ if __name__ == "__main__":
             )
 
         # --- WRITE XAI METADATA JOBLIB ---
-        # attribution_vis_all reads top_10_features[filter_key] from this file.
+        # 07_attribution_vis_all reads top_10_features[filter_key] from this file.
         # The same KFS is used across all filters (MI computed on unfiltered train split),
         # so we write the same feature list for every filter key.
         model_interp_dir.mkdir(parents=True, exist_ok=True)

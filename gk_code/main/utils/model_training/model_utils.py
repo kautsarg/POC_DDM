@@ -409,7 +409,7 @@ def _remap_global_splits(global_splits, mask, valid_mask=None):
 
 
 # Maps evaluate_outlier_filters internal model keys to the canonical names used
-# when saving .keras files for attribution_vis_all.
+# when saving .keras files for 07_attribution_vis_all.
 _XAI_SAVE_NAME = {
     'cnn': 'cnn',
     'gru': 'bigru',
@@ -432,7 +432,7 @@ def evaluate_outlier_filters(
 
     When save_model_dir is set, the trained Keras model from the first fold of
     the None (baseline) filter is saved to disk so attribution_vis_all can load
-    it without a separate model_for_xai run.
+    it without a separate run.
     """
     if save_model_dir is not None:
         Path(save_model_dir).mkdir(parents=True, exist_ok=True)

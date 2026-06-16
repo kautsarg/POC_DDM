@@ -19,7 +19,7 @@ folder, so re-running a stage is a no-op unless `--force_rerun` is passed.
 03    + model training       -> classification_performances_nonorm.joblib
   v
 04    (optional) cross-dataset CV -> cross_dataset_cv/<group>/...
-05/06/07/attribution_vis_all  -> HTML/PNG reports
+05/06/07  -> HTML/PNG reports
 ```
 
 ## `main/01_curve_preprocessing_v6.py`
@@ -112,7 +112,7 @@ variants) for a given training mode and outlier filter.
   `--outlier_filter`, `--n_splits` (must match the `03` run), `--curve_type`
   (nargs, default `["ori_curve", "ori_curve_avg"]`), `--force_rerun`.
 
-## `main/07_resampling_check.py`
+## `main/resampling_check.py`
 Sanity-check plots for `CurveResampler` (used by `04`) — `ori_curves` before
 vs. after resampling onto a common time grid, overall and per well.
 
@@ -120,7 +120,7 @@ vs. after resampling onto a common time grid, overall and per well.
   in the experiment folder's viz directory.
 - **Key args**: `--task_id`, `--exp_folder`.
 
-## `main/attribution_vis_all.py`
+## `main/07_attribution_vis_all.py`
 XAI/interpretability report for the trained deep models — latent-space
 PCA/t-SNE, per-class kinetic-feature distributions, and gradient-based
 saliency maps over the input curves for each architecture.
