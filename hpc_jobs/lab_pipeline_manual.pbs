@@ -33,6 +33,4 @@ python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/05_outlier_visualiza
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
 
-done
-
 deactivate

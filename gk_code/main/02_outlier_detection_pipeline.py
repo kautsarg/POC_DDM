@@ -529,6 +529,12 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     metadata_df = pipeline_state["metadata_df"]
     ref_curves = dataset[0]
 
+    has_spatial_info = {"pixel_row_idx", "pixel_col_idx"}.issubset(metadata_df.columns)
+    if not has_spatial_info:
+        print("  -> [INFO] No 'pixel_row_idx'/'pixel_col_idx' in metadata_df "
+              "(experiment has no spatial chip layout) — spatial consistency "
+              "filters (KNN/Grid) will be skipped.")
+
     if "kinetic_features" not in pipeline_state:
         print("  -> [ERROR] kinetic_features missing from pipeline_state. Aborting.")
         sys.exit(1)
@@ -604,7 +610,9 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     # --- Spatial Consistency Filter (KNN neighbors) ---
     missing_spatial_knn = [pct for pct in spatial_knn_configs
                            if f"spatial_knn_label_{pct}" not in kinetic_features[0].columns]
-    if missing_spatial_knn:
+    if not has_spatial_info:
+        print("  -> [SKIP] Spatial Consistency Filter (KNN): No pixel coordinates available.")
+    elif missing_spatial_knn:
         extracted_dfs = run_spatial_consistency_knn_pipeline(
             dataset_name, dataset, Y_well, ref_curves, metadata_df,
             str(exp_path / "spatial_knn_outlier"), missing_spatial_knn,
@@ -618,7 +626,9 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     # --- Spatial Consistency Filter (Grid neighbors) ---
     missing_spatial_grid = [pct for pct in spatial_grid_configs
                             if f"spatial_grid_label_{pct}" not in kinetic_features[0].columns]
-    if missing_spatial_grid:
+    if not has_spatial_info:
+        print("  -> [SKIP] Spatial Consistency Filter (Grid): No pixel coordinates available.")
+    elif missing_spatial_grid:
         extracted_dfs = run_spatial_consistency_grid_pipeline(
             dataset_name, dataset, Y_well, ref_curves, metadata_df,
             str(exp_path / "spatial_grid_outlier"), missing_spatial_grid,
