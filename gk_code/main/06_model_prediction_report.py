@@ -21,30 +21,9 @@ from sklearn.metrics import (
 
 import config
 
-MODEL_KEY_MAP = {
-    "cnn":          ("y_preds_AC_",            "y_probs_AC_",            "classes_AC_"),
-    "lstm":         ("y_preds_AC_lstm_",        "y_probs_AC_lstm_",       "classes_AC_lstm_"),
-    "gru":          ("y_preds_AC_gru_",         "y_probs_AC_gru_",        "classes_AC_gru_"),
-    "rnn":          ("y_preds_AC_rnn_",         "y_probs_AC_rnn_",        "classes_AC_rnn_"),
-    "transformer":  ("y_preds_AC_trans_",       "y_probs_AC_trans_",      "classes_AC_trans_"),
-    "rf":           ("y_preds_AC_rf_",          "y_probs_AC_rf_",         "classes_AC_rf_"),
-    "knn":          ("y_preds_AC_kNN_",         "y_probs_AC_kNN_",        "classes_AC_kNN_"),
-    "ffi":          ("y_preds_FFI_",            "y_probs_FFI_",           "classes_FFI_"),
-    "cnn_lf":       ("y_preds_AC_cnn_lf_",      "y_probs_AC_cnn_lf_",     "classes_AC_cnn_lf_"),
-    "lstm_lf":      ("y_preds_AC_lstm_lf_",     "y_probs_AC_lstm_lf_",    "classes_AC_lstm_lf_"),
-    "trans_lf":     ("y_preds_AC_trans_lf_",    "y_probs_AC_trans_lf_",   "classes_AC_trans_lf_"),
-    "gru_lf":       ("y_preds_AC_gru_lf_",      "y_probs_AC_gru_lf_",     "classes_AC_gru_lf_"),
-    "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_","y_probs_AC_cnn_gru_dual_","classes_AC_cnn_gru_dual_"),
-    "cnn_trans_dual":("y_preds_AC_cnn_trans_dual_","y_probs_AC_cnn_trans_dual_","classes_AC_cnn_trans_dual_"),
-}
-
-MODEL_PRINT_MAP = {
-    "cnn": "CNN (ACA)", "lstm": "LSTM (ACA)", "gru": "GRU (ACA)",
-    "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
-    "knn": "KNN (ACA)", "ffi": "LR (FFI)",
-    "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
-    "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
-}
+# Moved to config.py (shared with 08_statistical_comparison.py).
+MODEL_KEY_MAP = config.MODEL_KEY_MAP
+MODEL_PRINT_MAP = config.MODEL_PRINT_MAP
 
 
 def get_exp_paths(exp_folder):

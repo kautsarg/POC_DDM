@@ -6,7 +6,6 @@ import numpy as np
 import scipy.stats
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
 from pathlib import Path
 import sys
 
@@ -22,7 +21,7 @@ import config
 from model_utils import set_global_determinism
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
-WELL_CMAP = ListedColormap(config.WELL_COLORS)
+WELL_CMAP = config.WELL_CMAP
 
 
 # ====================================================================

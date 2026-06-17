@@ -66,47 +66,13 @@ _NEMENYI_Q = {
     14: 3.354, 15: 3.391, 20: 3.615,
 }
 
-MODEL_KEY_MAP = {
-    "cnn":           "y_preds_AC_",
-    "lstm":          "y_preds_AC_lstm_",
-    "gru":           "y_preds_AC_gru_",
-    "rnn":           "y_preds_AC_rnn_",
-    "transformer":   "y_preds_AC_trans_",
-    "rf":            "y_preds_AC_rf_",
-    "knn":           "y_preds_AC_kNN_",
-    "ffi":           "y_preds_FFI_",
-    "cnn_lf":        "y_preds_AC_cnn_lf_",
-    "lstm_lf":       "y_preds_AC_lstm_lf_",
-    "gru_lf":        "y_preds_AC_gru_lf_",
-    "trans_lf":      "y_preds_AC_trans_lf_",
-    "cnn_gru_dual":  "y_preds_AC_cnn_gru_dual_",
-    "cnn_trans_dual":"y_preds_AC_cnn_trans_dual_",
-}
-
-MODEL_PRINT_MAP = {
-    "cnn": "CNN", "lstm": "LSTM", "gru": "GRU", "rnn": "RNN",
-    "transformer": "Transformer", "rf": "RF", "knn": "kNN", "ffi": "LR (FFI)",
-    "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "gru_lf": "GRU LF", "trans_lf": "Trans LF",
-    "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Trans Dual",
-}
-
-FILTER_PRINT_MAP = {
-    None:                             "None (Baseline)",
-    "msc_label_msc_linear_0.001":     "MSC",
-    "amf_label_amf_important":        "AMF",
-    "knn_top_0.95":                   "kNN-95%",
-    "cnn_ae_glb_ds1_label_elbow":     "CNN-AE",
-    "lstm_ae_glb_ds1_label_elbow":    "LSTM-AE",
-    "spatial_knn_label_elbow":        "Spatial-kNN",
-    "spatial_grid_label_elbow":       "Spatial-Grid",
-}
-
-CURVE_PRINT_MAP = {
-    "ori_curves":     "Ori Curves (raw)",
-    "ori_curves_avg": "Ori Curves (avg)",
-}
-
-METRIC_LABEL = {"accuracy": "Accuracy", "macro_f1": "Macro-F1", "mcc": "MCC"}
+# Moved to config.py (shared with 06_model_prediction_report.py). 08 only
+# needs the y_preds_ key (index 0) out of config.MODEL_KEY_MAP's 3-tuples.
+MODEL_KEY_MAP = {k: v[0] for k, v in config.MODEL_KEY_MAP.items()}
+MODEL_PRINT_MAP = config.MODEL_PRINT_MAP
+FILTER_PRINT_MAP = config.FILTER_PRINT_MAP
+CURVE_PRINT_MAP = config.CURVE_PRINT_MAP
+METRIC_LABEL = config.METRIC_LABEL
 
 
 # ============================================================

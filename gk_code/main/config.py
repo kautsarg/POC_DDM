@@ -10,24 +10,31 @@ from model_utils import set_global_determinism
 set_global_determinism(0)
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_hex
+from matplotlib.colors import to_hex, ListedColormap
 from cycler import cycler
 
 # ==========================================
 # GLOBAL CONFIGURATION
 # ==========================================
+# Used by: every pipeline stage (01-08) and light_pipeline/* via
+# `--exp_folder` CLI defaults; get_viz_dir() is used by 02, 05, 06, 07, 08,
+# and light_pipeline/attribution_vis.py to mirror an experiment folder under
+# the visualisation output root.
 
-# Default path for the HPC cluster
-# DEFAULT_EXP_FOLDER = "/rds/general/user/gk225/home/Run Data/POC_DDM_dataset/"
-# DEFAULT_EXP_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data/trial test data"
 LAB_ROOT_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets"
 HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets"
 LOCAL_ROOT_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data"
 
-BASE_FOLDER = LAB_ROOT_FOLDER
+# Pick whichever root actually exists on this machine, in priority order.
+if os.path.exists(LAB_ROOT_FOLDER):
+    BASE_FOLDER = LAB_ROOT_FOLDER
+elif os.path.exists(HPC_ROOT_FOLDER):
+    BASE_FOLDER = HPC_ROOT_FOLDER
+elif os.path.exists(LOCAL_ROOT_FOLDER):
+    BASE_FOLDER = LOCAL_ROOT_FOLDER
+else:
+    BASE_FOLDER = LAB_ROOT_FOLDER
 
-# Root folder mirroring BASE_FOLDER, where visualisation/report outputs are
-# written instead of alongside the raw datasets.
 VIZ_BASE_FOLDER = BASE_FOLDER.replace("POC_DDM_datasets", "POC_DDM_viz")
 
 DEFAULT_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_chip_init")
@@ -40,15 +47,17 @@ def get_viz_dir(path, subdir):
     rel = Path(path).relative_to(BASE_FOLDER)
     return Path(VIZ_BASE_FOLDER) / rel / subdir
 
+# ==========================================
+# CURVE TYPE RESOLUTION
+# ==========================================
+# Used by: 03_main_training.py, 08_statistical_comparison.py (CURVE_TYPE_ALIASES);
+# resolve_curve_dataset_idx() is used by 04, 05, 06, 07, model_for_xai.py to
+# resolve a `--curve_type` CLI value to its index in the joblib dataset list.
 
-# Friendly aliases for the most common curve types used as the `--curve_type`
-# CLI arg. Any other value is used verbatim as a 'dataset_name' entry (e.g.
-# 'sigmoid4pl_fitted_full').
 CURVE_TYPE_ALIASES = {
     "ori_curve": "ori_curves",
     "ori_curve_avg": "ori_curves_avg",
 }
-
 
 def resolve_curve_dataset_idx(curve_type, dataset_name_list):
     """Resolve a `--curve_type` value to (index, dataset_name) within `dataset_name_list`."""
@@ -57,27 +66,52 @@ def resolve_curve_dataset_idx(curve_type, dataset_name_list):
         raise ValueError(f"curve_type '{curve_type}' (resolved to '{target}') not found in dataset_name {list(dataset_name_list)}")
     return list(dataset_name_list).index(target), target
 
-# Global Experiment Parameters
+# ==========================================
+# EXPERIMENT PARAMETERS
+# ==========================================
+# Used by: 01_curve_preprocessing_v6.py (N_WELLS, N_A_TYPE);
+# 02_outlier_detection_pipeline.py, 07_attribution_vis_all.py (N_WELLS only);
+# light_pipeline/00_light-pipeline.py, light_pipeline/01_light-curve_preprocessing.py.
 N_WELLS = 10
 N_A_TYPE = "v06"
 
-# Preprocessing Window Sizes
+# ==========================================
+# PREPROCESSING WINDOW SIZES
+# ==========================================
+# Used by: 01_curve_preprocessing_v6.py (moving-average window sizes for
+# ori_curves_avg / derivative smoothing).
 WINDOW_SIZE_ORI = 50
 WINDOW_SIZE_1STDER = 200
 
-# Plotting Optimizations (Downsampling for Bokeh)
+# ==========================================
+# PLOTTING / DOWNSAMPLING
+# ==========================================
+# Used by: 01_curve_preprocessing_v6.py (Bokeh plot downsampling/rounding).
 PLOT_DOWNSAMPLE_STEP = 1
 PLOT_DECIMAL_PRECISION = 4
 
-# AutoEncoder Downsample Factor
+# ==========================================
+# AUTOENCODER OUTLIER DETECTION
+# ==========================================
+# Used by: 02_outlier_detection_pipeline.py and light_pipeline/00, /02, /03
+# (downsample factor for the CNN/LSTM autoencoder outlier filters).
 AE_DOWNSAMPLE_FACTOR = 1
 
-# Spatial Consistency Outlier Filters
+# ==========================================
+# SPATIAL CONSISTENCY OUTLIER FILTERS
+# ==========================================
+# Used by: 02_outlier_detection_pipeline.py (spatial kNN / grid consistency
+# outlier filters).
 SPATIAL_CONSISTENCY_KNN_K = 24       # Number of nearest neighbors (by pixel coordinate distance)
 SPATIAL_CONSISTENCY_GRID_WINDOW = 2  # Grid half-width -> (2*window+1)^2 neighborhood (5x5)
 
+# ==========================================
+# OUTLIER FILTER LABELS
+# ==========================================
+# Used by: 03_main_training.py, 05_outlier_visualization_report.py,
+# 08_statistical_comparison.py — iterated over to train/report/compare each
+# outlier filter (None = no filtering / baseline).
 # All outlier filter labels produced by 02_outlier_detection_pipeline.py
-# (None = no filtering / baseline)
 OUTLIER_FILTERS = [
     None,
 
@@ -116,7 +150,14 @@ OUTLIER_FILTERS = [
     # 'spatial_grid_label_95',
 ]
 
-# File paths
+# ==========================================
+# RESULT / CACHE FILE PATHS
+# ==========================================
+# Used by: PREPROCESSED_CURVES_PATH (01, 02); TRAINING_DATA_PATH (02, 03, 04,
+# 05, 06, 07, light_pipeline/attribution_vis.py, model_for_xai.py,
+# resampling_check.py); TRAINING_RESULT_PATH / TRAINING_10FOLD_RESULT_PATH
+# (03, 06, 08); CROSS_DATASET_RESULT_PATH (04); CROSS_DATASET_RESAMPLER_PATH
+# (04, resampling_check.py).
 PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
 TRAINING_DATA_PATH = 'curve_for_training_nonorm.joblib'
 TRAINING_RESULT_PATH = 'classification_performances_nonorm.joblib'
@@ -124,12 +165,12 @@ TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold_nonorm.joblib'
 CROSS_DATASET_RESULT_PATH = 'classification_performances_cross_dataset_{mode}_{curve_type}.joblib'
 CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resampler_{curve_type}.joblib'
 
-# File paths
-# PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
-# TRAINING_DATA_PATH = 'curve_for_training.joblib'
-# TRAINING_RESULT_PATH = 'classification_performances.joblib'
-# TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
-
+# ==========================================
+# MATPLOTLIB GLOBAL STYLE
+# ==========================================
+# Used by: every script that does `import config` and then creates a
+# matplotlib figure — sets the default colour cycle at import time. No
+# direct references elsewhere by name.
 mpl_colors = [
     (0.00, 0.45, 0.70), (0.90, 0.60, 0.00), (0.35, 0.70, 0.90),
     (0.00, 0.60, 0.50), (0.95, 0.90, 0.25), (0.80, 0.40, 0.70),
@@ -140,6 +181,17 @@ plt.rcParams['axes.prop_cycle'] = cycler(color=[to_hex(i) for i in mpl_colors])
 # ==========================================
 # UNIFIED VISUALISATION COLOUR PALETTE
 # ==========================================
+# Used by: get_palette() — 02_outlier_detection_pipeline.py,
+# resampling_check.py, utils/model_training/model_utils.py.
+# WELL_COLORS / WELL_CMAP — 02, 07_attribution_vis_all.py,
+# light_pipeline/attribution_vis.py, utils/01_curve_preprocessing/
+# curve_preprocessing_plots.py, utils/02_outlier_detection/chip_utilities.py,
+# utils/02_outlier_detection/knn_fingerprint_filter.py.
+# WELL_COLOR_MAP — 02_outlier_detection_pipeline.py.
+# FILTER_COLORS — utils/model_training/model_utils.py.
+# MODEL_COLORS / CURVE_COLORS are reserved fixed-colour maps for get_palette's
+# `fixed_map` argument; not currently wired into any call site.
+#
 # Colour-blind-safe, high-contrast palette (same colours as the global mpl
 # cycle above) exposed as hex strings so seaborn/plotly categorical plots
 # (e.g. grouped bar charts comparing models or curve types) can reuse it,
@@ -190,21 +242,72 @@ def get_palette(categories, fixed_map=None):
     return palette
 
 
-# Fixed colour per well index (0..N_WELLS-1) so the same well/sample is drawn
-# in the same colour across scatter plots, 3D/t-SNE projections, and
-# multi-line curve plots. VIZ_PALETTE has exactly N_WELLS colours.
-WELL_COLORS = VIZ_PALETTE[:N_WELLS]
-# Same mapping as a {well_index: colour} dict, handy as a `fixed_map` for get_palette.
-WELL_COLOR_MAP = dict(enumerate(WELL_COLORS))
 
-# Fixed colour per outlier filter so the same filter always has the same
-# colour across bar charts comparing filters. The baseline (None / "No
-# Filter") is a neutral grey; every other filter in OUTLIER_FILTERS gets a
-# distinct colour from VIZ_PALETTE.
+WELL_COLORS = VIZ_PALETTE[:N_WELLS]
+WELL_COLOR_MAP = dict(enumerate(WELL_COLORS))
+WELL_CMAP = ListedColormap(WELL_COLORS)
 FILTER_COLORS = get_palette([f for f in OUTLIER_FILTERS if f is not None])
 FILTER_COLORS[None] = '#888888'
 
+# ==========================================
+# MODEL / FILTER / CURVE DISPLAY MAPS
+# ==========================================
+# Used by: 06_model_prediction_report.py and 08_statistical_comparison.py to
+# look up the joblib key prefixes written by utils/model_training/model_utils.py
+# (MODEL_KEY_MAP), and to render short human-readable labels in HTML reports
+# (MODEL_PRINT_MAP, FILTER_PRINT_MAP, CURVE_PRINT_MAP, METRIC_LABEL).
 
+# model key -> (y_preds_ key, y_probs_ key, classes_ key) written by
+# evaluate_outlier_filters() in utils/model_training/model_utils.py.
+MODEL_KEY_MAP = {
+    "cnn":          ("y_preds_AC_",            "y_probs_AC_",            "classes_AC_"),
+    "lstm":         ("y_preds_AC_lstm_",        "y_probs_AC_lstm_",       "classes_AC_lstm_"),
+    "gru":          ("y_preds_AC_gru_",         "y_probs_AC_gru_",        "classes_AC_gru_"),
+    "rnn":          ("y_preds_AC_rnn_",         "y_probs_AC_rnn_",        "classes_AC_rnn_"),
+    "transformer":  ("y_preds_AC_trans_",       "y_probs_AC_trans_",      "classes_AC_trans_"),
+    "rf":           ("y_preds_AC_rf_",          "y_probs_AC_rf_",         "classes_AC_rf_"),
+    "knn":          ("y_preds_AC_kNN_",         "y_probs_AC_kNN_",        "classes_AC_kNN_"),
+    "ffi":          ("y_preds_FFI_",            "y_probs_FFI_",           "classes_FFI_"),
+    "cnn_lf":       ("y_preds_AC_cnn_lf_",      "y_probs_AC_cnn_lf_",     "classes_AC_cnn_lf_"),
+    "lstm_lf":      ("y_preds_AC_lstm_lf_",     "y_probs_AC_lstm_lf_",    "classes_AC_lstm_lf_"),
+    "trans_lf":     ("y_preds_AC_trans_lf_",    "y_probs_AC_trans_lf_",   "classes_AC_trans_lf_"),
+    "gru_lf":       ("y_preds_AC_gru_lf_",      "y_probs_AC_gru_lf_",     "classes_AC_gru_lf_"),
+    "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_","y_probs_AC_cnn_gru_dual_","classes_AC_cnn_gru_dual_"),
+    "cnn_trans_dual":("y_preds_AC_cnn_trans_dual_","y_probs_AC_cnn_trans_dual_","classes_AC_cnn_trans_dual_"),
+}
+
+MODEL_PRINT_MAP = {
+    "cnn": "CNN (ACA)", "lstm": "LSTM (ACA)", "gru": "GRU (ACA)",
+    "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
+    "knn": "KNN (ACA)", "ffi": "LR (FFI)",
+    "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
+    "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
+}
+
+FILTER_PRINT_MAP = {
+    None:                             "None (Baseline)",
+    "msc_label_msc_linear_0.001":     "MSC",
+    "amf_label_amf_important":        "AMF",
+    "knn_top_0.95":                   "kNN-95%",
+    "cnn_ae_glb_ds1_label_elbow":     "CNN-AE",
+    "lstm_ae_glb_ds1_label_elbow":    "LSTM-AE",
+    "spatial_knn_label_elbow":        "Spatial-kNN",
+    "spatial_grid_label_elbow":       "Spatial-Grid",
+}
+
+CURVE_PRINT_MAP = {
+    "ori_curves":     "Ori Curves (raw)",
+    "ori_curves_avg": "Ori Curves (avg)",
+}
+
+METRIC_LABEL = {"accuracy": "Accuracy", "macro_f1": "Macro-F1", "mcc": "MCC"}
+
+# ==========================================
+# FEATURE SELECTION
+# ==========================================
+# Used by: EXCLUDED_FEATURES, FEATURE_GROUPS — 02_outlier_detection_pipeline.py.
+# CURVE_SPLIT, IMPORTANCE_METRICS — not currently referenced outside config.py
+# (reserved for future feature-importance reporting).
 EXCLUDED_FEATURES = [
     "pixel_row_idx", "pixel_col_idx", "temp_group_idx", "num_active_pixels_in_temp_group",
     "well_temp_lin2d_mean", "well_2d_temp_npr_mean",
@@ -274,32 +377,57 @@ CURVE_SPLIT = {
 }
 
 IMPORTANCE_METRICS = [
-    "rf_importance", 
-    "anova_score", 
-    "silhouette_score", 
-    "mutual_info_score", 
+    "rf_importance",
+    "anova_score",
+    "silhouette_score",
+    "mutual_info_score",
     "kruskal_wallis_score"
 ]
 
+# ==========================================
+# VISUALISATION OVERRIDES
+# ==========================================
+# Used by: 01_curve_preprocessing_v6.py, 02_outlier_detection_pipeline.py via
+# `getattr(config, "SAVED_VIZ", [])` — manual allow-list of dataset names to
+# always (re)generate plots for; currently empty.
 SAVED_VIZ = [
     # "D20250808_E00_C00_F4500KHz_U_Sample_7",
     # "D20250820_E00_C00_F4500KHz_U_Sample_18_wet_3"
 ]
 
+# ==========================================
+# FEATURE SUBSET FOR LATE FUSION
+# ==========================================
+# Used by: 03_main_training.py, 04_cross_dataset_training.py,
+# 07_attribution_vis_all.py, model_for_xai.py — fixed top-level kinetic
+# feature subset fed into the late-fusion (LF) model branch.
 LD_FEATURES = [
-    'Fm', 'Fb', 'Sc', 'Cs', 'As', 'xms', 'xs', 'xe', 'xp1', 'xp2', 'TH', 
-    'y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'amplitude', 'dy_xms', 
-    'dy_xp1', 'dy_xp2', 'd2y_xp1', 'd2y_xp2', 'threshold_distance', 
-    'first_half_distance', 'second_half_distance', 'distance_asymmetry_index', 
-    'peak_shifting_distance', 'A1', 'A2', 'area_asymmetry_index', 
-    'peak_asymmetry_index', 'Ct', 'Cy0', 'F_max', 'log_F0', 'F0', 'Send', 
+    'Fm', 'Fb', 'Sc', 'Cs', 'As', 'xms', 'xs', 'xe', 'xp1', 'xp2', 'TH',
+    'y_xms', 'y_xs', 'y_xe', 'y_xp1', 'y_xp2', 'amplitude', 'dy_xms',
+    'dy_xp1', 'dy_xp2', 'd2y_xp1', 'd2y_xp2', 'threshold_distance',
+    'first_half_distance', 'second_half_distance', 'distance_asymmetry_index',
+    'peak_shifting_distance', 'A1', 'A2', 'area_asymmetry_index',
+    'peak_asymmetry_index', 'Ct', 'Cy0', 'F_max', 'log_F0', 'F0', 'Send',
     'FFI', 'F_range'
 ]
 
+# ==========================================
+# MODEL RERUN OVERRIDES
+# ==========================================
+# Used by: 03_main_training.py, 04_cross_dataset_training.py — list of model
+# keys to force-retrain even if cached results exist; currently empty.
 RERUN_MODELS = [
     # "cnn_lf"
 ]
 
+# ==========================================
+# DATASET LABEL MAPPINGS
+# ==========================================
+# Used by: 01_curve_preprocessing_v6.py, 03_main_training.py,
+# 04_cross_dataset_training.py, 05_outlier_visualization_report.py,
+# 06_model_prediction_report.py, 07_attribution_vis_all.py,
+# model_for_xai.py, resampling_check.py — maps each experiment folder's raw
+# well index to its class label (per-dataset, since well layout varies).
 LABEL_MAPPINGS = {
 	'D20260320_E00_C00_F4500KHz_U_Elena_steap_cv': {
 		0: 'S',
@@ -474,13 +602,10 @@ LABEL_MAPPINGS = {
 # ==========================================
 # CROSS-DATASET ROBUSTNESS CV (04)
 # ==========================================
-# Manually defined groups of experiment folders to combine for cross-dataset
-# CV (see 04_cross_dataset_training.py). All folders within a group MUST
-# share an IDENTICAL well-index -> label mapping in LABEL_MAPPINGS above,
-# since the well-based CV folds rely on that mapping being consistent.
+# Used by: 04_cross_dataset_training.py, resampling_check.py — groups of
+# experiment folders that share a label mapping, combined for leave-one-
+# folder-out (LOFO) cross-validation.
 CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08']
 }
-
-EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old', 'outlier_visualisation', 'outlier_visualisation_old']

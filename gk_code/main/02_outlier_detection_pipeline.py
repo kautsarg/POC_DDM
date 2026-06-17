@@ -22,7 +22,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
 import tensorflow as tf
-from matplotlib.colors import ListedColormap
 
 import config
 
@@ -45,7 +44,7 @@ from spatial_consistency_outlier import run_spatial_consistency_knn_pipeline, ru
 from model_utils import set_global_determinism
 set_global_determinism(0)
 
-WELL_CMAP = ListedColormap(config.WELL_COLORS)
+WELL_CMAP = config.WELL_CMAP
 
 
 # ====================================================================
