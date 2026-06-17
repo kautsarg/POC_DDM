@@ -41,11 +41,11 @@ DEFAULT_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_chip_init")
 LAB_EXP_FOLDER = os.path.join(BASE_FOLDER, "LAB_DDM_paper")
 MULTI_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_multi")
 
-
 def get_viz_dir(path, subdir):
     """Mirror `path` (a folder under BASE_FOLDER) under VIZ_BASE_FOLDER and append `subdir`."""
     rel = Path(path).relative_to(BASE_FOLDER)
     return Path(VIZ_BASE_FOLDER) / rel / subdir
+EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old', 'outlier_visualisation', 'outlier_visualisation_old']
 
 # ==========================================
 # CURVE TYPE RESOLUTION
@@ -609,3 +609,5 @@ CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08']
 }
+
+
