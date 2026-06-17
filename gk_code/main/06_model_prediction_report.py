@@ -666,7 +666,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true",
                         help="Regenerate the HTML reports even if they already exist")
-    parser.add_argument("--mode", type=str, default="Reference", help="'Native' or 'Reference'")
+    parser.add_argument("--mode", type=str, default="Native", help="'Native' or 'Reference'")
     parser.add_argument("--outlier_filter", type=str, nargs="*",
                         default=[None, "lstm_ae_glb_ds1_label_elbow",
                                  "spatial_knn_label_elbow", "spatial_grid_label_elbow"],
