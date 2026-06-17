@@ -2,11 +2,9 @@
 #PBS -N multi_full_pipeline
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
-#PBS -J 6-6
+#PBS -J 2-6
 #PBS -o logs/
 #PBS -e logs/
-
-cd /rds/general/user/gk225/home/POC_DDM
 
 # Load modules
 module load Python/3.12.3-GCCcore-13.3.0
@@ -20,9 +18,9 @@ export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
-REAL_TASK_ID=$((8-PBS_ARRAY_INDEX))
+REAL_TASK_ID=$((PBS_ARRAY_INDEX))
 
-EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_multi
+EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi
 
 for nc_subtract in 0 1; do
     if [ "$nc_subtract" -eq 1 ]; then
