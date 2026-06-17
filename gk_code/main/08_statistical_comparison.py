@@ -902,6 +902,7 @@ def run_comparison(exp_data_list, compare_axis, all_conditions, condition_print_
 # ============================================================
 
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(
         description="Statistical comparison of models, outlier filters, and curve types.",
         formatter_class=argparse.RawTextHelpFormatter)

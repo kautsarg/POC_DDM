@@ -58,6 +58,7 @@ def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key)
 # MAIN
 # ============================================================
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="Main Training Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)

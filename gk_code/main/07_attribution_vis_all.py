@@ -1175,6 +1175,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         tf.keras.backend.clear_session()
 
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="XAI Visualization Pipeline for DDM Models")
     parser.add_argument("--task_id", type=int, default=None, help="Array Job ID — index into sorted experiment folders (default: run all)")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")

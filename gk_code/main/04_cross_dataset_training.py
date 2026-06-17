@@ -105,6 +105,7 @@ def build_lofo_splits(dataset_id):
 # MAIN
 # ============================================================
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="Cross-Dataset Leave-One-Folder-Out (LOFO) Training")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID -> index into CROSS_DATASET_GROUPS")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)

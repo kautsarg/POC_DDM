@@ -755,6 +755,7 @@ def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False):
 # ====================================================================
 
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="Outlier Detection Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)

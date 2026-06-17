@@ -349,6 +349,7 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
 # ==========================================
 
 if __name__ == "__main__":
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="Curve Preprocessing Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
