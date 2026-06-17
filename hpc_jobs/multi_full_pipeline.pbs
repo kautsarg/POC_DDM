@@ -3,8 +3,11 @@
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
 #PBS -J 2-6
-#PBS -o logs/
-#PBS -e logs/
+#PBS -o logs/multi_full_pipeline/
+#PBS -e logs/multi_full_pipeline/
+#PBS -k oe
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline
 
 # Load modules
 module load Python/3.12.3-GCCcore-13.3.0
