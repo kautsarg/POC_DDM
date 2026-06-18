@@ -3,9 +3,9 @@
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
 #PBS -J 0-3
-#PBS -o logs/lab_pipeline_manual/
-#PBS -e logs/lab_pipeline_manual/
-#PBS -k oe
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/lab_pipeline_manual
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/lab_pipeline_manual
+#PBS -k eo
 
 mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/lab_pipeline_manual
 

@@ -3,9 +3,9 @@
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=16:mem=64gb:ngpus=1
 #PBS -J 0-1
-#PBS -o logs/multi_lofo_crossval/
-#PBS -e logs/multi_lofo_crossval/
-#PBS -k oe
+#PBS -o /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
+#PBS -e /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
+#PBS -k eo
 
 mkdir -p /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
 

@@ -3,9 +3,9 @@
 #PBS -l walltime=72:00:00
 #PBS -J 1-3
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
-#PBS -o logs/xai_viz/
-#PBS -e logs/xai_viz/
-#PBS -k oe
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/xai_viz
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/xai_viz
+#PBS -k eo
 
 mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/xai_viz
 
