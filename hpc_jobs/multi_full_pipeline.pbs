@@ -2,7 +2,7 @@
 #PBS -N multi_full_pipeline
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
-#PBS -J 7-8
+#PBS -J 2-6
 #PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
 #PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
 #PBS -k eo
@@ -16,13 +16,11 @@ module load cuDNN/9.10.2.21-CUDA-12.6.0
 
 # Activate venv
 source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
-
 export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
-REAL_TASK_ID=$((PBS_ARRAY_INDEX))
-
+REAL_TASK_ID=$((8-PBS_ARRAY_INDEX))
 EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi
 
 for nc_subtract in 0 1; do
@@ -34,8 +32,12 @@ for nc_subtract in 0 1; do
         TRAIN_FOLDER="$EXP_FOLDER"
     fi
 
+    echo "################################################################################"
+    echo $TRAIN_FOLDER
+    echo "################################################################################"
+    
     # python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
-    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --force_rerun
+    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1
     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
