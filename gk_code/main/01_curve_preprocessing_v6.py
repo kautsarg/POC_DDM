@@ -202,6 +202,10 @@ def extract_pixel_temp_dataframes(all_exp_data):
 def process_experiment_data(ori_curves, ori_timestamps, window_size_ori, window_size_1stder, margin,
                             compute_sigmoid_fits=False):
     ori_curves_avg = moving_average_vec(ori_curves, window_size_ori)
+    # Baseline each curve to start at y=0. Must subtract per-row (axis=1 slice, not a
+    # single index) — ori_curves_avg[0] would be pixel 0's first value, subtracted from
+    # every pixel; [:, 0:1] keeps the (N_pixels, 1) shape so each row is zeroed by its own start.
+    ori_curves_avg = ori_curves_avg - ori_curves_avg[:, 0:1]
 
     if not compute_sigmoid_fits:
         # Derivative/cleaning chain only feeds sigmoid fitting (run_all_fits) — skip it
@@ -380,10 +384,6 @@ if __name__ == "__main__":
                         help="Compute the derivative/cleaning chain (ori_curve_dydx, ori_dydx_avg, cleaned_std, "
                              "cleaned_lowest) and the 5-parameter sigmoid fits derived from it. Unused by 02-08 "
                              "under default --curve_type args; off by default to save compute and storage.")
-    parser.add_argument("--strip_unused_curves", action="store_true",
-                        help="Migration utility: clear the sigmoid-fit chain and remove dead well_* fields from "
-                             "the existing cached file in place (merging in the legacy preprocessed_curves_nonorm.joblib "
-                             "if still separate), then exit. No recomputation.")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -421,36 +421,6 @@ if __name__ == "__main__":
     # joblib_redundancy.md "01 + 02: one shared joblib, scripts stay separate".
     save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
     legacy_save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
-
-    if args.strip_unused_curves:
-        state = {}
-        if os.path.exists(save_path):
-            state = joblib.load(save_path)
-        if "curves" not in state and os.path.exists(legacy_save_path):
-            state.update(joblib.load(legacy_save_path))
-
-        if "curves" not in state:
-            print(f"  -> [SKIP] {save_exp_path.name}: no cached curve data found to strip.")
-            sys.exit(0)
-
-        state["sigmoid_curves"] = {}
-        for k in ["ori_curve_dydx", "ori_dydx_avg", "cleaned_std", "cleaned_lowest"]:
-            state["curves"][k] = None
-        for k in ["well_2d_bs_active", "well_2d_nl_bs_active", "well_temp_lin2d",
-                  "well_2d_temp_npr", "well_temp_mean_then_lin"]:
-            state["curves"].pop(k, None)
-        if "idxs" in state:
-            state["idxs"]["cleaned_idx"] = None
-            state["idxs"]["cleaned_lowest_idx"] = None
-        state["window_size_1stder"] = None
-
-        joblib.dump(state, save_path, compress=3)
-        if os.path.exists(legacy_save_path) and os.path.abspath(legacy_save_path) != os.path.abspath(save_path):
-            os.remove(legacy_save_path)
-            print(f"  -> [STRIPPED+MERGED] {save_exp_path.name}: consolidated into {save_path}, removed {legacy_save_path}")
-        else:
-            print(f"  -> [STRIPPED] {save_exp_path.name}: removed unused sigmoid-fit chain + dead well_* fields.")
-        sys.exit(0)
 
     if os.path.exists(save_path) and not args.force_rerun:
         try:

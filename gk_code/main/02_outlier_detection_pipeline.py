@@ -773,10 +773,6 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true",
                         help="Recompute and overwrite even if a presaved unified state already exists")
-    parser.add_argument("--strip_unused_curves", action="store_true",
-                        help="Migration utility: drop dataset/dataset_name/kinetic_features (and matching "
-                             "feature-combination lists) entries down to just ori_curves/ori_curves_avg in "
-                             "the existing cached unified state, then exit. No recomputation.")
     args = parser.parse_args()
 
     exp_paths = sorted([
@@ -791,33 +787,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     exp_path = exp_paths[args.task_id]
-
-    if args.strip_unused_curves:
-        unified_save_path = exp_path / config.TRAINING_DATA_PATH
-        if not unified_save_path.exists():
-            print(f"  -> [SKIP] {exp_path.name}: no cached state found to strip.")
-            sys.exit(0)
-        state = joblib.load(unified_save_path)
-        if "dataset_name" not in state:
-            print(f"  -> [SKIP] {exp_path.name}: no 'dataset'/'dataset_name' to strip (run 02 first).")
-            sys.exit(0)
-
-        keep_names = {"ori_curves", "ori_curves_avg"}
-        dataset_name = list(state["dataset_name"])
-        keep_idx = [i for i, n in enumerate(dataset_name) if n in keep_names]
-
-        state["dataset_name"] = [dataset_name[i] for i in keep_idx]
-        state["dataset"] = [state["dataset"][i] for i in keep_idx]
-        if "kinetic_features" in state:
-            state["kinetic_features"] = [state["kinetic_features"][i] for i in keep_idx]
-        for key in ["linear_feature_combinations", "important_feature_combinations", "importance_dfs"]:
-            if key in state:
-                state[key] = [state[key][i] for i in keep_idx]
-
-        joblib.dump(state, unified_save_path, compress=3)
-        n_dropped = len(dataset_name) - len(keep_idx)
-        print(f"  -> [STRIPPED] {exp_path.name}: dropped {n_dropped} unused curve variant(s), kept {len(keep_idx)}.")
-        sys.exit(0)
 
     saved_viz = getattr(config, "SAVED_VIZ", [])
     save_plot_flag = bool(saved_viz) and any(s in str(exp_path) for s in saved_viz)
