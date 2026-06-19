@@ -42,7 +42,6 @@ from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeli
 from spatial_consistency_outlier import run_spatial_consistency_knn_pipeline, run_spatial_consistency_grid_pipeline
 
 from model_utils import set_global_determinism
-set_global_determinism(0)
 
 WELL_CMAP = config.WELL_CMAP
 
@@ -773,8 +772,15 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true",
                         help="Recompute and overwrite even if a presaved unified state already exists")
+    parser.add_argument("--fast_mode", action="store_true",
+                        help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
+                             "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
+                             "won't be bit-exact. Only affects this script.")
+    
     args = parser.parse_args()
 
+    set_global_determinism(0, strict=not args.fast_mode)
+    
     exp_paths = sorted([
         Path(args.exp_folder, name)
         for name in os.listdir(args.exp_folder)

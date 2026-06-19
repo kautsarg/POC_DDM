@@ -158,12 +158,12 @@ OUTLIER_FILTERS = [
 # resampling_check.py); TRAINING_RESULT_PATH / TRAINING_10FOLD_RESULT_PATH
 # (03, 06, 08); CROSS_DATASET_RESULT_PATH (04); CROSS_DATASET_RESAMPLER_PATH
 # (04, resampling_check.py).
-PREPROCESSED_CURVES_PATH = 'preprocessed_curves_nonorm.joblib'
-TRAINING_DATA_PATH = 'curve_for_training_nonorm.joblib'
-TRAINING_RESULT_PATH = 'classification_performances_nonorm.joblib'
-TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold_nonorm.joblib'
-CROSS_DATASET_RESULT_PATH = 'classification_performances_cross_dataset_{mode}_{curve_type}.joblib'
-CROSS_DATASET_RESAMPLER_PATH = 'classification_performances_cross_dataset_resampler_{curve_type}.joblib'
+PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
+TRAINING_DATA_PATH = 'curve_for_training.joblib'
+TRAINING_RESULT_PATH = 'classification_performances.joblib'
+TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
+CROSS_DATASET_RESULT_PATH = 'cross_dataset_classification_performances_{mode}_{curve_type}.joblib'
+CROSS_DATASET_RESAMPLER_PATH = 'cross_dataset_resampler_classification_performances_{curve_type}.joblib'
 
 # ==========================================
 # MATPLOTLIB GLOBAL STYLE
@@ -758,7 +758,7 @@ LABEL_MAPPINGS = {
 # folder-out (LOFO) cross-validation.
 CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
-    'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08']
+    'init_oneplex_v6': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08']
 }
 
 
