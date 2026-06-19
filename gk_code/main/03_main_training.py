@@ -15,7 +15,6 @@ import numpy as np
 import config
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-set_global_determinism(0)
 
 # ============================================================
 # HELPERS
@@ -66,8 +65,15 @@ if __name__ == "__main__":
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--training_mode", type=str, nargs="+", choices=["native", "reference"], default=["native"], help="Which training mode(s) to run: 'native' (train on this dataset's own curves) and/or 'reference' (train on the original ori_curves, using this dataset's outlier filters)")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve variant(s) to train on and save XAI models for (e.g. 'ori_curve' 'ori_curve_avg')")
+    parser.add_argument("--fast_mode", action="store_true",
+                        help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
+                             "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
+                             "won't be bit-exact. Only affects this script.")
+    
     args = parser.parse_args()
 
+    set_global_determinism(0, strict=not args.fast_mode)
+    
     exp_paths = get_exp_paths(args.exp_folder)
     n_splits = args.n_splits
     if args.task_id >= len(exp_paths):
