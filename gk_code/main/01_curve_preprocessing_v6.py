@@ -199,8 +199,16 @@ def extract_pixel_temp_dataframes(all_exp_data):
 # 3. DATA PROCESSING PIPELINE
 # ==========================================
 
-def process_experiment_data(ori_curves, ori_timestamps, window_size_ori, window_size_1stder, margin):
+def process_experiment_data(ori_curves, ori_timestamps, window_size_ori, window_size_1stder, margin,
+                            compute_sigmoid_fits=False):
     ori_curves_avg = moving_average_vec(ori_curves, window_size_ori)
+
+    if not compute_sigmoid_fits:
+        # Derivative/cleaning chain only feeds sigmoid fitting (run_all_fits) — skip it
+        # entirely when sigmoid fits are disabled (default). See joblib_redundancy.md Change 1.
+        processed_curves = [ori_curves, None, None, None, None]
+        indices_dict = {"cleaned_idx": None, "cleaned_lowest_idx": None}
+        return processed_curves, indices_dict, ori_curves_avg
 
     ori_curve_dydx = np.array(get_derivatives(ori_curves, ori_timestamps))
     ori_dydx_avg = moving_average_vec(ori_curve_dydx, window_size_1stder)
@@ -293,18 +301,21 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
 def save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves,
                                      indices_dict, pixel_temp_dfs, baseline_value,
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
-                                     window_size_ori, window_size_1stder, margin, max_significant_index):
-
+                                     window_size_ori, window_size_1stder, margin, max_significant_index,
+                                     compute_sigmoid_fits=False):
+    """
+    Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
+    (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
+    each owns its own keys and patches them in place (see joblib_redundancy.md).
+    """
     df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
     well0 = all_exp_data[0].wells_list[0]
 
+    # well_2d_bs_active/well_2d_nl_bs_active/well_temp_lin2d/well_2d_temp_npr/
+    # well_temp_mean_then_lin are NOT persisted — confirmed zero consumers anywhere
+    # (light_pipeline reconstructs well_2d_bs_active independently, never reads it here).
     save_data = {
         "curves": {
-            "well_2d_bs_active": pixel_temp_dfs["well_2d_bs_active_df"].filter(like="Cycle_").values,
-            "well_2d_nl_bs_active": pixel_temp_dfs["well_2d_nl_bs_active_df"].filter(like="Cycle_").values,
-            "well_temp_lin2d": pixel_temp_dfs["well_temp_lin2d_df"].filter(like="Cycle_").values,
-            "well_2d_temp_npr": pixel_temp_dfs["well_2d_temp_npr_df"].filter(like="Cycle_").values,
-            "well_temp_mean_then_lin": well0.well_temp_mean_then_lin,
             "ori_curves": processed_curves[0],
             "ori_curves_avg": ori_curves_avg,
             "ori_curve_dydx": processed_curves[1],
@@ -318,8 +329,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
             "idx_settled": well0.idx_settled,
             "idx_end": well0.idx_end,
             "idx_active": well0.idx_active,
-            "cleaned_idx": indices_dict["cleaned_idx"],
-            "cleaned_lowest_idx": indices_dict["cleaned_lowest_idx"],
+            "cleaned_idx": indices_dict.get("cleaned_idx"),
+            "cleaned_lowest_idx": indices_dict.get("cleaned_lowest_idx"),
             "max_significant_index": max_significant_index,
         },
         "timestamps": X_time,
@@ -335,12 +346,20 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
         },
         "baseline_value": baseline_value,
         "window_size_ori": window_size_ori,
-        "window_size_1stder": window_size_1stder,
+        "window_size_1stder": window_size_1stder if compute_sigmoid_fits else None,
         "margin": margin
     }
 
-    save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
-    joblib.dump(save_data, save_path, compress=3)
+    save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
+    existing_state = {}
+    if os.path.exists(save_path):
+        try:
+            existing_state = joblib.load(save_path)
+        except Exception as e:
+            print(f"  -> [WARNING] Existing shared cache at {save_path} unreadable ({e}). Overwriting.")
+            existing_state = {}
+    existing_state.update(save_data)   # only overwrites 01's own keys — 02's keys (dataset,
+    joblib.dump(existing_state, save_path, compress=3)   # kinetic_features, ...) are left untouched
     print(f"  -> Saved numerical results and metadata to {save_path}")
 
 
@@ -357,6 +376,14 @@ if __name__ == "__main__":
     parser.add_argument("--n_a_type", type=str, default=config.N_A_TYPE, help="Type of n_a")
     parser.add_argument("--nc_subtract", action="store_true", help="Apply baseline subtraction based on derivatives")
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved file already exists")
+    parser.add_argument("--compute_sigmoid_fits", action="store_true",
+                        help="Compute the derivative/cleaning chain (ori_curve_dydx, ori_dydx_avg, cleaned_std, "
+                             "cleaned_lowest) and the 5-parameter sigmoid fits derived from it. Unused by 02-08 "
+                             "under default --curve_type args; off by default to save compute and storage.")
+    parser.add_argument("--strip_unused_curves", action="store_true",
+                        help="Migration utility: clear the sigmoid-fit chain and remove dead well_* fields from "
+                             "the existing cached file in place (merging in the legacy preprocessed_curves_nonorm.joblib "
+                             "if still separate), then exit. No recomputation.")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -388,8 +415,43 @@ if __name__ == "__main__":
         save_exp_path = nc_subtract_root / exp_path.name
     else:
         save_exp_path = exp_path
-        
-    save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
+
+    # Shared with 02_outlier_detection_pipeline.py — 01 and 02 patch their own keys into
+    # the same file rather than 01 writing a separate file 02 copies from. See
+    # joblib_redundancy.md "01 + 02: one shared joblib, scripts stay separate".
+    save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
+    legacy_save_path = os.path.join(save_exp_path, config.PREPROCESSED_CURVES_PATH)
+
+    if args.strip_unused_curves:
+        state = {}
+        if os.path.exists(save_path):
+            state = joblib.load(save_path)
+        if "curves" not in state and os.path.exists(legacy_save_path):
+            state.update(joblib.load(legacy_save_path))
+
+        if "curves" not in state:
+            print(f"  -> [SKIP] {save_exp_path.name}: no cached curve data found to strip.")
+            sys.exit(0)
+
+        state["sigmoid_curves"] = {}
+        for k in ["ori_curve_dydx", "ori_dydx_avg", "cleaned_std", "cleaned_lowest"]:
+            state["curves"][k] = None
+        for k in ["well_2d_bs_active", "well_2d_nl_bs_active", "well_temp_lin2d",
+                  "well_2d_temp_npr", "well_temp_mean_then_lin"]:
+            state["curves"].pop(k, None)
+        if "idxs" in state:
+            state["idxs"]["cleaned_idx"] = None
+            state["idxs"]["cleaned_lowest_idx"] = None
+        state["window_size_1stder"] = None
+
+        joblib.dump(state, save_path, compress=3)
+        if os.path.exists(legacy_save_path) and os.path.abspath(legacy_save_path) != os.path.abspath(save_path):
+            os.remove(legacy_save_path)
+            print(f"  -> [STRIPPED+MERGED] {save_exp_path.name}: consolidated into {save_path}, removed {legacy_save_path}")
+        else:
+            print(f"  -> [STRIPPED] {save_exp_path.name}: removed unused sigmoid-fit chain + dead well_* fields.")
+        sys.exit(0)
+
     if os.path.exists(save_path) and not args.force_rerun:
         try:
             existing_data = joblib.load(save_path)
@@ -397,7 +459,7 @@ if __name__ == "__main__":
             print(f"  -> [WARNING] Cached file at {save_path} is corrupted ({e}). Recomputing from scratch...")
             existing_data = None
 
-        if existing_data is not None:
+        if existing_data is not None and "curves" in existing_data:
             if "ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data:
                 print(f"Cache hit: {save_exp_path}")
                 print("  ✓ Experiment complete!\n")
@@ -412,6 +474,8 @@ if __name__ == "__main__":
             print(f"  -> Patched {save_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
+        # else: file exists but 01's keys ("curves") aren't in it yet (e.g. only 02 has
+        # written to the shared file so far) — fall through and compute 01's part normally.
 
     print(f"Processing Experiment: {exp_path}")
 
@@ -529,15 +593,20 @@ if __name__ == "__main__":
     ##############################################################
     
     processed_curves, indices_dict, ori_curves_avg = process_experiment_data(
-        X_2d_bs_active, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin
+        X_2d_bs_active, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin,
+        compute_sigmoid_fits=args.compute_sigmoid_fits
     )
 
-    fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
+    if args.compute_sigmoid_fits:
+        fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
+    else:
+        fitting_results = {}
 
     save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves,
                                     indices_dict, pixel_temp_dfs, baseline_value,
                                     Y_well, X_time, all_exp_data, ori_curves_avg,
-                                    config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index)
+                                    config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index,
+                                    compute_sigmoid_fits=args.compute_sigmoid_fits)
     
     unique_wells = np.unique(Y_well)
 

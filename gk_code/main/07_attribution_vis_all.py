@@ -66,13 +66,22 @@ def prepare_dataset(exp_path, filter_key, curve_type="ori_curve"):
     splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
     train_idx, test_idx = next(splitter.split(X, y))
 
-    joblib_path = exp_path / "model_interpretation" / f"model_interpretation_{curve_type}.joblib"
+    # top_10_features is folded into classification_performances_*.joblib's per-dataset_name
+    # dict (see joblib_redundancy.md Change 4) — no separate model_interpretation joblib
+    # is written anymore. Try both 1-fold and 10-fold result file names.
     saved_top_10 = None
-    
-    if joblib_path.exists():
-        local_pkg = joblib.load(joblib_path)
-        if local_pkg and "top_10_features" in local_pkg:
-            saved_top_10 = local_pkg["top_10_features"].get(str(filter_key))
+    clean_title = dataset_name.replace("_", " ").title()
+    for results_path_const in (config.TRAINING_RESULT_PATH, config.TRAINING_10FOLD_RESULT_PATH):
+        results_path = exp_path / results_path_const
+        if not results_path.exists():
+            continue
+        try:
+            all_ml_results = joblib.load(results_path)
+        except Exception:
+            continue
+        saved_top_10 = all_ml_results.get(clean_title, {}).get("top_10_features", {}).get(str(filter_key))
+        if saved_top_10:
+            break
 
     if saved_top_10:
         top_10_features = saved_top_10

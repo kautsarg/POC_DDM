@@ -9,7 +9,7 @@ import random
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold, train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -43,17 +43,23 @@ else:
 # ====================================================================
 # GLOBAL DETERMINISM SETUP
 # ====================================================================
-def set_global_determinism(seed=0):
+def set_global_determinism(seed=0, strict=True):
+    """RNG seeding always happens. `strict=True` (default) additionally forces
+    TensorFlow off cuDNN's fast non-deterministic RNN kernels for bit-exact reruns —
+    this is the single biggest cost for GRU/LSTM/Transformer training. Pass
+    `strict=False` (currently only exposed via 04_cross_dataset_training.py's
+    --fast_mode) to keep seeding but allow cuDNN's fast path."""
     os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
-    os.environ['TF_DETERMINISTIC_OPS'] = '1'
-    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-    try:
-        tf.config.experimental.enable_op_determinism()
-    except AttributeError:
-        pass
+    if strict:
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+        os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+        try:
+            tf.config.experimental.enable_op_determinism()
+        except AttributeError:
+            pass
 
 
 # ====================================================================
@@ -584,6 +590,40 @@ def evaluate_outlier_filters(
                 _do_xai_save = (save_model_dir is not None and fold_idx == 0
                                 and m in _XAI_SAVE_NAME)
 
+                # Stratified validation split for EarlyStopping/ReduceLROnPlateau, shared
+                # across all Keras branches below (rf/knn/ffi don't use it — not epoch-based).
+                # Avoids Keras's validation_split, which takes a trailing slice of the array
+                # (not stratified) and could miss whole classes depending on row ordering.
+                # Falls back to no validation split if a class is too sparse in this fold.
+                _val_split_ok = False
+                if m not in ("rf", "knn", "ffi"):
+                    try:
+                        _tr_sub, _val_sub = train_test_split(
+                            np.arange(len(y_train)), test_size=0.1, stratify=y_train, random_state=0)
+                        y_train_fit = y_train[_tr_sub]
+                        y_val = y_train[_val_sub]
+                        X_train_curve_fit = X_train_curve[_tr_sub]
+                        X_val_curve = X_train_curve[_val_sub]
+                        if X_manual is not None:
+                            X_train_man_fit = X_train_man[_tr_sub]
+                            X_val_man = X_train_man[_val_sub]
+                        _val_split_ok = True
+                    except ValueError:
+                        pass
+                if not _val_split_ok:
+                    y_train_fit = y_train
+                    X_train_curve_fit = X_train_curve
+                    if X_manual is not None:
+                        X_train_man_fit = X_train_man
+
+                # EarlyStopping patience > ReduceLROnPlateau patience so LR gets a chance
+                # to drop before training stops; LR scheduling reduces seed-to-seed variance
+                # by preventing different seeds from getting stuck at a poor LR for the whole run.
+                _fit_callbacks = [
+                    tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True),
+                    tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-5),
+                ] if _val_split_ok else []
+
                 # Train Standard vs. Late Fusion models
                 if m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
                     tf.keras.backend.clear_session()
@@ -600,7 +640,13 @@ def evaluate_outlier_filters(
                         model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
                         epochs = 500
 
-                    model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _val_split_ok:
+                        model.fit([X_train_curve_fit, X_train_man_fit], y_train_fit,
+                                 validation_data=([X_val_curve, X_val_man], y_val),
+                                 epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                    else:
+                        model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -626,7 +672,13 @@ def evaluate_outlier_filters(
                         epochs = 500
 
                     # Notice we only pass X_train_curve here, not a list of inputs!
-                    model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, y_train_fit,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -654,7 +706,12 @@ def evaluate_outlier_filters(
                     else:
                         raise ValueError(f"Model '{m}' is not properly defined in the training loop.")
 
-                    clf.fit(X_train_curve, y_train)
+                    if _val_split_ok:
+                        clf.fit(X_train_curve_fit, y_train_fit,
+                               validation_data=(X_val_curve, y_val),
+                               callbacks=_fit_callbacks)
+                    else:
+                        clf.fit(X_train_curve, y_train)
 
                     if _do_xai_save and m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"

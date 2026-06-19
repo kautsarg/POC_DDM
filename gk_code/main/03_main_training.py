@@ -245,18 +245,16 @@ if __name__ == "__main__":
                 save_prefix=prefix_native,
             )
 
-        # --- WRITE XAI METADATA JOBLIB ---
-        # 07_attribution_vis_all reads top_10_features[filter_key] from this file.
+        # --- XAI METADATA: folded into the results dict (no separate model_interpretation
+        # joblib — see joblib_redundancy.md Change 4). 07_attribution_vis_all now reads
+        # top_10_features from classification_performances_*.joblib's per-dataset_name dict.
         # The same KFS is used across all filters (MI computed on unfiltered train split),
-        # so we write the same feature list for every filter key.
-        model_interp_dir.mkdir(parents=True, exist_ok=True)
-        xai_joblib_path = model_interp_dir / f"model_interpretation_{xai_curve_type}.joblib"
-        xai_pkg = joblib.load(xai_joblib_path) if xai_joblib_path.exists() else {}
-        if "top_10_features" not in xai_pkg:
-            xai_pkg["top_10_features"] = {}
+        # so we store the same feature list for every filter key.
+        if "top_10_features" not in all_ml_results[clean_title]:
+            all_ml_results[clean_title]["top_10_features"] = {}
         for f in outlier_filters:
-            xai_pkg["top_10_features"][str(f)] = top_10_features
-        joblib.dump(xai_pkg, xai_joblib_path)
-        print(f"  [XAI] Saved feature metadata -> {xai_joblib_path}")
+            all_ml_results[clean_title]["top_10_features"][str(f)] = top_10_features
+        joblib.dump(all_ml_results, results_file_path, compress=3)
+        print(f"  [XAI] Saved feature metadata into {results_file_path}")
 
         gc.collect()

@@ -1,6 +1,7 @@
 import os
 import sys
 import gc
+import glob
 import argparse
 import joblib
 from pathlib import Path
@@ -14,7 +15,8 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 import config
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-set_global_determinism(0)
+# set_global_determinism() is called inside __main__ after argparse, so --fast_mode
+# can control strictness (see LOFO speed-up plan Change 1). Other scripts are unaffected.
 
 
 # ============================================================
@@ -101,6 +103,58 @@ def build_lofo_splits(dataset_id):
     return splits
 
 
+def combo_result_path(canonical_path, fold_idx, filter_idx):
+    """Per-(fold, filter) result file path used when --fold_idx/--filter_idx are both set,
+    avoiding concurrent array tasks racing on one shared lofo_results file."""
+    canonical_path = Path(canonical_path)
+    return canonical_path.with_name(
+        f"{canonical_path.stem}__fold{fold_idx}_filt{filter_idx}{canonical_path.suffix}")
+
+
+def merge_lofo_combo_files(out_dir, curve_type):
+    """Glob all per-combo result files for curve_type and recursively merge them into the
+    canonical lofo_results file (same path/format 05/06/07/08 already expect — no downstream
+    script needs to change). Warns (doesn't silently drop) on inconsistent combo coverage."""
+    canonical_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
+    combo_glob = str(out_dir / f"{canonical_path.stem}__fold*_filt*{canonical_path.suffix}")
+    combo_paths = sorted(glob.glob(combo_glob))
+
+    if not combo_paths:
+        print(f"  -> [MERGE] No per-combo files found matching {combo_glob}")
+        return None
+
+    merged = joblib.load(canonical_path) if canonical_path.exists() else {}
+    for p in combo_paths:
+        combo_data = joblib.load(p)
+        for fold_label, fold_data in combo_data.items():
+            merged.setdefault(fold_label, {})
+            for key, value in fold_data.items():
+                if key == "top_10_features":
+                    merged[fold_label].setdefault("top_10_features", {}).update(value)
+                else:
+                    merged[fold_label][key] = value
+
+    joblib.dump(merged, canonical_path, compress=3)
+
+    # Completeness check: every fold should have the same set of filter keys.
+    fold_filter_sets = {
+        fold_label: frozenset(k for k in fold_data.keys() if k != "top_10_features")
+        for fold_label, fold_data in merged.items()
+    }
+    distinct_sets = set(fold_filter_sets.values())
+    if len(distinct_sets) > 1:
+        print(f"  -> [WARNING] Inconsistent filter coverage across folds in {canonical_path} — "
+              f"some (fold, filter) combos may be missing:")
+        for fold_label, filters in fold_filter_sets.items():
+            print(f"       {fold_label}: {sorted(str(x) for x in filters)}")
+    else:
+        n_folds = len(fold_filter_sets)
+        n_filters = len(next(iter(distinct_sets))) if distinct_sets else 0
+        print(f"  -> [MERGED] {len(combo_paths)} combo file(s) -> {canonical_path} "
+              f"({n_folds} folds x {n_filters} filters = {n_folds * n_filters} combos, consistent).")
+    return merged
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -111,7 +165,28 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--curve_type", type=str, nargs='+', default=['ori_curve', 'ori_curve_avg'], help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
+    parser.add_argument("--fast_mode", action="store_true",
+                        help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
+                             "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
+                             "won't be bit-exact. Only affects this script.")
+    parser.add_argument("--fold_idx", type=int, default=None,
+                        help="Process only this fold (0-based position in lofo_splits). Must be paired "
+                             "with --filter_idx — enables parallelizing folds x filters across separate "
+                             "array-job tasks instead of running all of them sequentially in one job.")
+    parser.add_argument("--filter_idx", type=int, default=None,
+                        help="Process only this outlier filter (0-based position in the filter list). "
+                             "Must be paired with --fold_idx.")
+    parser.add_argument("--merge_only", action="store_true",
+                        help="Skip combine_group/training entirely; merge all per-(fold,filter) combo "
+                             "result files for the given --curve_type into the canonical results file, then exit.")
     args = parser.parse_args()
+
+    if (args.fold_idx is None) != (args.filter_idx is None):
+        print("--fold_idx and --filter_idx must both be given together (or both omitted). Exiting.")
+        sys.exit(1)
+    combo_mode = args.fold_idx is not None
+
+    set_global_determinism(0, strict=not args.fast_mode)
 
     group_names = list(config.CROSS_DATASET_GROUPS.keys())
     if not group_names:
@@ -124,6 +199,12 @@ if __name__ == "__main__":
     group_name = group_names[args.task_id]
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
+
+    if args.merge_only:
+        out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
+        for curve_type in args.curve_type:
+            merge_lofo_combo_files(out_dir, curve_type)
+        sys.exit(0)
 
     for curve_type in args.curve_type:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
@@ -153,19 +234,36 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
+        canonical_results_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
+        outlier_filters_full = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+        lofo_splits_full = list(build_lofo_splits(combined["dataset_id"]).items())
+        models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
+
+        if combo_mode:
+            if not (0 <= args.fold_idx < len(lofo_splits_full)):
+                print(f"--fold_idx {args.fold_idx} out of bounds for {len(lofo_splits_full)} folds. Exiting.")
+                sys.exit(1)
+            if not (0 <= args.filter_idx < len(outlier_filters_full)):
+                print(f"--filter_idx {args.filter_idx} out of bounds for {len(outlier_filters_full)} filters. Exiting.")
+                sys.exit(1)
+            fold_items = [lofo_splits_full[args.fold_idx]]
+            outlier_filters = [outlier_filters_full[args.filter_idx]]
+            results_file_path = combo_result_path(canonical_results_path, args.fold_idx, args.filter_idx)
+            print(f"  [*] Combo mode: fold {args.fold_idx} ({fold_items[0][0]}) x "
+                  f"filter {args.filter_idx} ({outlier_filters[0]}) -> {results_file_path}")
+        else:
+            fold_items = lofo_splits_full
+            outlier_filters = outlier_filters_full
+            results_file_path = canonical_results_path
+
         if args.force_rerun:
             print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")
             lofo_results = {}
         else:
             lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
 
-        lofo_splits = build_lofo_splits(combined["dataset_id"])
-        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
-        models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
-
-        total_folds = len(lofo_splits)
-        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
+        total_folds = len(fold_items)
+        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(fold_items):
             progress_pct = ((fold_idx + 1) / total_folds) * 100
             print(f"\n{'='*75}")
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
@@ -198,16 +296,16 @@ if __name__ == "__main__":
             )
 
             lofo_results[fold_label] = res
-            joblib.dump(lofo_results, results_file_path, compress=3)
 
-            # XAI metadata joblib (same format as 03 — 07 reads top_10_features from here)
-            xai_joblib_path = lofo_model_dir / f"model_interpretation_{curve_type}.joblib"
-            xai_pkg = joblib.load(xai_joblib_path) if xai_joblib_path.exists() else {}
-            if "top_10_features" not in xai_pkg:
-                xai_pkg["top_10_features"] = {}
+            # XAI metadata: folded directly into lofo_results (see joblib_redundancy.md
+            # Change 4) instead of a separate model_interpretation_{curve_type}.joblib —
+            # 07_attribution_vis_all now reads top_10_features from this same file.
+            if "top_10_features" not in lofo_results[fold_label]:
+                lofo_results[fold_label]["top_10_features"] = {}
             for f in outlier_filters:
-                xai_pkg["top_10_features"][str(f)] = top_10_features
-            joblib.dump(xai_pkg, xai_joblib_path)
+                lofo_results[fold_label]["top_10_features"][str(f)] = top_10_features
+
+            joblib.dump(lofo_results, results_file_path, compress=3)
 
             # Test-fold snapshot so 07 can run attribution without re-running combine_group.
             features_df_all = combined["features_df"]

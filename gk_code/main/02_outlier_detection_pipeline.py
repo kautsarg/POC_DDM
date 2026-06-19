@@ -211,25 +211,38 @@ def _load_or_build_state(exp_path, unified_save_path, force_rerun):
     """Load persisted pipeline state, or build a fresh one from preprocessed curves."""
     pipeline_state = {}
 
-    if os.path.exists(unified_save_path) and not force_rerun:
+    if os.path.exists(unified_save_path):
         print(f"  -> Found unified state at {unified_save_path}. Loading...")
         try:
             pipeline_state = joblib.load(unified_save_path)
             print("  -> Unified state loaded successfully.")
         except Exception as e:
             print(f"  -> [WARNING] Failed to load state ({e}). Starting fresh.")
-    elif force_rerun and os.path.exists(unified_save_path):
-        print(f"  -> [FORCE RERUN] Ignoring presaved state. Recomputing everything...")
+            pipeline_state = {}
+
+    if force_rerun and pipeline_state:
+        # Only discard 02's OWN previously-derived keys — 01's keys (curves, sigmoid_curves,
+        # timestamps, well_labels, metadata, ...) are untouched, so --force_rerun never
+        # forces 01's raw chip-data reconstruction to re-run too.
+        print("  -> [FORCE RERUN] Discarding 02's own cached dataset/kinetic_features "
+              "(01's curves/metadata are kept). Recomputing 02's part...")
+        for k in ("dataset", "dataset_name", "Y_well", "kinetic_features",
+                  "linear_feature_combinations", "important_feature_combinations", "importance_dfs"):
+            pipeline_state.pop(k, None)
 
     if "dataset" not in pipeline_state:
-        curve_path = exp_path / config.PREPROCESSED_CURVES_PATH
-        if not curve_path.exists():
-            print(f"Skipping {exp_path.name} - '{config.PREPROCESSED_CURVES_PATH}' not found.")
+        # 01 and 02 share one joblib (config.TRAINING_DATA_PATH) — 01 patches "curves"/
+        # "sigmoid_curves"/"well_labels"/"timestamps"/"metadata" directly into the same
+        # file 02 loads above, so no second file read is needed here. See
+        # joblib_redundancy.md "01 + 02: one shared joblib, scripts stay separate".
+        if "curves" not in pipeline_state:
+            print(f"Skipping {exp_path.name} - run 01_curve_preprocessing_v6.py first "
+                  f"(no 'curves' key in '{config.TRAINING_DATA_PATH}').")
             sys.exit(0)
 
-        data = joblib.load(curve_path)
+        data = pipeline_state
         dataset_name = ["ori_curves"]
-        dataset = [data["curves"]["ori_curves"]]
+        dataset = [data["curves"]["ori_curves"]]   # same object — not a copy
 
         if "ori_curves_avg" in data["curves"]:
             dataset_name.append("ori_curves_avg")
@@ -242,13 +255,12 @@ def _load_or_build_state(exp_path, unified_save_path, force_rerun):
             dataset.append(v["fitted_stretched"])
 
         pipeline_state.update({
-            "dataset_name": np.array(dataset_name),
-            "dataset": np.array(dataset),
-            "Y_well": data["well_labels"],
-            "timestamps": data["timestamps"],
-            "metadata_df": pd.DataFrame(data["metadata"]),
+            "dataset_name": dataset_name,   # plain list, NOT np.array() — keeps array
+            "dataset": dataset,             # objects identical to curves[...] so joblib
+            "Y_well": data["well_labels"],  # dedupes them on disk (see Change in plan)
+            # "timestamps" already present from 01 — no need to re-set it
+            # metadata_df intentionally NOT stored — derived on demand from "metadata"
         })
-        del data
 
     return pipeline_state
 
@@ -266,7 +278,7 @@ def _ensure_kinetic_features(pipeline_state, unified_save_path):
 
     print("  -> Extracting initial kinetic features (CPU Bound)...")
     timestamps = pipeline_state["timestamps"]
-    metadata_df = pipeline_state["metadata_df"]
+    metadata_df = pd.DataFrame(pipeline_state["metadata"])   # derived on demand — not persisted
     dataset = pipeline_state["dataset"]
     kinetic_features = [build_kinetic_features(c, timestamps, metadata_df) for c in dataset]
 
@@ -275,8 +287,8 @@ def _ensure_kinetic_features(pipeline_state, unified_save_path):
             if not n.startswith("avg_")]
     if keep:
         names_k, data_k, feat_k = zip(*keep)
-        pipeline_state["dataset_name"] = np.array(names_k)
-        pipeline_state["dataset"] = np.array(data_k)
+        pipeline_state["dataset_name"] = list(names_k)   # plain list, NOT np.array() —
+        pipeline_state["dataset"] = list(data_k)         # preserves object identity with curves[...]
         pipeline_state["kinetic_features"] = list(feat_k)
     else:
         pipeline_state["dataset_name"] = np.array([])
@@ -526,7 +538,7 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     dataset = pipeline_state["dataset"]
     kinetic_features = pipeline_state["kinetic_features"]
     Y_well = pipeline_state["Y_well"]
-    metadata_df = pipeline_state["metadata_df"]
+    metadata_df = pd.DataFrame(pipeline_state["metadata"])   # derived on demand — not persisted
     ref_curves = dataset[0]
 
     has_spatial_info = {"pixel_row_idx", "pixel_col_idx"}.issubset(metadata_df.columns)
@@ -761,6 +773,10 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true",
                         help="Recompute and overwrite even if a presaved unified state already exists")
+    parser.add_argument("--strip_unused_curves", action="store_true",
+                        help="Migration utility: drop dataset/dataset_name/kinetic_features (and matching "
+                             "feature-combination lists) entries down to just ori_curves/ori_curves_avg in "
+                             "the existing cached unified state, then exit. No recomputation.")
     args = parser.parse_args()
 
     exp_paths = sorted([
@@ -775,6 +791,34 @@ if __name__ == "__main__":
         sys.exit(0)
 
     exp_path = exp_paths[args.task_id]
+
+    if args.strip_unused_curves:
+        unified_save_path = exp_path / config.TRAINING_DATA_PATH
+        if not unified_save_path.exists():
+            print(f"  -> [SKIP] {exp_path.name}: no cached state found to strip.")
+            sys.exit(0)
+        state = joblib.load(unified_save_path)
+        if "dataset_name" not in state:
+            print(f"  -> [SKIP] {exp_path.name}: no 'dataset'/'dataset_name' to strip (run 02 first).")
+            sys.exit(0)
+
+        keep_names = {"ori_curves", "ori_curves_avg"}
+        dataset_name = list(state["dataset_name"])
+        keep_idx = [i for i, n in enumerate(dataset_name) if n in keep_names]
+
+        state["dataset_name"] = [dataset_name[i] for i in keep_idx]
+        state["dataset"] = [state["dataset"][i] for i in keep_idx]
+        if "kinetic_features" in state:
+            state["kinetic_features"] = [state["kinetic_features"][i] for i in keep_idx]
+        for key in ["linear_feature_combinations", "important_feature_combinations", "importance_dfs"]:
+            if key in state:
+                state[key] = [state[key][i] for i in keep_idx]
+
+        joblib.dump(state, unified_save_path, compress=3)
+        n_dropped = len(dataset_name) - len(keep_idx)
+        print(f"  -> [STRIPPED] {exp_path.name}: dropped {n_dropped} unused curve variant(s), kept {len(keep_idx)}.")
+        sys.exit(0)
+
     saved_viz = getattr(config, "SAVED_VIZ", [])
     save_plot_flag = bool(saved_viz) and any(s in str(exp_path) for s in saved_viz)
 
