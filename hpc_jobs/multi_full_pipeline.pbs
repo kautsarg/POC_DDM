@@ -2,10 +2,12 @@
 #PBS -N multi_full_pipeline
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
-#PBS -J 2-6
+#PBS -J 2-4
 #PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
 #PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
 #PBS -k eo
+
+set -e
 
 mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline
 

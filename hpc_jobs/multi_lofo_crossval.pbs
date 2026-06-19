@@ -3,11 +3,13 @@
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=16:mem=64gb:ngpus=1
 #PBS -J 0-1
-#PBS -o /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
-#PBS -e /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_lofo_crossval/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_lofo_crossval/
 #PBS -k eo
 
-mkdir -p /rds/general/user/gk225/home/POC_DDM/logs/multi_lofo_crossval
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_lofo_crossval
 
 # Load modules
 module load Python/3.12.3-GCCcore-13.3.0

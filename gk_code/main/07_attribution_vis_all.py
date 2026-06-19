@@ -832,18 +832,24 @@ def plot_latent_feature_mapping(
                 if mask.sum() < 5:
                     continue
 
-                corr, _ = scipy.stats.spearmanr(z_i[mask], f_j[mask])
+                cosine_m[i, j] = max(0.0, _cosine_sim(sal_profiles[i], feat_sensitivity[j]))
+
+                z_sub, f_sub = z_i[mask], f_j[mask]
+                if np.ptp(z_sub) == 0 or np.ptp(f_sub) == 0:
+                    # Constant input -> correlation/MI undefined; leave at the
+                    # zero-initialized default instead of letting scipy warn.
+                    continue
+
+                corr, _ = scipy.stats.spearmanr(z_sub, f_sub)
                 spearman_m[i, j] = 0.0 if np.isnan(corr) else abs(corr)
 
                 try:
                     mi = mutual_info_regression(
-                        z_i[mask].reshape(-1, 1), f_j[mask], random_state=0
+                        z_sub.reshape(-1, 1), f_sub, random_state=0
                     )[0]
                 except Exception:
                     mi = 0.0
                 mi_m[i, j] = mi
-
-                cosine_m[i, j] = max(0.0, _cosine_sim(sal_profiles[i], feat_sensitivity[j]))
 
         mi_max = mi_m.max()
         if mi_max > 0:
