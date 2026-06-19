@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 
-from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.feature_selection import mutual_info_classif
@@ -133,38 +132,6 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
 # ====================================================================
 # MODULE 2: ORIGINAL LATENT CLUSTERING & HELPERS
 # ====================================================================
-def plot_latent_pca(models, X, X_man, y, dataset_name, save_path):
-    if not models: return
-    num_models = len(models)
-    cols = min(3, num_models)
-    rows = math.ceil(num_models / cols)
-
-    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
-    if num_models == 1: axes = [axes]
-    else: axes = axes.flatten()
-
-    scatter = None
-    for ax, (name, model) in zip(axes, models.items()):
-        latent_model = tf.keras.Model(model.input, model.layers[-2].output)
-        model_inputs = [X, X_man] if name.endswith('_lf') else X
-
-        z = latent_model.predict(model_inputs, verbose=0)
-        z_2d = PCA(n_components=2, random_state=0).fit_transform(z) if z.shape[1] > 2 else z
-
-        scatter = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=y, cmap=WELL_CMAP, vmin=0, vmax=config.N_WELLS - 1, alpha=0.7, s=15, edgecolors='none')
-        ax.set_title(f"{name.upper()}", fontsize=12, fontweight='bold')
-        ax.set_xticks([]); ax.set_yticks([])
-
-    for i in range(num_models, len(axes)): axes[i].axis('off')
-
-    if scatter is not None:
-        fig.legend(*scatter.legend_elements(), title="Classes", loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=10, title_fontsize=12)
-
-    fig.suptitle(f"Latent Space Clustering: {dataset_name}", fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-
 def plot_latent_tsne(models, X, X_man, y, dataset_name, save_path, max_samples=2000):
     if not models: return
     
@@ -423,21 +390,18 @@ def extract_xai_artifacts(models, X_batch, X_man_batch):
 # ====================================================================
 # MODULE 5: YOUR RESTORED VISUALIZATION FUNCTIONS (Optimized)
 # ====================================================================
-def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_features, mean_curve, std_curve, X_batch, y_batch, dataset_name, base_save_path, normalize=False):
-    """Restores your exact 3-subplot layout for LF/Dual architectures using the optimized artifact dict,
-    plus an extra top panel showing the average input curve per label."""
+def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_features, mean_curve, std_curve, X_batch, y_batch, dataset_name, save_path):
+    """One figure, two columns: left = raw saliency heatmaps, right = row-normalized —
+    each column follows the same vertical template (label curves / mean input / heatmap panel(s))
+    used previously, so the two used to be saved as separate normalize=True/False images."""
     art = artifacts.get(model_name)
     if not art: return
 
-    save_path = str(base_save_path).replace('.png', f'_{model_name}.png')
     t = timestamps if len(timestamps) == len(mean_curve) else np.arange(len(mean_curve))
     t_step = t[1] - t[0] if len(t) > 1 else 1
     t_start, t_end = t[0] - (t_step / 2), t[-1] + (t_step / 2)
 
-    master_sal = art["master_saliency"]
-    vmin, vmax = (0, 1) if normalize else (None, None)
-
-    # Per-label average curves for the new top panel
+    # Per-label average curves for the top panel (shared across both columns)
     labels = np.unique(y_batch)
     label_curves = []
     for lab in labels:
@@ -446,126 +410,115 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
             curve = curve.mean(axis=-1)
         label_curves.append(curve)
 
-    def _plot_label_curves(ax):
+    def _plot_label_curves(ax, col_title):
         for lab, curve in zip(labels, label_curves):
             ax.plot(t, curve, color=config.WELL_COLORS[int(lab) % config.N_WELLS], lw=1.2, label=f"Label {lab}")
-        ax.set_title(f"{model_name.upper()} - Average Input Curve per Label", fontsize=12, fontweight='bold', pad=15)
+        ax.set_title(f"{col_title}\n{model_name.upper()} - Average Input Curve per Label", fontsize=11, fontweight='bold', pad=15)
         ax.set_xlim(t_start, t_end)
         ax.grid(True, color='grey', alpha=0.3, linestyle='--')
-        ax.legend(fontsize=8, ncol=min(len(labels), 5), loc='upper left', framealpha=0.8)
+        ax.legend(fontsize=7, ncol=min(len(labels), 5), loc='upper left', framealpha=0.8)
         plt.setp(ax.get_xticklabels(), visible=False)
 
-    if art["is_type"] == "lf":
-        heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
-        heatmap_man = np.array([np.mean(m, axis=0) for m in art["raw_saliency_man"]])
-        if normalize:
-            heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
-            heatmap_man = normalize_heatmap(heatmap_man, method='row')
+    def _plot_mean_curve(ax):
+        ax.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
+        ax.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
+        ax.set_title(f"{model_name.upper()} - Final Output Decision vs Mean Signal", fontsize=11, fontweight='bold', pad=10)
+        ax.set_xlim(t_start, t_end)
+        ax.grid(True, color='grey', alpha=0.3, linestyle='--')
+        plt.setp(ax.get_xticklabels(), visible=False)
 
-        fig, (ax_label, ax_curve, ax_heat_c, ax_heat_m) = plt.subplots(4, 1, figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 2.5, 2.5]})
-        ax_curve.sharex(ax_label)
-        ax_heat_c.sharex(ax_label)
+    is_type = art["is_type"]
+    n_rows = 4 if is_type in ("lf", "dual") else 3
+    height_ratios = [1, 1, 2.5, 2.5] if is_type in ("lf", "dual") else [1, 1, 3]
+    fig_h = 14 if is_type in ("lf", "dual") else 10
+    col_titles = ["Raw Saliency", "Row-Normalized Saliency"]
 
-        _plot_label_curves(ax_label)
+    fig = plt.figure(figsize=(16, fig_h), facecolor='white')
+    gs = fig.add_gridspec(n_rows, 2, height_ratios=height_ratios,
+                          hspace=0.25 if is_type != "base" else 0.15, wspace=0.3)
 
-        ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
-        ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
-        # ax_curve_twin = ax_curve.twinx()
-        # ax_curve_twin.plot(t, master_sal, color='red', lw=1.5, linestyle='--', alpha=0.8, label='Master Output Saliency')
-        ax_curve.set_title(f"{model_name.upper()} - Final Output Decision vs Mean Signal", fontsize=12, fontweight='bold', pad=15)
-        ax_curve.set_xlim(t_start, t_end)
-        ax_curve.grid(True, color='grey', alpha=0.3, linestyle='--')
-        # ax_curve_twin.tick_params(axis='y', labelcolor='red')
-        plt.setp(ax_curve.get_xticklabels(), visible=False)
+    for col, normalize in enumerate([False, True]):
+        vmin, vmax = (0, 1) if normalize else (None, None)
 
-        im_c = ax_heat_c.imshow(heatmap_curve, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_curve), 0], interpolation='nearest')
-        ax_heat_c.set_title(f"Curve Branch Saliency (Top {len(heatmap_curve)} Dims, Ranked by dY/dZ)", fontsize=11, fontweight='bold', pad=10)
-        ax_heat_c.set_ylabel("Rank (1 = Highest Impact)", fontsize=10)
-        ax_heat_c.grid(True, color='grey', alpha=0.3, linestyle='--')
+        ax_label = fig.add_subplot(gs[0, col])
+        ax_curve = fig.add_subplot(gs[1, col], sharex=ax_label)
+        _plot_label_curves(ax_label, col_titles[col])
+        _plot_mean_curve(ax_curve)
+        make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1).axis('off')
+        make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1).axis('off')
+        col_axes = [ax_label, ax_curve]
 
-        im_m = ax_heat_m.imshow(heatmap_man, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[0, 10, len(heatmap_man), 0], interpolation='nearest')
-        ax_heat_m.set_title("Manual Features Saliency (Ranked by dY/dZ)", fontsize=11, fontweight='bold', pad=10)
-        ax_heat_m.set_ylabel("Rank", fontsize=10)
-        ax_heat_m.set_xticks(np.arange(10) + 0.5)
-        ax_heat_m.set_xticklabels(top_10_features, rotation=45, ha='right', fontsize=9, fontweight='bold')
-        ax_heat_m.grid(True, color='grey', alpha=0.3, linestyle='--')
+        if is_type == "lf":
+            heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
+            heatmap_man = np.array([np.mean(m, axis=0) for m in art["raw_saliency_man"]])
+            if normalize:
+                heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
+                heatmap_man = normalize_heatmap(heatmap_man, method='row')
 
-        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
-        cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
-        fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.colorbar(im_m, cax=make_axes_locatable(ax_heat_m).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_label, ax_curve, ax_heat_c, ax_heat_m])
+            ax_heat_c = fig.add_subplot(gs[2, col], sharex=ax_label)
+            ax_heat_m = fig.add_subplot(gs[3, col])
 
-    elif art["is_type"] == "dual":
-        heatmap_cnn = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
-        heatmap_rnn = np.array([np.mean(m, axis=0) for m in art["raw_saliency_rnn"]])
-        if normalize:
-            heatmap_cnn = normalize_heatmap(heatmap_cnn, method='row')
-            heatmap_rnn = normalize_heatmap(heatmap_rnn, method='row')
+            im_c = ax_heat_c.imshow(heatmap_curve, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_curve), 0], interpolation='nearest')
+            ax_heat_c.set_title(f"Curve Branch Saliency (Top {len(heatmap_curve)} Dims, Ranked by dY/dZ)", fontsize=10, fontweight='bold', pad=8)
+            ax_heat_c.set_ylabel("Rank (1 = Highest Impact)", fontsize=9)
+            ax_heat_c.grid(True, color='grey', alpha=0.3, linestyle='--')
+            plt.setp(ax_heat_c.get_xticklabels(), visible=False)
 
-        fig, (ax_label, ax_curve, ax_heat_c, ax_heat_r) = plt.subplots(4, 1, figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 2.5, 2.5]}, sharex=True)
+            im_m = ax_heat_m.imshow(heatmap_man, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[0, 10, len(heatmap_man), 0], interpolation='nearest')
+            ax_heat_m.set_title("Manual Features Saliency (Ranked by dY/dZ)", fontsize=10, fontweight='bold', pad=8)
+            ax_heat_m.set_ylabel("Rank", fontsize=9)
+            ax_heat_m.set_xticks(np.arange(10) + 0.5)
+            ax_heat_m.set_xticklabels(top_10_features, rotation=45, ha='right', fontsize=8, fontweight='bold')
+            ax_heat_m.grid(True, color='grey', alpha=0.3, linestyle='--')
 
-        _plot_label_curves(ax_label)
+            fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Attrib", rotation=270, labelpad=12, fontsize=8)
+            fig.colorbar(im_m, cax=make_axes_locatable(ax_heat_m).append_axes("right", size="3%", pad=0.1)).set_label("Attrib", rotation=270, labelpad=12, fontsize=8)
+            col_axes += [ax_heat_c, ax_heat_m]
 
-        ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
-        ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
-        # ax_curve_twin = ax_curve.twinx()
-        # ax_curve_twin.plot(t, master_sal, color='red', lw=1.5, linestyle='--', alpha=0.8, label='Master Output Saliency')
-        ax_curve.set_title(f"{model_name.upper()} - Final Output Decision vs Mean Signal", fontsize=12, fontweight='bold', pad=15)
-        ax_curve.set_xlim(t_start, t_end)
-        ax_curve.grid(True, color='grey', alpha=0.3, linestyle='--')
-        # ax_curve_twin.tick_params(axis='y', labelcolor='red')
-        plt.setp(ax_curve.get_xticklabels(), visible=False)
-        
-        im_c = ax_heat_c.imshow(heatmap_cnn, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_cnn), 0], interpolation='nearest')
-        ax_heat_c.set_title(f"CNN Branch Saliency (Top {len(heatmap_cnn)} Dims, Ranked by dY/dZ)", fontsize=11, fontweight='bold', pad=10)
-        ax_heat_c.set_ylabel("Rank (1 = Highest Impact)", fontsize=10)
-        ax_heat_c.grid(True, color='grey', alpha=0.3, linestyle='--')
+        elif is_type == "dual":
+            heatmap_cnn = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
+            heatmap_rnn = np.array([np.mean(m, axis=0) for m in art["raw_saliency_rnn"]])
+            if normalize:
+                heatmap_cnn = normalize_heatmap(heatmap_cnn, method='row')
+                heatmap_rnn = normalize_heatmap(heatmap_rnn, method='row')
 
-        im_r = ax_heat_r.imshow(heatmap_rnn, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_rnn), 0], interpolation='nearest')
-        branch_name = "Transformer" if "trans" in model_name else "GRU"
-        ax_heat_r.set_title(f"{branch_name} Branch Saliency (Top {len(heatmap_rnn)} Dims, Ranked by dY/dZ)", fontsize=11, fontweight='bold', pad=10)
-        ax_heat_r.set_ylabel("Rank", fontsize=10)
-        ax_heat_r.set_xlabel("Time", fontsize=10, fontweight='bold')
-        ax_heat_r.grid(True, color='grey', alpha=0.3, linestyle='--')
+            ax_heat_c = fig.add_subplot(gs[2, col], sharex=ax_label)
+            ax_heat_r = fig.add_subplot(gs[3, col], sharex=ax_label)
 
-        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
-        cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
-        fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.colorbar(im_r, cax=make_axes_locatable(ax_heat_r).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_label, ax_curve, ax_heat_c, ax_heat_r])
+            im_c = ax_heat_c.imshow(heatmap_cnn, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_cnn), 0], interpolation='nearest')
+            ax_heat_c.set_title(f"CNN Branch Saliency (Top {len(heatmap_cnn)} Dims, Ranked by dY/dZ)", fontsize=10, fontweight='bold', pad=8)
+            ax_heat_c.set_ylabel("Rank (1 = Highest Impact)", fontsize=9)
+            ax_heat_c.grid(True, color='grey', alpha=0.3, linestyle='--')
+            plt.setp(ax_heat_c.get_xticklabels(), visible=False)
 
-    else:
-        heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
-        if normalize:
-            heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
+            branch_name = "Transformer" if "trans" in model_name else "GRU"
+            im_r = ax_heat_r.imshow(heatmap_rnn, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_rnn), 0], interpolation='nearest')
+            ax_heat_r.set_title(f"{branch_name} Branch Saliency (Top {len(heatmap_rnn)} Dims, Ranked by dY/dZ)", fontsize=10, fontweight='bold', pad=8)
+            ax_heat_r.set_ylabel("Rank", fontsize=9)
+            ax_heat_r.set_xlabel("Time", fontsize=9, fontweight='bold')
+            ax_heat_r.grid(True, color='grey', alpha=0.3, linestyle='--')
 
-        fig, (ax_label, ax_curve, ax_heat) = plt.subplots(3, 1, figsize=(9, 10), gridspec_kw={'height_ratios': [1, 1, 3]}, sharex=True)
+            fig.colorbar(im_c, cax=make_axes_locatable(ax_heat_c).append_axes("right", size="3%", pad=0.1)).set_label("Attrib", rotation=270, labelpad=12, fontsize=8)
+            fig.colorbar(im_r, cax=make_axes_locatable(ax_heat_r).append_axes("right", size="3%", pad=0.1)).set_label("Attrib", rotation=270, labelpad=12, fontsize=8)
+            col_axes += [ax_heat_c, ax_heat_r]
 
-        _plot_label_curves(ax_label)
+        else:
+            heatmap_curve = np.array([np.mean(m, axis=0) for m in art["raw_saliency_curve"]])
+            if normalize:
+                heatmap_curve = normalize_heatmap(heatmap_curve, method='row')
 
-        ax_curve.plot(t, mean_curve, color='black', lw=1.5, label='Mean Input')
-        ax_curve.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color='gray', alpha=0.3)
-        # ax_curve_twin = ax_curve.twinx()
-        # ax_curve_twin.plot(t, master_sal, color='red', lw=1.5, linestyle='--', alpha=0.8, label='Master Output Saliency')
-        ax_curve.set_title(f"{model_name.upper()} - Final Output Decision vs Mean Signal", fontsize=12, fontweight='bold', pad=15)
-        ax_curve.set_xlim(t_start, t_end)
-        ax_curve.grid(True, color='grey', alpha=0.3, linestyle='--')
-        # ax_curve_twin.tick_params(axis='y', labelcolor='red')
-        plt.setp(ax_curve.get_xticklabels(), visible=False)
-        
-        im = ax_heat.imshow(heatmap_curve, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_curve), 0], interpolation='nearest')
-        ax_heat.set_title(f"dZ/dX Spatial Focus (Top {len(heatmap_curve)} Dims, Ranked by dY/dZ)", fontsize=11, fontweight='bold', pad=10)
-        ax_heat.set_ylabel("Rank (1 = Highest Impact)", fontsize=10)
-        ax_heat.set_xlabel("Time", fontsize=10, fontweight='bold')
-        
-        cax_label = make_axes_locatable(ax_label).append_axes("right", size="3%", pad=0.1); cax_label.axis('off')
-        cax_curve = make_axes_locatable(ax_curve).append_axes("right", size="3%", pad=0.1); cax_curve.axis('off')
-        fig.colorbar(im, cax=make_axes_locatable(ax_heat).append_axes("right", size="3%", pad=0.1)).set_label("Normalized Attrib", rotation=270, labelpad=15)
-        fig.align_ylabels([ax_label, ax_curve, ax_heat])
+            ax_heat = fig.add_subplot(gs[2, col], sharex=ax_label)
+            im = ax_heat.imshow(heatmap_curve, aspect='auto', cmap='inferno', vmin=vmin, vmax=vmax, extent=[t_start, t_end, len(heatmap_curve), 0], interpolation='nearest')
+            ax_heat.set_title(f"dZ/dX Spatial Focus (Top {len(heatmap_curve)} Dims, Ranked by dY/dZ)", fontsize=10, fontweight='bold', pad=8)
+            ax_heat.set_ylabel("Rank (1 = Highest Impact)", fontsize=9)
+            ax_heat.set_xlabel("Time", fontsize=9, fontweight='bold')
 
-    fig.suptitle(f"{dataset_name} | {model_name.upper()} Causal Saliency", fontsize=14, fontweight='bold', y=0.98)
-    plt.subplots_adjust(hspace=0.25 if art["is_type"] != "base" else 0.15)
+            fig.colorbar(im, cax=make_axes_locatable(ax_heat).append_axes("right", size="3%", pad=0.1)).set_label("Attrib", rotation=270, labelpad=12, fontsize=8)
+            col_axes += [ax_heat]
+
+        fig.align_ylabels(col_axes)
+
+    fig.suptitle(f"{dataset_name} | {model_name.upper()} Causal Saliency", fontsize=14, fontweight='bold', y=0.99)
     fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
@@ -578,17 +531,20 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
 # Array outputs (5p_sigmoid_fitted, 5p_sigmoid_fitted_dydx) and pure
 # index artifacts (ct_idx, ct_idx_ori) are excluded.
 #
-# Three complementary scores are fused per (latent, feature) pair:
+# Three complementary scores are fused per (latent, main feature) pair:
 #   1. |Spearman ρ|   – rank-correlation of latent activation vs feature value
 #   2. MI (normed)    – mutual information, catches non-linear links
 #   3. Cosine sim     – alignment of mean saliency profile vs finite-difference
 #                       feature-sensitivity profile over time
+# "Main feature" = a config.XAI_KINETIC_FEATURE_GROUP key; its grouped aliases
+# (conceptually/computationally similar features) are not scored separately.
 #
 # Weights: Spearman 0.35 · MI 0.25 · Cosine 0.40
 #
 # Visualisation layout (one figure per model):
-#   - TOP_K rows, one per ranked latent
-#   - Each row = [mini curve panel | horizontal score bar across all features]
+#   - TOP_N rows, the first TOP_N ranked latents with a *unique* best-matching
+#     feature (true rank shown, not renumbered 1..TOP_N)
+#   - Each row = [mini curve panel | horizontal score bar across all main features]
 #     · Mini panel: mean input curve (black) + ±1σ band (grey) +
 #                   latent saliency profile (red fill, right y-axis)
 #     · Score bar:  colour-coded combined score for every feature,
@@ -730,20 +686,28 @@ def plot_latent_feature_mapping(
     X_batch, timestamps,
     feat_matrix, feat_sensitivity, feat_names,
     mean_curve, std_curve,
-    dataset_name, base_save_path,
-    TOP_K=25,
+    dataset_name, save_path,
+    TOP_N=5,
     w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
 ):
     """
-    For each of the TOP_K most-important latent dimensions (same ranking and
-    latent spaces as plot_latent_saliency_heatmap, i.e. art["*_order"] /
-    art["z_*"] / art["raw_saliency_*"]), draw one row:
+    Scans latent dimensions in rank order (most important first, same ranking and
+    latent spaces as plot_latent_saliency_heatmap, i.e. art["*_order"] / art["z_*"] /
+    art["raw_saliency_*"]) and keeps the first TOP_N whose best-matching kinetic
+    feature is unique — many raw kinetic features are conceptually/computationally
+    near-duplicates (e.g. xms/Cs/t50 all describe "time of half-max"), so showing
+    every literal top-rank row tends to just repeat the same feature. Correlation is
+    only computed against config.XAI_KINETIC_FEATURE_GROUP's main features (its dict
+    keys), not every alias, for the same reason. Each kept row displays its true
+    original rank (e.g. "Rank 1", "Rank 11", ...), not a renumbered 1..TOP_N.
+
+    For each kept row, draws:
       LEFT  – mini curve panel: mean input curve + ±1σ + latent saliency overlay
-      RIGHT – horizontal score bar: combined mapping score vs every kinetic feature
+      RIGHT – horizontal score bar: combined mapping score vs every main feature
 
     For "dual" architectures (CNN+GRU / CNN+Transformer), the CNN branch and
     the recurrent/transformer branch are ranked and scored independently and
-    stacked as two TOP_K-row sections in the same figure, mirroring the two
+    stacked as two TOP_N-row sections in the same figure, mirroring the two
     heatmap panels in plot_latent_saliency_heatmap.
 
     Parameters
@@ -758,8 +722,8 @@ def plot_latent_feature_mapping(
     mean_curve       : (T,)
     std_curve        : (T,)
     dataset_name     : str
-    base_save_path   : Path or str
-    TOP_K            : rows to show per branch (default 25)
+    save_path        : Path or str
+    TOP_N            : unique-feature rows to show per branch (default 5)
     w_*              : score weights, must sum to 1
     """
     from sklearn.feature_selection import mutual_info_regression
@@ -767,8 +731,6 @@ def plot_latent_feature_mapping(
     art = artifacts.get(model_name)
     if not art:
         return
-
-    save_path = str(base_save_path).replace('.png', f'_latent_mapping_{model_name}.png')
 
     t = np.asarray(timestamps, dtype=float)
     T = len(mean_curve)
@@ -778,6 +740,15 @@ def plot_latent_feature_mapping(
     t_start = t[0]  - t_step / 2
     t_end   = t[-1] + t_step / 2
 
+    # Restrict correlation to "main" features only (config.XAI_KINETIC_FEATURE_GROUP
+    # keys) — its values are conceptually/computationally similar aliases of the key
+    # (e.g. "xms" groups Cs/t50), so correlating against every alias separately would
+    # just be confusing duplication of the same signal.
+    main_features = [f for f in config.XAI_KINETIC_FEATURE_GROUP.keys() if f in feat_names]
+    main_idx = [feat_names.index(f) for f in main_features]
+    feat_matrix = feat_matrix[:, main_idx]
+    feat_sensitivity = feat_sensitivity[main_idx]
+    feat_names = main_features
     n_feats = len(feat_names)
 
     # ------------------------------------------------------------------
@@ -803,13 +774,15 @@ def plot_latent_feature_mapping(
     ])
 
     # ------------------------------------------------------------------
-    # 1. Per-branch latent traces, saliency profiles & combined scores
+    # 1. Per-branch latent traces, saliency profiles & combined scores —
+    #    computed over the FULL available ranking (up to 100 dims, from
+    #    rank_latents), so the unique-feature selection below has enough
+    #    candidates to choose TOP_N rows with distinct best-matching features.
     # ------------------------------------------------------------------
     sections = []
     for label, order, imp_shape, z_np, raw_maps in branch_sections:
-        k     = min(TOP_K, len(order))
-        order = order[:k]
-        is_3d = len(imp_shape) == 2
+        full_k = len(order)
+        is_3d  = len(imp_shape) == 2
 
         z_traces = []
         for flat_idx in order:
@@ -818,20 +791,19 @@ def plot_latent_feature_mapping(
                 z_traces.append(z_np[:, r, c])
             else:
                 z_traces.append(z_np[:, int(flat_idx)])
-        z_traces = np.array(z_traces)   # (k, Batch)
+        z_traces = np.array(z_traces)   # (full_k, Batch)
 
-        raw_maps_k   = raw_maps[:k]
-        sal_profiles = np.array([np.mean(m, axis=0) for m in raw_maps_k])  # (k, T)
-        for i in range(k):
+        sal_profiles = np.array([np.mean(m, axis=0) for m in raw_maps])  # (full_k, T)
+        for i in range(full_k):
             mx = sal_profiles[i].max()
             if mx > 0:
                 sal_profiles[i] /= mx
 
-        spearman_m = np.zeros((k, n_feats))
-        mi_m       = np.zeros((k, n_feats))
-        cosine_m   = np.zeros((k, n_feats))
+        spearman_m = np.zeros((full_k, n_feats))
+        mi_m       = np.zeros((full_k, n_feats))
+        cosine_m   = np.zeros((full_k, n_feats))
 
-        for i in range(k):
+        for i in range(full_k):
             z_i = z_traces[i]
             for j in range(n_feats):
                 if not valid_col[j]:
@@ -866,13 +838,27 @@ def plot_latent_feature_mapping(
 
         combined = w_spearman * spearman_m + w_mi * mi_m + w_cosine * cosine_m
 
-        best_feat_idx = np.argmax(combined, axis=1)   # (k,)
-        best_score    = combined[np.arange(k), best_feat_idx]
+        best_feat_idx_full = np.argmax(combined, axis=1)   # (full_k,)
 
+        # Greedy unique-feature selection: walk ranks 1..full_k in order, keep the
+        # first occurrence of each distinct best-matching feature, stop at TOP_N.
+        # `true_ranks` preserves the original 1-based rank for display (not 1..TOP_N).
+        selected, seen_feats, true_ranks = [], set(), []
+        for i in range(full_k):
+            feat = int(best_feat_idx_full[i])
+            if feat in seen_feats:
+                continue
+            seen_feats.add(feat)
+            selected.append(i)
+            true_ranks.append(i + 1)
+            if len(selected) >= TOP_N:
+                break
+
+        k = len(selected)
         sections.append({
-            "label": label, "order": order, "k": k,
-            "sal_profiles": sal_profiles, "combined": combined,
-            "best_feat_idx": best_feat_idx, "best_score": best_score,
+            "label": label, "order": order[selected], "k": k, "true_ranks": true_ranks,
+            "sal_profiles": sal_profiles[selected], "combined": combined[selected],
+            "best_feat_idx": best_feat_idx_full[selected], "best_score": combined[selected, best_feat_idx_full[selected]],
         })
 
     total_rows = sum(sec["k"] for sec in sections)
@@ -961,6 +947,7 @@ def plot_latent_feature_mapping(
         label         = sec["label"]
         order         = sec["order"]
         k             = sec["k"]
+        true_ranks    = sec["true_ranks"]
         sal_profiles  = sec["sal_profiles"]
         combined      = sec["combined"]
         best_feat_idx = sec["best_feat_idx"]
@@ -1011,7 +998,7 @@ def plot_latent_feature_mapping(
 
             # Y-label: latent dim + rank
             ax_curve.set_ylabel(
-                f"Rank {i+1}\n(dim {flat_idx})",
+                f"Rank {true_ranks[i]}\n(dim {flat_idx})",
                 fontsize=7, fontweight='bold', rotation=0,
                 labelpad=38, va='center'
             )
@@ -1048,7 +1035,7 @@ def plot_latent_feature_mapping(
             ax_bar.axhline(0.5, color='#aaaaaa', lw=0.5, linestyle='--')
 
             if i == 0 and label is not None:
-                ax_bar.set_title(f"{label} branch — Top {k} latent dims by |dY/dZ|",
+                ax_bar.set_title(f"{label} branch — Top {k} unique-feature latent dims by |dY/dZ|",
                                   fontsize=9, loc='left', pad=4, color='#555555')
 
             if global_row < total_rows - 1:
@@ -1099,7 +1086,7 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, normalize=None, force_rerun=False, curve_type="ori_curve", task_id=None):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=5):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
@@ -1115,11 +1102,17 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             return
         exp_paths = [exp_paths[task_id]]
 
-    filter_suffix = f"_{filter_key}_{curve_type}"
+    # Short, fixed-order name suffix: <filter>_<curve_type> (e.g. "none_ori_curve").
+    # Per-dataset outputs live in their own subfolder, so this no longer needs the
+    # dataset name baked in too -- keeps filenames short instead of one long string.
+    filt_label = "none" if filter_key is None else str(filter_key)
+    name_suffix = f"{filt_label}_{curve_type}"
 
     for exp_path in exp_paths:
         print(f"\n{'='*70}\n[*] PROCESSING DATASET: {exp_path.name} (curve_type: {curve_type})\n{'='*70}")
         model_dir = exp_path / "model_interpretation"
+        dataset_vis_dir = global_vis_dir / exp_path.name
+        dataset_vis_dir.mkdir(parents=True, exist_ok=True)
 
         data_dict = prepare_dataset(exp_path, filter_key, curve_type=curve_type)
         if not data_dict: continue
@@ -1131,12 +1124,10 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             print(f"  [-] Skipping visualisations for {exp_path.name}: No compatible saved models found.")
             continue
 
-        pca_path = global_vis_dir / f"01_latent_space_pca_{exp_path.name}{filter_suffix}.png"
-        tsne_path = global_vis_dir / f"02_latent_space_tsne_{exp_path.name}{filter_suffix}.png"
-        saliency_base = global_vis_dir / f"04_saliency_{exp_path.name}{filter_suffix}.png"
-        expected_outputs = [pca_path, tsne_path] + [
-            Path(str(saliency_base).replace('.png', f'_{model_name}.png')) for model_name in models
-        ]
+        tsne_path = dataset_vis_dir / f"01_TSNE_{name_suffix}.png"
+        saliency_paths = {m: dataset_vis_dir / f"02_SALIENCY_{m}_{name_suffix}.png" for m in models}
+        mapping_paths  = {m: dataset_vis_dir / f"03_LATENT_MAPPING_{m}_{name_suffix}.png" for m in models}
+        expected_outputs = [tsne_path] + list(saliency_paths.values()) + list(mapping_paths.values())
         if not force_rerun and all(p.exists() for p in expected_outputs):
             print(f"  [-] Skipping {exp_path.name}: outputs already exist (use --force_rerun to regenerate).")
             continue
@@ -1144,31 +1135,30 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         batch_size = min(512, len(data_dict['X_full']))
         rng = np.random.default_rng(42)
         idx = rng.choice(len(data_dict['X_full']), size=batch_size, replace=False)
-        
+
         X_batch = data_dict['X_full'][idx]
         X_man_batch = data_dict['X_man_full'][idx]
         y_batch = data_dict['y_full'][idx]
-        
+
         mean_curve = np.squeeze(np.mean(X_batch, axis=0))
         std_curve = np.squeeze(np.std(X_batch, axis=0))
-        if mean_curve.ndim > 1: 
+        if mean_curve.ndim > 1:
             mean_curve = mean_curve.mean(axis=-1)
             std_curve = std_curve.mean(axis=-1)
 
         print(f"  -> Generating Central XAI Artifacts...")
         artifacts = extract_xai_artifacts(models, X_batch, X_man_batch)
 
-        print(f"  -> Generating Visualizations into {global_vis_dir.name}/ ...")
-        
-        # 1. Base Plots (Original Logic Unchanged)
-        # plot_latent_pca(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], pca_path)
+        print(f"  -> Generating Visualizations into {dataset_vis_dir.relative_to(global_vis_dir.parent)}/ ...")
+
+        # 1. Latent space t-SNE (dataset-level, all models in one figure)
         plot_latent_tsne(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], tsne_path)
 
-        # 2. Advanced Heatmaps (Optimized)
+        # 2. Saliency heatmaps (raw + row-normalized side by side, per model)
         for model_name in models.keys():
-            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, saliency_base, normalize=normalize)
+            plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, saliency_paths[model_name])
 
-        # 3. Latent → Feature mapping (new)
+        # 3. Latent → Feature mapping, per model
         # compute_kinetic_feature_cache runs extract_kinetic_parameters_original on
         # every sample and builds the finite-diff sensitivity profiles.  It is
         # dataset-level (independent of the model) so we compute it once and reuse.
@@ -1183,7 +1173,8 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
                 feat_matrix, feat_sensitivity, feat_names,
                 mean_curve, std_curve,
                 exp_path.name,
-                global_vis_dir / f"07_latent_mapping_{exp_path.name}{filter_suffix}.png",
+                mapping_paths[model_name],
+                TOP_N=top_n,
             )
 
         print(f"  [✓] Processed {exp_path.name}")
@@ -1195,13 +1186,13 @@ if __name__ == "__main__":
     parser.add_argument("--task_id", type=int, default=None, help="Array Job ID — index into sorted experiment folders (default: run all)")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
-    parser.add_argument("--normalize", action="store_true", help="Whether to normalize the saliency maps")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--top_n", type=int, default=5, help="Unique-feature latent rows to show per branch in the latent->feature mapping plot (default: 5)")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
 
     print(exp_folder)
     for curve_type in args.curve_type:
-        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, normalize=args.normalize, force_rerun=args.force_rerun, curve_type=curve_type, task_id=args.task_id)
+        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, force_rerun=args.force_rerun, curve_type=curve_type, task_id=args.task_id, top_n=args.top_n)

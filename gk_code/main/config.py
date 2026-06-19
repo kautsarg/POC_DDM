@@ -384,6 +384,157 @@ IMPORTANCE_METRICS = [
     "kruskal_wallis_score"
 ]
 
+
+XAI_KINETIC_FEATURE_GROUP = {
+    # ---------------------------------------------------------
+    # 1. Threshold & Main Timing (When reaction hits 20% target)
+    # ---------------------------------------------------------
+    "Ct": [                    
+        "Ct_ori",       # Fit-based 20% crossing
+        "ct_idx",       # Array index of fit crossing
+        "ct_idx_ori",   # Array index of original crossing
+        "Cy0",          # Fit-based inflection point timing
+        "Cy0_ori",      # Original curve inflection timing
+    ],
+
+    # ---------------------------------------------------------
+    # 2. Onset Timing (When the reaction FIRST leaves the noise floor)
+    # ---------------------------------------------------------
+    "lag_time": [          
+        "xs",           # Start time via derivative threshold crossing
+        "xp1",          # Time of maximum acceleration (2nd deriv peak)
+        "t10"           # 10% normalized amplitude crossing
+    ],
+
+    # ---------------------------------------------------------
+    # 3. Midpoint Timing (When the reaction is moving fastest)
+    # ---------------------------------------------------------
+    "xms": [            # Time of max slope (empirical)
+        "Cs",           # Fit-based center of symmetry
+        "t50"           # 50% normalized amplitude crossing
+    ],
+
+    # ---------------------------------------------------------
+    # 4. Saturation Timing (When the reaction flattens out)
+    # ---------------------------------------------------------
+    "xe": [             # End time via derivative threshold crossing
+        "xp2",          # Time of maximum deceleration (2nd deriv valley)
+        "t90"           # 90% normalized amplitude crossing
+    ],
+
+    # ---------------------------------------------------------
+    # 5. Reaction Duration (Length of the exponential phase)
+    # ---------------------------------------------------------
+    "rise_time_10_90": [
+        "rise_time_20_80",       # 20% to 80% duration
+        "threshold_distance",    # Distance between xe and xs
+        "first_half_distance",   # Distance between xms and xs
+        "second_half_distance",  # Distance between xe and xms
+        "peak_shifting_distance" # Distance between deceleration and acceleration peaks
+    ],
+
+    # ---------------------------------------------------------
+    # 6. Maximum Reaction Speed (1st Derivative / Slopes)
+    # ---------------------------------------------------------
+    "dy_xms": [         # Empirical maximum slope
+        "Sc",           # Fit-based slope parameter
+        "dy_xp1",       # 1st derivative value at max acceleration
+        "dy_xp2",       # 1st derivative value at max deceleration
+        "TH"            # The calculated derivative threshold value
+    ],
+
+    # ---------------------------------------------------------
+    # 7A. Positive Acceleration (Kicking Off)
+    # ---------------------------------------------------------
+    "max_accel": [      # Absolute highest positive acceleration
+        "d2y_xp1"       # 2nd derivative value at positive peak
+    ],
+
+    # ---------------------------------------------------------
+    # 7B. Negative Acceleration (Hitting the Brakes)
+    # ---------------------------------------------------------
+    "min_accel": [      # Absolute lowest negative acceleration
+        "d2y_xp2"       # 2nd derivative value at negative peak (deceleration)
+    ],
+
+    # ---------------------------------------------------------
+    # 8. Magnitude & Final Yield (Top of the curve)
+    # ---------------------------------------------------------
+    "amplitude": [      # Absolute change (y_xe - y_xs)
+        "F_max",        # Absolute max of fitted curve
+        "F_max_ori",    # Absolute max of original curve
+        "Fm",           # Fit-based max parameter
+        "plateau_mean", # Mean value of the final flat region
+        "y_xe",         # Y-value at end-time threshold
+        "y_xp2"         # Y-value at max deceleration
+    ],
+
+    # ---------------------------------------------------------
+    # 9. Baseline / Noise Floor (Bottom of the curve)
+    # ---------------------------------------------------------
+    "baseline_mean": [
+        "Fb",           # Fit-based minimum parameter
+        "F0",           # Literal first y-value
+        "log_F0",       # Log of literal first y-value
+        "y_xs"          # Y-value at start-time threshold
+    ],
+
+    # ---------------------------------------------------------
+    # 10. Intermediate Signal States
+    # ---------------------------------------------------------
+    "y_xms": [          # Y-value precisely at max slope
+        "y_xp1"         # Y-value precisely at max acceleration
+    ],
+
+    # ---------------------------------------------------------
+    # 11. Curve Area / Integration
+    # ---------------------------------------------------------
+    "auc_norm": [       # Area under curve (normalized by duration)
+        "auc",          # Raw area under curve
+        "A1",           # Area of the 1st half derivative
+        "A2"            # Area of the 2nd half derivative
+    ],
+
+    # ---------------------------------------------------------
+    # 12. Curve Shape & Asymmetry
+    # ---------------------------------------------------------
+    "area_asymmetry_index": [ 
+        "As",                       # Fit-based asymmetry parameter
+        "distance_asymmetry_index", # Asymmetry based on timing distances
+        "peak_asymmetry_index",     # Asymmetry based on 2nd derivative peak heights
+        "accel_fwhm"                # Full width at half max of the acceleration peak
+    ],
+
+    # ---------------------------------------------------------
+    # 13. Signal Noise & Physical Stability
+    # ---------------------------------------------------------
+    "snr_peak": [       # Signal-to-Noise against max peak
+        "snr_xms",      # Signal-to-Noise against max slope point
+        "baseline_std", # Standard deviation of the pre-reaction sensor noise
+        "plateau_std"   # Standard deviation of the post-reaction sensor noise
+    ],
+
+    # ---------------------------------------------------------
+    # 14A. Pre-Reaction Drift (Sensor Settling)
+    # ---------------------------------------------------------
+    "baseline_slope": [], 
+
+    # ---------------------------------------------------------
+    # 14B. Post-Reaction Drift (Reagent Exhaustion/Decay)
+    # ---------------------------------------------------------
+    "plateau_slope": [
+        "Send",         # Mean derivative of last 5 points
+        "Send_abs",     # Absolute mean derivative of last 5 points
+        "Send_fit",     # Mean derivative of last 5 points (fitted)
+        "Send_fit_abs"  # Absolute mean deriv of last 5 points (fitted)
+    ],
+
+    # ---------------------------------------------------------
+    # 16. Overshoot (Curve dips/rebounds past its plateau)
+    # ---------------------------------------------------------
+    "overshoot_index": [],
+}
+
 # ==========================================
 # VISUALISATION OVERRIDES
 # ==========================================

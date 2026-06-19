@@ -465,21 +465,21 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     # 0) BASELINE / PLATEAU WINDOWS
     # ------------------------------------------------------------------------
     n = len(x)
-    n_base = max(3, int(n * baseline_frac))
-    n_plateau = max(3, int(n * plateau_frac))
+    n_base = max(3, int(n * baseline_frac)) # number of points to consider for baseline
+    n_plateau = max(3, int(n * plateau_frac)) #number of points to consider for plateau
 
-    base_x = x[:n_base]
-    base_y = y[:n_base]
-    plat_x = x[-n_plateau:]
-    plat_y = y[-n_plateau:]
+    base_x = x[:n_base] # timestamp values for baseline (initial n_base points)
+    base_y = y[:n_base] # curve values for baseline (initial n_base points)
+    plat_x = x[-n_plateau:] # timestamp values for plateau (last n_plateau points)
+    plat_y = y[-n_plateau:] # curve values for plateau (last n_plateau points)
 
-    baseline_mean = np.mean(base_y)
-    baseline_std = np.std(base_y)
-    baseline_slope = np.polyfit(base_x, base_y, 1)[0] if len(base_x) >= 2 else np.nan
+    baseline_mean = np.mean(base_y) # mean value for baseline
+    baseline_std = np.std(base_y) # standard deviation for baseline
+    baseline_slope = np.polyfit(base_x, base_y, 1)[0] if len(base_x) >= 2 else np.nan # slope of baseline (linear fit)
 
-    plateau_mean = np.mean(plat_y)
-    plateau_std = np.std(plat_y)
-    plateau_slope = np.polyfit(plat_x, plat_y, 1)[0] if len(plat_x) >= 2 else np.nan
+    plateau_mean = np.mean(plat_y)  # mean value for plateau
+    plateau_std = np.std(plat_y)    # standard deviation for plateau
+    plateau_slope = np.polyfit(plat_x, plat_y, 1)[0] if len(plat_x) >= 2 else np.nan # slope of plateau (linear fit)
 
     # ------------------------------------------------------------------------
     # 1) DERIVATIVES
@@ -595,23 +595,28 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     # ------------------------------------------------------------------------
     params, _ = fit_5p(x, y, normalize=True)
     Fm_fit, Fb_fit, Sc_fit, Cs_fit, As_fit = params
+    # Fm_fit: the fitted maximum value
+    # Fb_fit: the fitted minimum value
+    # Sc_fit: the fitted slope
+    # Cs_fit: the fitted center
+    # As_fit: the fitted asymmetry parameter
 
     F_vals = sigmoid_5p(x, *params)
     F_vals_dydx = sigmoid_5p_first_derivative(x, *params)
 
     # Ct (fit)
-    F_min, F_max = np.min(F_vals), np.max(F_vals)
-    F_norm = (F_vals - F_min) / (F_max - F_min) if F_max > F_min else np.zeros_like(F_vals)
+    F_min, F_max = np.min(F_vals), np.max(F_vals) # Min and max of the fitted curve
+    F_norm = (F_vals - F_min) / (F_max - F_min) if F_max > F_min else np.zeros_like(F_vals) 
     above_20pct = F_norm > 0.2
     crossing_indices = np.where(above_20pct)[0]
     if len(crossing_indices) > 0:
-        ct_idx = crossing_indices[0]
+        ct_idx = crossing_indices[0]    # Index of the first crossing (more than 20%) of the fitted curve
         if ct_idx > 0:
             x1, x2 = x[ct_idx-1], x[ct_idx]
             y1, y2 = F_norm[ct_idx-1], F_norm[ct_idx]
             Ct = x1 + (0.2 - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x[ct_idx]
         else:
-            Ct = x[ct_idx]
+            Ct = x[ct_idx] # Timestamp of the first crossing (more than 20%) of the fitted curve
     else:
         Ct, ct_idx = np.nan, np.nan
 
@@ -632,11 +637,11 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         Ct_ori, ct_idx_ori = np.nan, np.nan
 
     # Cy0
-    x_inflection = Cs_fit + (np.log(As_fit) / Sc_fit)
-    y_inflection = sigmoid_5p(x_inflection, *params)
+    x_inflection = Cs_fit + (np.log(As_fit) / Sc_fit)                       # Inflection point of the fitted curve
+    y_inflection = sigmoid_5p(x_inflection, *params)                        # Value of the fitted curve at the inflection point
     dy_inflection = sigmoid_5p_first_derivative(x_inflection, *params)
-    Cy0 = x_inflection - (y_inflection / dy_inflection) if dy_inflection != 0 else np.nan
-    Cy0_ori = xms - (y_xms / dy_xms) if (dy_xms != 0 and not np.isnan(dy_xms)) else np.nan
+    Cy0 = x_inflection - (y_inflection / dy_inflection) if dy_inflection != 0 else np.nan # Y-intercept of the tangent line at the inflection point of the fitted curve
+    Cy0_ori = xms - (y_xms / dy_xms) if (dy_xms != 0 and not np.isnan(dy_xms)) else np.nan 
 
     # ------------------------------------------------------------------------
     # 8) EXTRA FEATURES (NEW)
@@ -653,42 +658,42 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
         y1, y2 = norm_y[i-1], norm_y[i]
         return x1 + (level - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x[i]
 
-    t10 = crossing_time(F_norm_ori, 0.1)
-    t50 = crossing_time(F_norm_ori, 0.5)
-    t90 = crossing_time(F_norm_ori, 0.9)
-    rise_time_10_90 = t90 - t10 if (not np.isnan(t10) and not np.isnan(t90)) else np.nan
-    rise_time_20_80 = crossing_time(F_norm_ori, 0.8) - crossing_time(F_norm_ori, 0.2)
+    t10 = crossing_time(F_norm_ori, 0.1)                                                    # First timestamp where the normalized original curve exceeds 10% of its maximum value
+    t50 = crossing_time(F_norm_ori, 0.5)                                                    # First timestamp where the normalized original curve exceeds 50% of its maximum value
+    t90 = crossing_time(F_norm_ori, 0.9)                                                    # First timestamp where the normalized original curve exceeds 90% of its maximum value
+    rise_time_10_90 = t90 - t10 if (not np.isnan(t10) and not np.isnan(t90)) else np.nan    # Time difference between t10 and t90
+    rise_time_20_80 = crossing_time(F_norm_ori, 0.8) - crossing_time(F_norm_ori, 0.2)       # Time difference between t20 and t80
 
     # Lag time: first time signal exceeds baseline + 3σ
-    lag_idx = np.where(y >= (baseline_mean + 3*baseline_std))[0]
-    lag_time = x[lag_idx[0]] if len(lag_idx) > 0 else np.nan
+    lag_idx = np.where(y >= (baseline_mean + 3*baseline_std))[0]    # Find indices where the original curve exceeds baseline + 3σ
+    lag_time = x[lag_idx[0]] if len(lag_idx) > 0 else np.nan        # First timestamp where the original curve exceeds baseline + 3σ
 
     # SNR
-    snr_peak = (np.max(y) - baseline_mean) / baseline_std if baseline_std > 0 else np.nan
-    snr_xms = (y_xms - baseline_mean) / baseline_std if baseline_std > 0 else np.nan
+    snr_peak = (np.max(y) - baseline_mean) / baseline_std if baseline_std > 0 else np.nan   # Signal-to-noise ratio at the peak of the original curve
+    snr_xms = (y_xms - baseline_mean) / baseline_std if baseline_std > 0 else np.nan        # Signal-to-noise ratio at the maximum slope point of the original curve
 
     # AUC
-    auc = np.trapz(y, x)
-    auc_norm = auc / (x[-1] - x[0]) if (x[-1] - x[0]) != 0 else np.nan
+    auc = np.trapz(y, x)                                                # Area under the original curve using trapezoidal integration
+    auc_norm = auc / (x[-1] - x[0]) if (x[-1] - x[0]) != 0 else np.nan  # Normalized area under the original curve (AUC divided by total time span)
 
     # Derivative dynamics
-    max_accel = np.max(d2y_dx2_vals)
-    min_accel = np.min(d2y_dx2_vals)
+    max_accel = np.max(d2y_dx2_vals)    # Maximum acceleration (max of second derivative)
+    min_accel = np.min(d2y_dx2_vals)    # Minimum acceleration (min of second derivative)
 
     # FWHM of positive accel peak
     accel_fwhm = np.nan
     if not np.isnan(max_accel) and max_accel > 0:
         half = max_accel / 2
-        # Start at the peak and walk left
+
         left_idx = xp1_idx
         while left_idx > 0 and d2y_dx2_vals[left_idx] > half:
-            left_idx -= 1
-        # Start at the peak and walk right
+            left_idx -= 1      # Walk left from the peak until the value drops below half of the peak
+        
         right_idx = xp1_idx
         while right_idx < len(d2y_dx2_vals) - 1 and d2y_dx2_vals[right_idx] > half:
-            right_idx += 1
+            right_idx += 1      # Walk right from the peak until the value drops below half of the peak
             
-        accel_fwhm = x[right_idx] - x[left_idx]
+        accel_fwhm = x[right_idx] - x[left_idx] # Full Width at Half Maximum
 
     # Fit quality
     residuals = y - F_vals
@@ -703,7 +708,7 @@ def extract_kinetic_parameters_original(x, y, threshold=0.1, deriv_method='gradi
     
     max_y_val = np.max(y)
     if max_y_val != 0 and len(post_max) >= n_plateau:
-        overshoot_index = (max_y_val - np.mean(post_max[-n_plateau:])) / max_y_val
+        overshoot_index = (max_y_val - np.mean(post_max[-n_plateau:])) / max_y_val  # Relative drop from the peak to the mean of the last n_plateau points
     else:
         overshoot_index = np.nan
 
