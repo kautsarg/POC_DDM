@@ -620,8 +620,8 @@ def evaluate_outlier_filters(
                 # to drop before training stops; LR scheduling reduces seed-to-seed variance
                 # by preventing different seeds from getting stuck at a poor LR for the whole run.
                 _fit_callbacks = [
-                    tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True),
-                    tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-5),
+                    tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True),
+                    tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5),
                 ] if _val_split_ok else []
 
                 # Train Standard vs. Late Fusion models

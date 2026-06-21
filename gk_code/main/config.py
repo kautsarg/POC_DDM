@@ -323,7 +323,8 @@ EXCLUDED_FEATURES = [
     "msc_mahal_dist",
     "msc_mahal_dist_msc_linear_0.001", "msc_label_msc_linear_0.001",
     "msc_mahal_dist_msc_baseline_0.001", "msc_label_msc_baseline_0.001",
-    "amf_label_amf_important", "amf_label_amf_send_5"
+    "amf_label_amf_important", "amf_label_amf_send_5",
+    "fit_rmse", "fit_r2",
 ]
 
 FEATURE_GROUPS = [
