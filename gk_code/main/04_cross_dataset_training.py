@@ -36,10 +36,11 @@ def load_curve_data(exp_path, curve_type):
         print(f"  -> Skipping {exp_path.name}: {e}")
         return None
 
-    if exp_path.name not in config.LABEL_MAPPINGS:
+    label_mappings = config.get_label_mappings(exp_path)
+    if exp_path.name not in label_mappings:
         print(f"  -> Skipping {exp_path.name}: no LABEL_MAPPINGS entry found (required for cross-dataset grouping).")
         return None
-    mapping = config.LABEL_MAPPINGS[exp_path.name]
+    mapping = label_mappings[exp_path.name]
 
     Y_well_raw = np.asarray(data["Y_well"])
     Y_mapped = np.array([mapping.get(w, w) for w in Y_well_raw])

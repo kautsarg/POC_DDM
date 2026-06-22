@@ -595,10 +595,14 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     # --- LSTM AutoEncoder (Global) ---
     missing_lstm_glb = _missing_ae(lambda p: f"lstm_ae_glb_ds{downsample_factor}_label_{p}")
     if missing_lstm_glb:
+        # save_encoder_dir: the global (per_well=False) encoder is also saved standalone
+        # here, reusable later as a pretrained backbone for model_utils.py's "lstm_ae_clf"
+        # classifier (see 03_main_training.py) instead of training a fresh LSTM from scratch.
         extracted_dfs = run_lstm_autoencoder_pipeline(
             ae_names, ae_dataset, Y_well, ref_curves,
             str(exp_path / "ae_per_well_outlier"), missing_lstm_glb,
-            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
+            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False,
+            save_encoder_dir=str(exp_path / "pretrained_encoders"))
         for i, name in enumerate(ae_names):
             features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
         flush()

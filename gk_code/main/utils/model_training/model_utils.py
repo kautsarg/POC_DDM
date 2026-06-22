@@ -16,6 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import StandardScaler
 
+import joblib
 import tensorflow as tf
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -317,10 +318,46 @@ def create_lstm_model(input_size, output_size):
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
     # Added clipnorm to prevent exploding gradients
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
-    model.compile(optimizer=optimizer, 
-                  loss='sparse_categorical_crossentropy', 
+    model.compile(optimizer=optimizer,
+                  loss='sparse_categorical_crossentropy',
                   metrics=['accuracy'])
     return model
+
+# 2b. LSTM-AE pretrained classifier — reuses the encoder half of the global LSTM
+# autoencoder trained in 02_outlier_detection_pipeline.py (outlier detection) as a
+# frozen feature extractor, with only a small new Dense head trained for
+# classification. One backbone serving both outlier-scoring and classification,
+# instead of two separately-trained LSTM stacks.
+def load_lstm_ae_clf_model(pretrained_encoder_path, pretrained_scaler_path, input_size, output_size):
+    """Loads the encoder + its fitted MinMaxScaler saved by
+    lstm_autoencoder_outlier.py's _save_encoder(), freezes the encoder, and stacks a
+    classification head on top. Returns (model, scaler) — the scaler must be applied
+    to curves before feeding them to `model`, since the encoder was trained on scaled
+    (not raw) curves. Returns (None, None) if the files are missing or the encoder's
+    expected sequence length doesn't match `input_size` (e.g. a different curve_type
+    or AE_DOWNSAMPLE_FACTOR than what the encoder was trained on)."""
+    if not (os.path.exists(pretrained_encoder_path) and os.path.exists(pretrained_scaler_path)):
+        return None, None
+
+    encoder = tf.keras.models.load_model(pretrained_encoder_path, compile=False)
+    encoder_seq_len = encoder.input_shape[1]
+    if encoder_seq_len != input_size:
+        print(f"     [!] lstm_ae_clf: encoder expects {encoder_seq_len} timesteps, "
+              f"got {input_size}. Skipping (encoder/data mismatch).")
+        return None, None
+
+    scaler = joblib.load(pretrained_scaler_path)
+    encoder.trainable = False  # freeze — only the new Dense head is trained
+
+    # Explicit names: the loaded encoder already has an auto-named "dropout" layer
+    # (from its own architecture) — an unnamed new Dropout here would collide with it
+    # when both end up in the same combined functional graph.
+    x = tf.keras.layers.Dense(32, activation='relu', name="lstm_ae_clf_head_dense1")(encoder.output)
+    x = tf.keras.layers.Dropout(0.2, name="lstm_ae_clf_head_dropout")(x)
+    out = tf.keras.layers.Dense(output_size, activation='softmax', name="lstm_ae_clf_head_out")(x)
+    model = tf.keras.models.Model(inputs=encoder.input, outputs=out)
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model, scaler
 
 # 3. GRU (Bidirectional + Gradient Clipping)
 def create_gru_model(input_size, output_size):
@@ -426,6 +463,7 @@ _XAI_SAVE_NAME = {
     'trans_lf': 'transformer_lf',
     'cnn_gru_dual': 'cnn_gru_dual',
     'cnn_trans_dual': 'cnn_trans_dual',
+    'lstm_ae_clf': 'lstm_ae_clf',
 }
 
 
@@ -434,12 +472,19 @@ def evaluate_outlier_filters(
     cached_results=None, models=["cnn", "cnn_lf"], n_splits=1,
     checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None,
     save_model_dir=None, save_model_curve_type="ori_curve",
+    pretrained_encoder_path=None, pretrained_scaler_path=None,
 ):
     """Train and evaluate models across outlier filters.
 
     When save_model_dir is set, the trained Keras model from the first fold of
     the None (baseline) filter is saved to disk so attribution_vis_all can load
     it without a separate run.
+
+    pretrained_encoder_path/pretrained_scaler_path: only used by the "lstm_ae_clf"
+    model — paths to the encoder/scaler saved by 02_outlier_detection_pipeline.py's
+    global LSTM autoencoder for this exact (experiment, curve_type). If either is
+    None/missing, "lstm_ae_clf" is skipped for every filter (no from-scratch
+    fallback — the model only makes sense paired with its pretrained backbone).
     """
     if save_model_dir is not None:
         Path(save_model_dir).mkdir(parents=True, exist_ok=True)
@@ -473,6 +518,7 @@ def evaluate_outlier_filters(
         "gru_lf": ("y_preds_AC_gru_lf_", "y_probs_AC_gru_lf_", "classes_AC_gru_lf_"),
         "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
         "cnn_trans_dual": ("y_preds_AC_cnn_trans_dual_", "y_probs_AC_cnn_trans_dual_", "classes_AC_cnn_trans_dual_"),
+        "lstm_ae_clf": ("y_preds_AC_lstm_ae_clf_", "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
     }
 
     model_print_map = {
@@ -481,6 +527,7 @@ def evaluate_outlier_filters(
         "knn": "KNN (ACA)", "ffi": "LR (FFI)",
         "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
         "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
+        "lstm_ae_clf": "LSTM-AE Clf",
     }
 
     for idx, f in enumerate(outlier_filters):
@@ -557,10 +604,30 @@ def evaluate_outlier_filters(
             if "lf" in m and X_manual is None:
                 print(f"     [Error] Model {m} requires KFS features, but KFS was not provided.")
                 continue
-                
+            if m == "lstm_ae_clf":
+                _has_files = (pretrained_encoder_path and pretrained_scaler_path
+                             and os.path.exists(pretrained_encoder_path)
+                             and os.path.exists(pretrained_scaler_path))
+                if not _has_files:
+                    print(f"     [SKIP] lstm_ae_clf: no pretrained encoder found at "
+                          f"{pretrained_encoder_path} (run 02's global LSTM autoencoder first). "
+                          f"Not falling back to training a fresh backbone.")
+                    continue
+                # One-time shape check (timesteps is the same across all folds for this
+                # filter) so a mismatch skips the whole model cleanly, rather than
+                # surfacing as repeated per-fold failures inside the training loop below.
+                _probe = tf.keras.models.load_model(pretrained_encoder_path, compile=False)
+                _encoder_seq_len = _probe.input_shape[1]
+                del _probe
+                tf.keras.backend.clear_session()
+                if _encoder_seq_len != X_AC.shape[1]:
+                    print(f"     [SKIP] lstm_ae_clf: encoder expects {_encoder_seq_len} timesteps, "
+                          f"this filter's curves have {X_AC.shape[1]}. Skipping.")
+                    continue
+
             preds_key, probs_key, classes_key = model_key_map[m]
             print_name = f"{model_print_map[m]:<11}"
-            
+
             # --- CHECK CACHE ---
             if (preds_key in res_entry) and (m not in rerun_models):
                 fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
@@ -693,6 +760,50 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
+                elif m == "lstm_ae_clf":
+                    tf.keras.backend.clear_session()
+
+                    # Shape compatibility already verified once before the fold loop
+                    # above, so this load is expected to always succeed here. Named
+                    # ae_scaler (not `scaler`) to avoid shadowing the StandardScaler
+                    # already assigned to `scaler` above for X_manual, in case anything
+                    # downstream ever needs to refer back to it within the same fold.
+                    model, ae_scaler = load_lstm_ae_clf_model(
+                        pretrained_encoder_path, pretrained_scaler_path,
+                        X_train_curve.shape[1], n_classes)
+                    epochs = 500
+
+                    # Encoder was trained on MinMax-scaled curves (see _save_encoder in
+                    # lstm_autoencoder_outlier.py) — apply the same fitted scaler here so
+                    # the frozen pretrained weights see in-distribution input. ae_scaler
+                    # expects 2D (n_samples, n_timesteps); squeeze/restore the channel dim.
+                    def _scale(x):
+                        return ae_scaler.transform(x.squeeze(-1))[..., None]
+
+                    X_train_curve_scaled = _scale(X_train_curve_fit if _val_split_ok else X_train_curve)
+                    X_test_curve_scaled = _scale(X_test_curve)
+
+                    if _val_split_ok:
+                        model.fit(X_train_curve_scaled, y_train_fit,
+                                 validation_data=(_scale(X_val_curve), y_val),
+                                 epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve_scaled, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        model.save(_xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve_scaled, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
                 else:
                     # Standard 1D Models (scikeras/sklearn)
                     if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
@@ -796,6 +907,8 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('CNN + GRU Dual', 'y_preds_AC_cnn_gru_dual_'))
         if 'y_preds_AC_cnn_trans_dual_' in sample_res:
             method_info.append(('CNN + Transformer Dual', 'y_preds_AC_cnn_trans_dual_'))
+        if 'y_preds_AC_lstm_ae_clf_' in sample_res:
+            method_info.append(('LSTM-AE Pretrained Classifier', 'y_preds_AC_lstm_ae_clf_'))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")

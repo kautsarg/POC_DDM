@@ -593,31 +593,7 @@ LABEL_MAPPINGS = {
 		8: 'NC-S',
 		9: 'NC-C',
 	},
-    'D20260320_E00_C00_F4500KHz_U_Elena_steap_cv_nc_subtract': {
-		0: 'S',
-		1: 'C',
-		2: 'C',
-		3: 'S',
-		4: 'S',
-		5: 'C',
-		6: 'C',
-		7: 'S',
-		8: 'NC',
-		9: 'NC',
-	},
     'D20260522_E00_C00_F4500KHz_U_manifold_test_05': {
-		0: 'Target',
-		1: 'NC-Target',
-		2: 'NC-Target',
-		3: 'Target',
-		4: 'Target',
-		5: 'NC-Target',
-		6: 'NC-Target',
-		7: 'Target',
-		8: 'Target',
-		9: 'NC-Target',
-	},
-    'D20260522_E00_C00_F4500KHz_U_manifold_test_05_nc_subtract': {
 		0: 'Target',
 		1: 'NC',
 		2: 'NC',
@@ -631,18 +607,6 @@ LABEL_MAPPINGS = {
 	},
     'D20260608_E00_C00_F4500KHz_U_norm_temp_04':{
         0: 'Target',
-		1: 'NC-Target',
-		2: 'NC-Target',
-		3: 'Target',
-		4: 'Target',
-		5: 'NC-Target',
-		6: 'NC-Target',
-		7: 'Target',
-		8: 'Target',
-		9: 'NC-Target',
-    },
-    'D20260608_E00_C00_F4500KHz_U_norm_temp_04_nc_subtract':{
-        0: 'Target',
 		1: 'NC',
 		2: 'NC',
 		3: 'Target',
@@ -654,18 +618,6 @@ LABEL_MAPPINGS = {
 		9: 'NC',
     },
     'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06':{
-        0: 'Target',
-		1: 'NC-Target',
-		2: 'NC-Target',
-		3: 'Target',
-		4: 'Target',
-		5: 'NC-Target',
-		6: 'NC-Target',
-		7: 'Target',
-		8: 'Target',
-		9: 'NC-Target',
-    },
-    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06_nc_subtract':{
         0: 'Target',
 		1: 'NC',
 		2: 'NC',
@@ -679,18 +631,6 @@ LABEL_MAPPINGS = {
     },
     'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07':{
         0: 'Target',
-		1: 'NC-Target',
-		2: 'NC-Target',
-		3: 'Target',
-		4: 'Target',
-		5: 'NC-Target',
-		6: 'NC-Target',
-		7: 'Target',
-		8: 'Target',
-		9: 'NC-Target',
-    },
-    'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07_nc_subtract':{
-        0: 'Target',
 		1: 'NC',
 		2: 'NC',
 		3: 'Target',
@@ -702,18 +642,6 @@ LABEL_MAPPINGS = {
 		9: 'NC',
     },
     'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08':{
-        0: 'Target',
-		1: 'NC-Target',
-		2: 'NC-Target',
-		3: 'Target',
-		4: 'Target',
-		5: 'NC-Target',
-		6: 'NC-Target',
-		7: 'Target',
-		8: 'Target',
-		9: 'NC-Target',
-    },
-    'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08_nc_subtract':{
         0: 'Target',
 		1: 'NC',
 		2: 'NC',
@@ -737,19 +665,24 @@ LABEL_MAPPINGS = {
 		8: 'NC-Conc-01',
 		9: 'NC-Conc-02',
 	},
-    'D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01_nc_subtract': {
-		0: 'Conc-01',
-		1: 'Conc-02',
-		2: 'Conc-02',
-		3: 'Conc-01',
-		4: 'Conc-01',
-		5: 'Conc-02',
-		6: 'Conc-02',
-		7: 'Conc-01',
-		8: 'NC',
-		9: 'NC',
-	},
 }
+
+def get_label_mappings(exp_path):
+    """Picks LABEL_MAPPINGS based on exp_path's dataset folder (e.g. 'POC_DDM_multi'
+    vs 'POC_DDM_multi_nc_subtract'). The nc_subtract preprocessing collapses
+    per-target NCs (e.g. 'NC-S'/'NC-C') into a single 'NC' class, so every label
+    starting with 'NC-' is collapsed to plain 'NC' — otherwise NCs for different
+    targets get conflated under LABEL_MAPPINGS' per-target NC labels.
+    """
+    if Path(exp_path).parent.name.endswith("nc_subtract"):
+        return {
+            dataset: {
+                idx: ('NC' if label.startswith('NC-') else label)
+                for idx, label in mapping.items()
+            }
+            for dataset, mapping in LABEL_MAPPINGS.items()
+        }
+    return LABEL_MAPPINGS
 
 # ==========================================
 # CROSS-DATASET ROBUSTNESS CV (04)

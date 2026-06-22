@@ -16,22 +16,45 @@ tf.get_logger().setLevel(logging.ERROR)
 
 def build_lstm_autoencoder(timesteps):
     inputs = layers.Input(shape=(timesteps, 1))
-    x = layers.LSTM(32, return_sequences=True)(inputs)
+    x = layers.LSTM(32, return_sequences=True, name="lstm_ae_enc1")(inputs)
     x = layers.Dropout(0.1)(x)
-    x = layers.LSTM(16, return_sequences=False)(x)
-    
+    # Bottleneck — explicitly named so the encoder half can be sliced out and
+    # reused as a pretrained feature extractor (see save_encoder_dir below /
+    # model_utils.py's "lstm_ae_clf" model, which loads this layer's output).
+    x = layers.LSTM(16, return_sequences=False, name="lstm_ae_enc2")(x)
+
     x = layers.RepeatVector(timesteps)(x)
-    
-    x = layers.LSTM(16, return_sequences=True)(x)
+
+    x = layers.LSTM(16, return_sequences=True, name="lstm_ae_dec1")(x)
     x = layers.Dropout(0.1)(x)
-    x = layers.LSTM(32, return_sequences=True)(x)
-    
+    x = layers.LSTM(32, return_sequences=True, name="lstm_ae_dec2")(x)
+
     decoded = layers.TimeDistributed(layers.Dense(1))(x)
     autoencoder = models.Model(inputs, decoded)
     autoencoder.compile(optimizer='adam', loss='mse')
     return autoencoder
 
-def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True):
+
+def _save_encoder(autoencoder, scaler, save_encoder_dir, dataset_name):
+    """Slice out the encoder half (Input -> ... -> lstm_ae_enc2 bottleneck) and save
+    it standalone, sharing weights with the just-trained autoencoder. Also saves the
+    fitted MinMaxScaler — the encoder was trained on scaled curves, so a later
+    classifier (model_utils.py's "lstm_ae_clf", fed by 03_main_training.py) must
+    apply this same transform to its raw curves before feeding the encoder, or the
+    pretrained weights will see out-of-distribution input."""
+    import joblib
+    os.makedirs(save_encoder_dir, exist_ok=True)
+    encoder = models.Model(
+        inputs=autoencoder.input,
+        outputs=autoencoder.get_layer("lstm_ae_enc2").output,
+    )
+    encoder_path = os.path.join(save_encoder_dir, f"lstm_ae_encoder_{dataset_name}.keras")
+    scaler_path = os.path.join(save_encoder_dir, f"lstm_ae_scaler_{dataset_name}.joblib")
+    encoder.save(encoder_path)
+    joblib.dump(scaler, scaler_path)
+    print(f"     [XAI] Saved pretrained LSTM-AE encoder -> {encoder_path}")
+
+def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True, save_encoder_dir=None):
     os.makedirs(ae_plot_path, exist_ok=True)
     results_dfs = []
     unique_wells = np.unique(Y_well)
@@ -73,12 +96,15 @@ def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_cur
                 early_stop = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
                 
                 autoencoder.fit(X_scaled_3d, X_scaled_3d, epochs=epochs, batch_size=batch_size, shuffle=True, callbacks=[early_stop], verbose=0)
-                
+
                 X_reconstructed_3d = autoencoder.predict(X_scaled_3d, verbose=0)
                 X_reconstructed = X_reconstructed_3d.reshape(X_scaled.shape)
                 mse = np.mean(np.power(X_scaled - X_reconstructed, 2), axis=1)
                 full_mse[valid_indices] = mse
-                
+
+                if save_encoder_dir is not None:
+                    _save_encoder(autoencoder, scaler, save_encoder_dir, name)
+
                 tf.keras.backend.clear_session()
                 gc.collect()
 

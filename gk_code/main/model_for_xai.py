@@ -76,9 +76,10 @@ def main(exp_folder=Path(config.LAB_EXP_FOLDER), curve_type="ori_curve", force_r
 
         # --- DATA PREPARATION ---
         Y_well = data_package["y_well"]
-        if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
+        label_mappings = config.get_label_mappings(exp_path)
+        if exp_path.name in label_mappings:
             print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
-            mapping = config.LABEL_MAPPINGS[exp_path.name]
+            mapping = label_mappings[exp_path.name]
             
             # Maps matching keys; falls back to the original index value if not found
             Y_well = [mapping.get(w, w) for w in Y_well]

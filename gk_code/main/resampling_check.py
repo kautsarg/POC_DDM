@@ -34,14 +34,15 @@ def load_ori_curves(exp_path):
         return None
     idx = dataset_name.index("ori_curves")
 
-    if exp_path.name not in config.LABEL_MAPPINGS:
+    label_mappings = config.get_label_mappings(exp_path)
+    if exp_path.name not in label_mappings:
         print(f"  -> Skipping {exp_path.name}: no LABEL_MAPPINGS entry found.")
         return None
 
     return {
         "curves": data["dataset"][idx],
         "Y_well_raw": np.asarray(data["Y_well"]),
-        "well_to_label": config.LABEL_MAPPINGS[exp_path.name],
+        "well_to_label": label_mappings[exp_path.name],
         "timestamps": np.asarray(data["timestamps"], dtype=float),
     }
 

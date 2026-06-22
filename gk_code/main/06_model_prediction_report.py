@@ -493,9 +493,10 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
     curves      = dataset[curve_idx]
     features_df = kinetic_features[curve_idx]
 
+    label_mappings = config.get_label_mappings(exp_path)
     Y_well_mapped = list(Y_well_raw)
-    if exp_path.name in config.LABEL_MAPPINGS:
-        mapping = config.LABEL_MAPPINGS[exp_path.name]
+    if exp_path.name in label_mappings:
+        mapping = label_mappings[exp_path.name]
         Y_well_mapped = [mapping.get(w, w) for w in Y_well_raw]
 
     encoder = LabelEncoder()
@@ -519,7 +520,7 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
         return
     global_idx, y_masked, splits = split_info
 
-    label_map   = config.LABEL_MAPPINGS.get(exp_path.name, {})
+    label_map   = label_mappings.get(exp_path.name, {})
     class_names = [str(c) for c in encoder.classes_]
 
     # ---- Collect per-model data ----

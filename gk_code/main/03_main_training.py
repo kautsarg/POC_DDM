@@ -100,9 +100,10 @@ if __name__ == "__main__":
     # Filter Clean data only
     dataset_name, dataset, kinetic_features = filter_datasets(dataset_name, dataset, kinetic_features)
 
-    if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
+    label_mappings = config.get_label_mappings(exp_path)
+    if exp_path.name in label_mappings:
         print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
-        mapping = config.LABEL_MAPPINGS[exp_path.name]
+        mapping = label_mappings[exp_path.name]
         
         # Maps matching keys; falls back to the original index value if not found
         Y_well = [mapping.get(w, w) for w in Y_well]
@@ -133,6 +134,18 @@ if __name__ == "__main__":
 
     # Maps dataset_name back to the CLI curve_type alias used in file names.
     _reverse_alias = {v: k for k, v in config.CURVE_TYPE_ALIASES.items()}
+
+    def _lstm_ae_paths(curve_dataset_name):
+        """Path to the pretrained LSTM-AE encoder/scaler for one curve variant, saved
+        by 02_outlier_detection_pipeline.py's global LSTM autoencoder (see
+        lstm_autoencoder_outlier.py's _save_encoder). Returns (None, None) if either
+        file is missing — "lstm_ae_clf" then gets skipped by evaluate_outlier_filters."""
+        enc_dir = exp_path / "pretrained_encoders"
+        enc_path = enc_dir / f"lstm_ae_encoder_{curve_dataset_name}.keras"
+        scaler_path = enc_dir / f"lstm_ae_scaler_{curve_dataset_name}.joblib"
+        if enc_path.exists() and scaler_path.exists():
+            return str(enc_path), str(scaler_path)
+        return None, None
 
     for idx, (name, features_df, curves_2d) in enumerate(zip(dataset_name, kinetic_features, dataset)):
         if name not in _target_names:
@@ -166,7 +179,8 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
+        # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
+        models = ["knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", "lstm_ae_clf"]
 
         model_interp_dir = exp_path / "model_interpretation"
 
@@ -179,6 +193,10 @@ if __name__ == "__main__":
             # Save XAI models from the Reference run for ori_curves (Reference curve = ori_curves).
             ref_save_dir = model_interp_dir if name == "ori_curves" else None
             ref_save_ct = xai_curve_type if ref_save_dir else "ori_curve"
+
+            # Reference always trains on dataset[0] (ori_curves), regardless of which
+            # curve_type `name` is — so the pretrained encoder must match dataset[0], not `name`.
+            ref_enc_path, ref_scaler_path = _lstm_ae_paths(dataset_name[0])
 
             res_ref = evaluate_outlier_filters(
                 X_curves=trained_curve,
@@ -195,6 +213,8 @@ if __name__ == "__main__":
                 n_splits=args.n_splits,
                 save_model_dir=ref_save_dir,
                 save_model_curve_type=ref_save_ct,
+                pretrained_encoder_path=ref_enc_path,
+                pretrained_scaler_path=ref_scaler_path,
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -221,6 +241,10 @@ if __name__ == "__main__":
                 cached_native = all_ml_results[clean_title].get("Native", {})
                 checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
 
+                # Native trains on this dataset's own curves (curves_2d, i.e. dataset
+                # variant `name`) — the pretrained encoder must match `name`.
+                native_enc_path, native_scaler_path = _lstm_ae_paths(name)
+
                 res_native = evaluate_outlier_filters(
                     X_curves=curves_2d,
                     features_df=features_df,
@@ -236,6 +260,8 @@ if __name__ == "__main__":
                     n_splits=args.n_splits,
                     save_model_dir=model_interp_dir,
                     save_model_curve_type=xai_curve_type,
+                    pretrained_encoder_path=native_enc_path,
+                    pretrained_scaler_path=native_scaler_path,
                 )
 
             all_ml_results[clean_title]["Native"] = res_native

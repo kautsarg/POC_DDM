@@ -126,7 +126,7 @@ def process_experiment(exp_path, force_rerun, curve_type="ori_curve"):
         print(f"  -> No outlier filter columns found for {exp_path.name}. Skipping.")
         return
 
-    label_map = config.LABEL_MAPPINGS.get(exp_path.name, {})
+    label_map = config.get_label_mappings(exp_path).get(exp_path.name, {})
     curves = dataset[curve_idx]
 
     img_buffers = []

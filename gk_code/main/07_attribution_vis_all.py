@@ -41,9 +41,10 @@ def prepare_dataset(exp_path, filter_key, curve_type="ori_curve"):
         return None
 
     Y_well = data["Y_well"]
-    if hasattr(config, "LABEL_MAPPINGS") and exp_path.name in config.LABEL_MAPPINGS:
+    label_mappings = config.get_label_mappings(exp_path)
+    if exp_path.name in label_mappings:
         print(f"  [*] Applying custom target label mapping for experiment: {exp_path.name}")
-        mapping = config.LABEL_MAPPINGS[exp_path.name]
+        mapping = label_mappings[exp_path.name]
         Y_well = [mapping.get(w, w) for w in Y_well]
     else:
         print(f"  [*] No custom mapping found for {exp_path.name}. Retaining default well labels.")
@@ -109,7 +110,7 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
     """Loads models and strictly checks shape to prevent ValueError crashes."""
     models = {}
     model_names = [
-        'cnn', 'bigru', 'transformer',
+        'cnn', 'bigru', 'transformer', 'lstm_ae_clf',
         'cnn_lf', 'bigru_lf', 'transformer_lf',
         'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual'
     ]
@@ -202,10 +203,17 @@ def targeted_latent_attribution(latent_model, x_inputs, target_dims):
 
 # Safe Layer Extraction
 def find_bidirectional_recurrent_layer(model):
+    """Finds the last Bidirectional(GRU/LSTM/SimpleRNN) layer (used by gru/lstm/rnn);
+    falls back to the last plain (non-Bidirectional) GRU/LSTM/SimpleRNN layer if none
+    is found — e.g. lstm_ae_clf's pretrained encoder uses plain LSTM layers, so its
+    bottleneck gets the same recurrent-layer-based saliency treatment as gru/transformer."""
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Bidirectional):
             if isinstance(layer.forward_layer, (tf.keras.layers.GRU, tf.keras.layers.LSTM, tf.keras.layers.SimpleRNN)):
                 return layer
+    for layer in reversed(model.layers):
+        if isinstance(layer, (tf.keras.layers.GRU, tf.keras.layers.LSTM, tf.keras.layers.SimpleRNN)):
+            return layer
     return None
 
 def find_flatten_layer(model):
@@ -257,14 +265,31 @@ def compute_latent_saliency_batch(extractor, x_tf, order, imp_shape, input_tenso
 # ====================================================================
 # MODULE 4: THE OPTIMIZED ARTIFACT EXTRACTOR 
 # ====================================================================
-def extract_xai_artifacts(models, X_batch, X_man_batch):
-    """Runs all TF Gradient operations once and saves the matrices for all plots."""
+def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
+    """Runs all TF Gradient operations once and saves the matrices for all plots.
+
+    lstm_ae_scaler: the MinMaxScaler saved alongside lstm_ae_clf's pretrained encoder
+    (see lstm_autoencoder_outlier.py's _save_encoder / model_utils.py's
+    load_lstm_ae_clf_model). That model was trained on scaled curves, so its gradients
+    must be computed against the same scaled input, not the raw X_batch used by every
+    other model — otherwise its saliency/latent-mapping would be computed on
+    out-of-distribution input and be meaningless.
+    """
     artifacts = {}
-    x_tf_curve = tf.convert_to_tensor(X_batch, dtype=tf.float32)
+    x_tf_curve_raw = tf.convert_to_tensor(X_batch, dtype=tf.float32)
     x_tf_man = tf.convert_to_tensor(X_man_batch, dtype=tf.float32)
-    
+
+    x_tf_curve_scaled = None
+    if lstm_ae_scaler is not None:
+        X_batch_scaled = lstm_ae_scaler.transform(np.squeeze(X_batch, axis=-1))[..., None]
+        x_tf_curve_scaled = tf.convert_to_tensor(X_batch_scaled, dtype=tf.float32)
+
     for model_name, model in models.items():
         print(f"    [+] Computing Gradients: {model_name}")
+        if model_name == 'lstm_ae_clf' and x_tf_curve_scaled is not None:
+            x_tf_curve = x_tf_curve_scaled
+        else:
+            x_tf_curve = x_tf_curve_raw
         is_lf = model_name.endswith('_lf')
         is_dual = model_name.endswith('_dual')
         
@@ -1146,8 +1171,20 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             mean_curve = mean_curve.mean(axis=-1)
             std_curve = std_curve.mean(axis=-1)
 
+        # lstm_ae_clf needs its pretrained MinMaxScaler (saved alongside the encoder
+        # in 02) to put X_batch in the same scale its frozen backbone was trained on.
+        lstm_ae_scaler = None
+        if 'lstm_ae_clf' in models:
+            scaler_path = exp_path / "pretrained_encoders" / f"lstm_ae_scaler_{data_dict['dataset_name']}.joblib"
+            if scaler_path.exists():
+                lstm_ae_scaler = joblib.load(scaler_path)
+            else:
+                print(f"  [!] lstm_ae_clf model found but its scaler is missing ({scaler_path}); "
+                      f"its XAI plots will be skipped.")
+                del models['lstm_ae_clf']
+
         print(f"  -> Generating Central XAI Artifacts...")
-        artifacts = extract_xai_artifacts(models, X_batch, X_man_batch)
+        artifacts = extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=lstm_ae_scaler)
 
         print(f"  -> Generating Visualizations into {dataset_vis_dir.relative_to(global_vis_dir.parent)}/ ...")
 
