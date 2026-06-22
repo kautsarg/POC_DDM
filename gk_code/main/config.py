@@ -274,6 +274,16 @@ MODEL_KEY_MAP = {
     "gru_lf":       ("y_preds_AC_gru_lf_",      "y_probs_AC_gru_lf_",     "classes_AC_gru_lf_"),
     "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_","y_probs_AC_cnn_gru_dual_","classes_AC_cnn_gru_dual_"),
     "cnn_trans_dual":("y_preds_AC_cnn_trans_dual_","y_probs_AC_cnn_trans_dual_","classes_AC_cnn_trans_dual_"),
+    "lstm_ae_clf":  ("y_preds_AC_lstm_ae_clf_",  "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
+    # 8 gated dual-branch fusion models (utils/model_training/model_utils_gated.py).
+    "cnn_gru_gate":        ("y_preds_AC_cnn_gru_gate_",        "y_probs_AC_cnn_gru_gate_",        "classes_AC_cnn_gru_gate_"),
+    "cnn_gru_hadamard":    ("y_preds_AC_cnn_gru_hadamard_",    "y_probs_AC_cnn_gru_hadamard_",    "classes_AC_cnn_gru_hadamard_"),
+    "cnn_gru_crossattn":   ("y_preds_AC_cnn_gru_crossattn_",   "y_probs_AC_cnn_gru_crossattn_",   "classes_AC_cnn_gru_crossattn_"),
+    "cnn_gru_film":        ("y_preds_AC_cnn_gru_film_",        "y_probs_AC_cnn_gru_film_",        "classes_AC_cnn_gru_film_"),
+    "cnn_trans_gate":      ("y_preds_AC_cnn_trans_gate_",      "y_probs_AC_cnn_trans_gate_",      "classes_AC_cnn_trans_gate_"),
+    "cnn_trans_hadamard":  ("y_preds_AC_cnn_trans_hadamard_",  "y_probs_AC_cnn_trans_hadamard_",  "classes_AC_cnn_trans_hadamard_"),
+    "cnn_trans_crossattn": ("y_preds_AC_cnn_trans_crossattn_", "y_probs_AC_cnn_trans_crossattn_", "classes_AC_cnn_trans_crossattn_"),
+    "cnn_trans_film":      ("y_preds_AC_cnn_trans_film_",      "y_probs_AC_cnn_trans_film_",      "classes_AC_cnn_trans_film_"),
 }
 
 MODEL_PRINT_MAP = {
@@ -282,6 +292,11 @@ MODEL_PRINT_MAP = {
     "knn": "KNN (ACA)", "ffi": "LR (FFI)",
     "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
     "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
+    "lstm_ae_clf": "LSTM-AE Clf",
+    "cnn_gru_gate": "CNN+GRU Gate", "cnn_gru_hadamard": "CNN+GRU Hadamard",
+    "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
+    "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
+    "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
 }
 
 FILTER_PRINT_MAP = {

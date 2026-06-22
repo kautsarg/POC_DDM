@@ -18,6 +18,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 sys.path.insert(0, "utils/model_training")
 import config
 from model_utils import set_global_determinism
+import model_utils_gated  # noqa: F401 — registers _SumPool1D/_OneMinus for .keras deserialization
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
 WELL_CMAP = config.WELL_CMAP
@@ -112,7 +113,9 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
     model_names = [
         'cnn', 'bigru', 'transformer', 'lstm_ae_clf',
         'cnn_lf', 'bigru_lf', 'transformer_lf',
-        'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual'
+        'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual',
+        'cnn_gru_gate', 'cnn_gru_hadamard', 'cnn_gru_crossattn', 'cnn_gru_film',
+        'cnn_trans_gate', 'cnn_trans_hadamard', 'cnn_trans_crossattn', 'cnn_trans_film',
     ]
 
     for name in model_names:
@@ -375,6 +378,71 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             master_sal = np.mean(np.abs(tape.gradient(target_master, x_tf_curve).numpy()), axis=(0, 2))
             del tape
             
+            artifacts[model_name] = {
+                "is_type": "dual", "master_saliency": master_sal,
+                "z_curve": z_cnn.numpy(), "curve_order": cnn_order, "curve_imp_shape": cnn_imp_shape, "raw_saliency_curve": raw_saliency_cnn,
+                "z_rnn": z_rnn.numpy(), "rnn_order": rnn_order, "rnn_imp_shape": rnn_imp_shape, "raw_saliency_rnn": raw_saliency_rnn
+            }
+
+        # --------------------------------------------------------
+        # GATED FUSION MODELS (model_utils_gated.py's 8 cnn_gru_*/cnn_trans_* models:
+        # gate/hadamard/crossattn/film). Detected via the 'cnn_emb' layer name, which
+        # is unique to these models (the plain *_dual models above use unnamed layers).
+        # Treated as "dual" for plotting (same two-branch heatmap template), but
+        # extracted via the documented XAI layer names instead of a Concatenate scan,
+        # since these models fuse via fuse_gate/fuse_hadamard/fuse_mha/fuse_film
+        # rather than a plain Concatenate.
+        elif any(l.name == 'cnn_emb' for l in model.layers):
+            is_coattn = any(l.name == 'fuse_mha1' for l in model.layers)
+            other_emb_name = 'gru_emb' if any(l.name == 'gru_emb' for l in model.layers) else 'trans_emb'
+            cnn_emb_t = model.get_layer('cnn_emb').output
+            other_emb_t = model.get_layer(other_emb_name).output
+
+            if is_coattn:
+                # Co-attention's fusion also consumes the pre-pool sequences, not just
+                # the pooled embeddings — recovered via fuse_kv1/fuse_kv2's .input,
+                # exactly the tensors _fuse_coattn() in model_utils_gated.py feeds them
+                # (kv1=Dense(other_seq), kv2=Dense(cnn_seq)) — so head_model's graph
+                # from [cnn_seq, cnn_emb, other_seq, other_emb] to model.output is
+                # fully connected (it wouldn't be with just the two pooled embeddings).
+                cnn_seq_t = model.get_layer('fuse_kv2').input
+                other_seq_t = model.get_layer('fuse_kv1').input
+                extractor_all = tf.keras.Model(inputs=model.input, outputs=[cnn_seq_t, cnn_emb_t, other_seq_t, other_emb_t])
+                head_model = tf.keras.Model(inputs=[cnn_seq_t, cnn_emb_t, other_seq_t, other_emb_t], outputs=model.output)
+
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    z_seq_cnn, z_cnn, z_seq_other, z_rnn = extractor_all(x_tf_curve)
+                    tape.watch(z_cnn)
+                    tape.watch(z_rnn)
+                    target_master = tf.reduce_max(head_model([z_seq_cnn, z_cnn, z_seq_other, z_rnn]), axis=1)
+            else:
+                extractor_cnn = tf.keras.Model(inputs=model.input, outputs=cnn_emb_t)
+                extractor_rnn = tf.keras.Model(inputs=model.input, outputs=other_emb_t)
+                head_model = tf.keras.Model(inputs=[cnn_emb_t, other_emb_t], outputs=model.output)
+
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    z_cnn = extractor_cnn(x_tf_curve)
+                    z_rnn = extractor_rnn(x_tf_curve)
+                    tape.watch(z_cnn)
+                    tape.watch(z_rnn)
+                    target_master = tf.reduce_max(head_model([z_cnn, z_rnn]), axis=1)
+
+            dy_dz_cnn = tape.gradient(target_master, z_cnn).numpy()
+            dy_dz_rnn = tape.gradient(target_master, z_rnn).numpy()
+
+            cnn_order, cnn_imp_shape = rank_latents(dy_dz_cnn)
+            rnn_order, rnn_imp_shape = rank_latents(dy_dz_rnn)
+
+            extractor_cnn_only = tf.keras.Model(inputs=model.input, outputs=cnn_emb_t)
+            extractor_rnn_only = tf.keras.Model(inputs=model.input, outputs=other_emb_t)
+            raw_saliency_cnn = compute_latent_saliency_batch(extractor_cnn_only, x_tf_curve, cnn_order, cnn_imp_shape, x_tf_curve)
+            raw_saliency_rnn = compute_latent_saliency_batch(extractor_rnn_only, x_tf_curve, rnn_order, rnn_imp_shape, x_tf_curve)
+
+            master_sal = np.mean(np.abs(tape.gradient(target_master, x_tf_curve).numpy()), axis=(0, 2))
+            del tape
+
             artifacts[model_name] = {
                 "is_type": "dual", "master_saliency": master_sal,
                 "z_curve": z_cnn.numpy(), "curve_order": cnn_order, "curve_imp_shape": cnn_imp_shape, "raw_saliency_curve": raw_saliency_cnn,
@@ -712,7 +780,7 @@ def plot_latent_feature_mapping(
     feat_matrix, feat_sensitivity, feat_names,
     mean_curve, std_curve,
     dataset_name, save_path,
-    TOP_N=5,
+    TOP_N=10,
     w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
 ):
     """
@@ -1111,7 +1179,7 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=5):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=10):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
@@ -1225,7 +1293,7 @@ if __name__ == "__main__":
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
-    parser.add_argument("--top_n", type=int, default=5, help="Unique-feature latent rows to show per branch in the latent->feature mapping plot (default: 5)")
+    parser.add_argument("--top_n", type=int, default=10, help="Unique-feature latent rows to show per branch in the latent->feature mapping plot (default: 10)")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)

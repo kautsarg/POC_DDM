@@ -163,7 +163,14 @@ if __name__ == "__main__":
 
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
         outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
-        models = ["cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual"]
+        models = [
+            "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual",
+            # 8 gated dual-branch fusion models (model_utils_gated.py). Not lstm_ae_clf
+            # here — LOFO pools curves across multiple experiment folders, and there's
+            # no single pretrained encoder that matches that combined pool.
+            "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+            "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+        ]
 
         if args.force_rerun:
             print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")

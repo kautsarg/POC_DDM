@@ -24,6 +24,8 @@ tf.get_logger().setLevel('ERROR')
 
 from scikeras.wrappers import KerasClassifier
 
+import model_utils_gated
+
 # ====================================================================
 # GPU SETUP & VERIFICATION
 # ====================================================================
@@ -464,6 +466,7 @@ _XAI_SAVE_NAME = {
     'cnn_gru_dual': 'cnn_gru_dual',
     'cnn_trans_dual': 'cnn_trans_dual',
     'lstm_ae_clf': 'lstm_ae_clf',
+    **{name: name for name in model_utils_gated._ALL_FACTORIES},
 }
 
 
@@ -519,6 +522,9 @@ def evaluate_outlier_filters(
         "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
         "cnn_trans_dual": ("y_preds_AC_cnn_trans_dual_", "y_probs_AC_cnn_trans_dual_", "classes_AC_cnn_trans_dual_"),
         "lstm_ae_clf": ("y_preds_AC_lstm_ae_clf_", "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
+        # 8 gated dual-branch fusion models (model_utils_gated.py).
+        **{name: (f"y_preds_AC_{name}_", f"y_probs_AC_{name}_", f"classes_AC_{name}_")
+           for name in model_utils_gated._ALL_FACTORIES},
     }
 
     model_print_map = {
@@ -528,6 +534,10 @@ def evaluate_outlier_filters(
         "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
         "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
         "lstm_ae_clf": "LSTM-AE Clf",
+        "cnn_gru_gate": "CNN+GRU Gate", "cnn_gru_hadamard": "CNN+GRU Hadamard",
+        "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
+        "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
+        "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     }
 
     for idx, f in enumerate(outlier_filters):
@@ -760,6 +770,37 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
+                elif m in model_utils_gated._ALL_FACTORIES:
+                    # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
+                    # single-curve-input, no-manual-features shape as cnn_gru_dual /
+                    # cnn_trans_dual above, just dispatched through the factory dict
+                    # instead of named functions (model_utils_gated.py).
+                    tf.keras.backend.clear_session()
+
+                    model = model_utils_gated._ALL_FACTORIES[m](X_train_curve.shape[1], n_classes)
+                    epochs = 500
+
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, y_train_fit,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        model.save(_xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
                 elif m == "lstm_ae_clf":
                     tf.keras.backend.clear_session()
 
@@ -909,6 +950,15 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('CNN + Transformer Dual', 'y_preds_AC_cnn_trans_dual_'))
         if 'y_preds_AC_lstm_ae_clf_' in sample_res:
             method_info.append(('LSTM-AE Pretrained Classifier', 'y_preds_AC_lstm_ae_clf_'))
+        for _gated_name, _gated_print in [
+            ("cnn_gru_gate", "CNN+GRU Gate"), ("cnn_gru_hadamard", "CNN+GRU Hadamard"),
+            ("cnn_gru_crossattn", "CNN+GRU CoAttn"), ("cnn_gru_film", "CNN+GRU FiLM"),
+            ("cnn_trans_gate", "CNN+Tr Gate"), ("cnn_trans_hadamard", "CNN+Tr Hadamard"),
+            ("cnn_trans_crossattn", "CNN+Tr CoAttn"), ("cnn_trans_film", "CNN+Tr FiLM"),
+        ]:
+            _key = f'y_preds_AC_{_gated_name}_'
+            if _key in sample_res:
+                method_info.append((_gated_print, _key))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")

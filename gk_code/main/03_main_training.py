@@ -180,7 +180,12 @@ if __name__ == "__main__":
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
-        models = ["knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", "lstm_ae_clf"]
+        models = [
+            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", "lstm_ae_clf",
+            # 8 gated dual-branch fusion models (model_utils_gated.py).
+            "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+            "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+        ]
 
         model_interp_dir = exp_path / "model_interpretation"
 

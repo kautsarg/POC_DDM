@@ -43,13 +43,21 @@ XAI-relevant layer names (all extractable via model.get_layer(...).output)
   cnn_emb         : CNN branch embedding (all models)
   gru_emb / trans_emb : other branch embedding (all models)
 
-Note on Lambda layers
-----------------------
-Lambda is used for (1-gate) in gate fusion and for attention-weighted pooling in the GRU
-branch.  These work for inference and model.summary() but are not SavedModel-serializable.
-Use model.save(..., save_format='h5') or replace with custom layers if needed.
+Note on custom layers (_SumPool1D / _OneMinus)
+------------------------------------------------
+Attention-weighted pooling (GRU branch) and (1-gate) (gate fusion) used to be Lambda
+layers. A Lambda's saved bytecode loses its closure's globals on deserialization, so
+`tf` was unbound and inference raised NameError the instant the model was reloaded in
+a different process — model.save()/load_model() alone didn't catch it since neither
+runs the layer. Replaced with tiny registered Layer subclasses, which serialize via
+get_config/from_config instead and don't have this problem. Any module that loads
+these .keras files (e.g. 07_attribution_vis_all.py) must `import model_utils_gated`
+first so the @register_keras_serializable decorators run and the classes are
+resolvable by name during deserialization.
 
-Not integrated with 03/04 — standalone for architecture inspection and experimentation.
+Integrated into 03_main_training.py / 04_cross_dataset_training.py (training),
+07_attribution_vis_all.py (XAI), and config.py's MODEL_KEY_MAP/MODEL_PRINT_MAP
+(06/08 reporting) via the _ALL_FACTORIES dict below.
 """
 
 import os
@@ -57,6 +65,29 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
 _EMB_DIM = 32  # shared branch output dimension
+
+
+# Custom layers instead of Lambda: a Lambda's saved bytecode is reconstructed without
+# the original module's globals, so `tf` is unbound and inference raises NameError the
+# moment the model is reloaded in a different process (caught by an actual inference
+# smoke test in 07_attribution_vis_all.py, not by load_model() alone, which doesn't run
+# the layer). Subclassed layers serialize via get_config/from_config instead, so this
+# doesn't happen, and unsafe Lambda deserialization isn't needed either.
+@tf.keras.utils.register_keras_serializable(package="model_utils_gated")
+class _SumPool1D(tf.keras.layers.Layer):
+    """Sums over axis=1 (the time dimension). Used for attention-weighted pooling."""
+    def call(self, x):
+        return tf.reduce_sum(x, axis=1)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[2])
+
+
+@tf.keras.utils.register_keras_serializable(package="model_utils_gated")
+class _OneMinus(tf.keras.layers.Layer):
+    """Computes 1 - x (used for the gate fusion's complementary weight)."""
+    def call(self, x):
+        return 1.0 - x
 
 
 # ============================================================
@@ -118,8 +149,7 @@ def _gru_branch(inp, emb_dim=_EMB_DIM, return_seq=False, pfx="gru"):
     attn = tf.keras.layers.Dense(1, use_bias=False, name=f"{pfx}_attn_w")(g2)   # (B, T, 1)
     attn = tf.keras.layers.Softmax(axis=1, name=f"{pfx}_attn_sm")(attn)
     weighted = tf.keras.layers.Multiply(name=f"{pfx}_attn_mul")([g2, attn])      # (B, T, emb_dim)
-    pooled   = tf.keras.layers.Lambda(
-        lambda x: tf.reduce_sum(x, axis=1), name=f"{pfx}_attn_pool")(weighted)  # (B, emb_dim)
+    pooled   = _SumPool1D(name=f"{pfx}_attn_pool")(weighted)  # (B, emb_dim)
     emb = tf.keras.layers.Dense(emb_dim, activation='relu', name=f"{pfx}_emb")(pooled)
 
     if not return_seq:
@@ -195,7 +225,7 @@ def _fuse_gate(cnn_emb, other_emb, emb_dim=_EMB_DIM, pfx="fuse"):
     cat  = tf.keras.layers.Concatenate(name=f"{pfx}_cat")([cnn_emb, other_emb])
     h    = tf.keras.layers.Dense(64, activation='relu', name=f"{pfx}_gate_h")(cat)
     gate = tf.keras.layers.Dense(emb_dim, activation='sigmoid', name=f"{pfx}_gate")(h)
-    inv  = tf.keras.layers.Lambda(lambda g: 1.0 - g, name=f"{pfx}_inv")(gate)
+    inv  = _OneMinus(name=f"{pfx}_inv")(gate)
     g_cnn   = tf.keras.layers.Multiply(name=f"{pfx}_g_cnn")([gate, cnn_emb])
     g_other = tf.keras.layers.Multiply(name=f"{pfx}_g_other")([inv, other_emb])
     merged  = tf.keras.layers.Add(name=f"{pfx}_add")([g_cnn, g_other])
