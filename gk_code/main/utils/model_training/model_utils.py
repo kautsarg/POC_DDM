@@ -651,6 +651,7 @@ def evaluate_outlier_filters(
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
             start_time = time.perf_counter()
+            _lstm_ae_failed = False
 
             for fold_idx, (train_idx, test_idx) in enumerate(splits):
                 X_train_curve = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
@@ -805,13 +806,24 @@ def evaluate_outlier_filters(
                     tf.keras.backend.clear_session()
 
                     # Shape compatibility already verified once before the fold loop
-                    # above, so this load is expected to always succeed here. Named
-                    # ae_scaler (not `scaler`) to avoid shadowing the StandardScaler
-                    # already assigned to `scaler` above for X_manual, in case anything
-                    # downstream ever needs to refer back to it within the same fold.
-                    model, ae_scaler = load_lstm_ae_clf_model(
-                        pretrained_encoder_path, pretrained_scaler_path,
-                        X_train_curve.shape[1], n_classes)
+                    # above, so this load is expected to succeed here — but pretrained
+                    # files can still fail to load (corrupt/incompatible save format,
+                    # version-mismatched scaler pickle, etc.), so guard it anyway rather
+                    # than crashing the whole run. Named ae_scaler (not `scaler`) to
+                    # avoid shadowing the StandardScaler already assigned to `scaler`
+                    # above for X_manual, in case anything downstream ever needs to
+                    # refer back to it within the same fold.
+                    try:
+                        model, ae_scaler = load_lstm_ae_clf_model(
+                            pretrained_encoder_path, pretrained_scaler_path,
+                            X_train_curve.shape[1], n_classes)
+                    except Exception as e:
+                        model, ae_scaler = None, None
+                        print(f"     [SKIP] lstm_ae_clf: failed to load pretrained encoder/scaler ({e}).")
+
+                    if model is None or ae_scaler is None:
+                        _lstm_ae_failed = True
+                        break
                     epochs = 500
 
                     # Encoder was trained on MinMax-scaled curves (see _save_encoder in
@@ -876,7 +888,10 @@ def evaluate_outlier_filters(
 
                     if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
                         tf.keras.backend.clear_session()
-                    
+
+            if _lstm_ae_failed:
+                continue
+
             end_time = time.perf_counter()
             duration = end_time - start_time
             formatted_time = time.strftime("%H:%M:%S", time.gmtime(int(duration)))

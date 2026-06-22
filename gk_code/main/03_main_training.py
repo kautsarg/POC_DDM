@@ -181,8 +181,12 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", "lstm_ae_clf",
-            # 8 gated dual-branch fusion models (model_utils_gated.py).
+            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", 
+            
+            # From outlier unsupervised training
+            "lstm_ae_clf",
+            
+            # New gated dual-branch fusion models
             "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
             "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]

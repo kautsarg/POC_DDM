@@ -222,6 +222,11 @@ if __name__ == "__main__":
             for f in outlier_filters:
                 lofo_results[fold_label]["top_10_features"][str(f)] = top_10_features
 
+            # encoder.classes_ isn't persisted anywhere else for this combined pool --
+            # 06b_cross_dataset_prediction_report.py needs it to label confusion
+            # matrices/class-metrics with real class names instead of integer ids.
+            lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
+
             joblib.dump(lofo_results, results_file_path, compress=3)
 
             # Test-fold snapshot so 07 can run attribution without re-running combine_group.

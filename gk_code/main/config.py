@@ -275,7 +275,6 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_","y_probs_AC_cnn_gru_dual_","classes_AC_cnn_gru_dual_"),
     "cnn_trans_dual":("y_preds_AC_cnn_trans_dual_","y_probs_AC_cnn_trans_dual_","classes_AC_cnn_trans_dual_"),
     "lstm_ae_clf":  ("y_preds_AC_lstm_ae_clf_",  "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
-    # 8 gated dual-branch fusion models (utils/model_training/model_utils_gated.py).
     "cnn_gru_gate":        ("y_preds_AC_cnn_gru_gate_",        "y_probs_AC_cnn_gru_gate_",        "classes_AC_cnn_gru_gate_"),
     "cnn_gru_hadamard":    ("y_preds_AC_cnn_gru_hadamard_",    "y_probs_AC_cnn_gru_hadamard_",    "classes_AC_cnn_gru_hadamard_"),
     "cnn_gru_crossattn":   ("y_preds_AC_cnn_gru_crossattn_",   "y_probs_AC_cnn_gru_crossattn_",   "classes_AC_cnn_gru_crossattn_"),
