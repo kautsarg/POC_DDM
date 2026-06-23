@@ -120,30 +120,50 @@ def compute_filtered_fold_split(y_test_fold, features_df_test, outlier_filter):
 
 
 # ============================================================
-# SIMPLIFIED CURVE PLOT (no per-well breakdown -- LOFO pools multiple
-# datasets/wells into one held-out fold, so "well" isn't a stable axis here)
+# CURVE PLOT (n_classes × 2 grid -- LOFO pools multiple datasets/wells into one
+# held-out fold, so "well" isn't a stable axis here; class fills that role
+# instead, mirroring 06's render_curve_plot's n_wells × 2, one-subplot-per-group
+# structure exactly, just with class instead of well as the row dimension)
 # ============================================================
 
-def render_fold_curve_plot(curves, result):
+def render_fold_curve_plot(curves, result, y_true_by_local):
     """curves (snapshot's X_curves_test) is plain 2D (N, T) -- unlike the saved
     .keras models, which require an explicit 3D (batch, T, 1) input, the raw
     curve arrays in curve_for_training.joblib / the xai_data snapshot never
-    carry a channel dim, so no squeeze is needed here."""
+    carry a channel dim, so no squeeze is needed here.
+
+    y_true_by_local: true label indexed by position in `curves` (built by the
+    caller from local_idx/y_masked) -- result["y_true_all"] is indexed by
+    position-within-the-filtered-subset instead, so it can't be indexed directly
+    with correct_idx/wrong_idx (those are positions in `curves`).
+    """
     correct_idx = result["correct_idx"]
     wrong_idx   = result["wrong_idx"]
+    class_names = result["class_names"]
+    n_classes   = len(class_names)
 
-    fig, axes = plt.subplots(1, 2, figsize=(9, 3.2), sharey=True)
-    if len(correct_idx) > 0:
-        axes[0].plot(curves[correct_idx].T, color="#27ae60", alpha=0.15, linewidth=0.8)
-    axes[0].set_title(f"Correct (n={len(correct_idx)})", fontsize=9, fontweight="bold")
-    if len(wrong_idx) > 0:
-        axes[1].plot(curves[wrong_idx].T, color="#e74c3c", alpha=0.3, linewidth=0.8)
-    axes[1].set_title(f"Wrong (n={len(wrong_idx)})", fontsize=9, fontweight="bold")
-    for ax in axes:
-        ax.set_xlabel("Time index", fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.grid(alpha=0.3)
-    axes[0].set_ylabel("Signal", fontsize=8)
+    fig, axes = plt.subplots(n_classes, 2, figsize=(8, 2.5 * n_classes),
+                             squeeze=False, sharey="row")
+
+    for cls_idx, cls_name in enumerate(class_names):
+        cc = correct_idx[y_true_by_local[correct_idx] == cls_idx]
+        ww = wrong_idx[y_true_by_local[wrong_idx] == cls_idx]
+        ax_ok, ax_bad = axes[cls_idx, 0], axes[cls_idx, 1]
+
+        if len(cc) > 0:
+            ax_ok.plot(curves[cc].T, color="#27ae60", alpha=0.2, linewidth=0.8)
+        ax_ok.set_title(f"{cls_name} – Correct (n={len(cc)})", fontsize=9, fontweight="bold")
+
+        if len(ww) > 0:
+            ax_bad.plot(curves[ww].T, color="#e74c3c", alpha=0.35, linewidth=0.8)
+        ax_bad.set_title(f"{cls_name} – Wrong (n={len(ww)})", fontsize=9, fontweight="bold")
+
+        for ax in (ax_ok, ax_bad):
+            ax.set_xlabel("Time index", fontsize=8)
+            ax.tick_params(labelsize=7)
+            ax.grid(alpha=0.3)
+        ax_ok.set_ylabel("Signal", fontsize=8)
+
     plt.tight_layout()
     return _fig_to_buf(fig)
 
@@ -266,10 +286,14 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
             _buf_to_img_html(buf, style="height:auto;max-width:750px;"))
     tabs.append(("overview", "Overview", f'<div class="panel-row">{overview_content}</div>'))
 
+    # y_true_by_local: true label indexed by position in `curves` -- see
+    # render_fold_curve_plot's docstring for why result["y_true_all"] alone isn't usable.
+    y_true_by_local = np.full(len(curves), -1, dtype=y_masked.dtype)
+    y_true_by_local[local_idx] = y_masked
     curves_content = "".join(
         _panel(
             f'{r["name"]}<br><span style="font-size:11px;color:#666;">Acc: {r["acc"]:.1f}%</span>',
-            _buf_to_img_html(render_fold_curve_plot(curves, r), style="height:auto;max-width:500px;")
+            _buf_to_img_html(render_fold_curve_plot(curves, r, y_true_by_local), style="height:auto;max-width:500px;")
         )
         for r in model_results
     )
