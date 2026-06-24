@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N multi_gnn_spatial_train
+#PBS -l walltime=72:00:00
+#PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
+# By default, only index 6 -- verified against the CURRENT sorted (config.EXCLUDED_FOLDERS-
+# filtered) listing of POC_DDM_multi_nc_subtract to be
+# D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01. Re-verify if folders are ever
+# added/removed/renamed. Widen to e.g. -J 0-6 to cover every experiment.
+#PBS -J 6-6
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_gnn_spatial_train/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_gnn_spatial_train/
+#PBS -k eo
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_gnn_spatial_train
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+REAL_TASK_ID=$((PBS_ARRAY_INDEX))
+
+EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi_nc_subtract
+
+# Trains both gnn_gat and gnn_gcn (03b_gnn_spatial_training.py runs both variants in
+# one process -- see GNN_MODEL_NAMES) on this dataset's Native curves, across the same
+# 4-filter list 03/03b currently use.
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03b_gnn_spatial_training.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER"
+
+# --force_rerun so the report reflects the GNN results just written above, rather than
+# reusing a pre-existing report generated before this training run.
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --force_rerun
+
+deactivate

@@ -283,6 +283,11 @@ MODEL_KEY_MAP = {
     "cnn_trans_hadamard":  ("y_preds_AC_cnn_trans_hadamard_",  "y_probs_AC_cnn_trans_hadamard_",  "classes_AC_cnn_trans_hadamard_"),
     "cnn_trans_crossattn": ("y_preds_AC_cnn_trans_crossattn_", "y_probs_AC_cnn_trans_crossattn_", "classes_AC_cnn_trans_crossattn_"),
     "cnn_trans_film":      ("y_preds_AC_cnn_trans_film_",      "y_probs_AC_cnn_trans_film_",      "classes_AC_cnn_trans_film_"),
+    # PyTorch/PyG spatial GNN (03b_gnn_spatial_training.py) -- predictions-only entry;
+    # no .keras file is saved for it, so 07's XAI pipeline (TF/Keras-specific) simply
+    # never finds a model to load and skips it, same as any other missing model name.
+    "gnn_gat":             ("y_preds_AC_gnn_gat_",             "y_probs_AC_gnn_gat_",             "classes_AC_gnn_gat_"),
+    "gnn_gcn":             ("y_preds_AC_gnn_gcn_",             "y_probs_AC_gnn_gcn_",             "classes_AC_gnn_gcn_"),
 }
 
 MODEL_PRINT_MAP = {
@@ -296,6 +301,7 @@ MODEL_PRINT_MAP = {
     "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
     "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
     "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
+    "gnn_gat": "GNN (GAT)", "gnn_gcn": "GNN (GCN)",
 }
 
 FILTER_PRINT_MAP = {

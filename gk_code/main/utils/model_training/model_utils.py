@@ -974,6 +974,10 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             _key = f'y_preds_AC_{_gated_name}_'
             if _key in sample_res:
                 method_info.append((_gated_print, _key))
+        if 'y_preds_AC_gnn_gat_' in sample_res:
+            method_info.append(('GNN-GAT (Spatial)', 'y_preds_AC_gnn_gat_'))
+        if 'y_preds_AC_gnn_gcn_' in sample_res:
+            method_info.append(('GNN-GCN (Spatial)', 'y_preds_AC_gnn_gcn_'))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")
