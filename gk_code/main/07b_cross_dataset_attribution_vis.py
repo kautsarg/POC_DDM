@@ -171,6 +171,7 @@ def run_fold(group_dir, fold_label, curve_type, filter_keys, force_rerun=False, 
             profile_key_columns=["model_name", "filter_key", "curve_type", "group_name",
                                 "fold_label", "branch", "latent_rank"],
         )
+        print(f"  [✓] Saved merged latent_feature_scores to {scores_path}")
 
 
 if __name__ == "__main__":

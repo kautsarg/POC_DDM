@@ -1471,6 +1471,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
                 score_key_columns=["model_name", "filter_key", "curve_type", "branch", "latent_rank", "feature"],
                 profile_key_columns=["model_name", "filter_key", "curve_type", "branch", "latent_rank"],
             )
+            print(f"  [✓] Saved latent-feature scores+profiles bundle: {scores_path.name}")
 
         print(f"  [✓] Processed {exp_path.name}")
         tf.keras.backend.clear_session()

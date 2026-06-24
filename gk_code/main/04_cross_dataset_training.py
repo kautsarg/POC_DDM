@@ -45,6 +45,24 @@ def load_curve_data(exp_path, curve_type):
     Y_well_raw = np.asarray(data["Y_well"])
     Y_mapped = np.array([mapping.get(w, w) for w in Y_well_raw])
 
+    # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
+    # model_utils.build_neighbor_curve_stack). Soft-optional, mirrors 03_main_training.py's
+    # derivation -- well_id is made GLOBALLY unique (prefixed with this experiment's name)
+    # since combine_group below concatenates rows from several experiments into one pool;
+    # a bare per-experiment well_id (e.g. "0") would otherwise collide across experiments
+    # and make neighbour-finding mix pixels from physically different wells/chips.
+    coords, well_ids = None, None
+    if "metadata" in data:
+        metadata_df = pd.DataFrame(data["metadata"])
+        if {"pixel_row_idx", "pixel_col_idx"}.issubset(metadata_df.columns):
+            coords = np.stack([
+                metadata_df["pixel_row_idx"].values.astype(float),
+                metadata_df["pixel_col_idx"].values.astype(float),
+            ], axis=1)
+            well_id_local = (metadata_df["well_id"].values if "well_id" in metadata_df.columns
+                              else Y_well_raw)
+            well_ids = np.array([f"{exp_path.name}::{w}" for w in well_id_local], dtype=object)
+
     return {
         "curves": data["dataset"][idx],
         "features_df": data["kinetic_features"][idx].reset_index(drop=True),
@@ -52,6 +70,8 @@ def load_curve_data(exp_path, curve_type):
         "Y_mapped": Y_mapped,
         "timestamps": np.asarray(data["timestamps"], dtype=float),
         "dataset_id": exp_path.name,
+        "coords": coords,
+        "well_ids": well_ids,
     }
 
 
@@ -83,6 +103,21 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
     for p in parts:
         p["curves"] = resampler.transform(p["timestamps"], p["curves"])
 
+    # coords/well_ids: only meaningful if EVERY part in the group has them -- a partial
+    # set would misalign with evaluate_outlier_filters' per-row mask/valid_class_mask
+    # logic, so cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon are skipped for the
+    # whole group (not just the experiments missing metadata) when this happens.
+    if all(p["coords"] is not None for p in parts):
+        coords_combined = np.concatenate([p["coords"] for p in parts], axis=0)
+        well_ids_combined = np.concatenate([p["well_ids"] for p in parts], axis=0)
+    else:
+        missing = [p["dataset_id"] for p in parts if p["coords"] is None]
+        if missing:
+            print(f"  [*] No pixel_row_idx/pixel_col_idx metadata for: {missing} -- "
+                  f"cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon will be skipped for "
+                  f"group '{group_name}' (all-or-nothing across the group's folders).")
+        coords_combined, well_ids_combined = None, None
+
     return {
         "curves": np.concatenate([p["curves"] for p in parts], axis=0),
         "features_df": pd.concat([p["features_df"] for p in parts], axis=0, ignore_index=True),
@@ -90,6 +125,8 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
         "dataset_id": np.concatenate([np.full(len(p["Y_mapped"]), p["dataset_id"], dtype=object) for p in parts], axis=0),
         "dataset_names": [p["dataset_id"] for p in parts],
         "resampler": resampler,
+        "coords": coords_combined,
+        "well_ids": well_ids_combined,
     }
 
 
@@ -117,6 +154,9 @@ if __name__ == "__main__":
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
                              "won't be bit-exact. Only affects this script.")
+    parser.add_argument("--k_neighbors", type=int, default=24,
+                        help="Neighbours per pixel (within the same well) for "
+                             "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -165,11 +205,20 @@ if __name__ == "__main__":
         outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
         models = [
             "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual",
-            # 8 gated dual-branch fusion models (model_utils_gated.py). Not lstm_ae_clf
-            # here — LOFO pools curves across multiple experiment folders, and there's
-            # no single pretrained encoder that matches that combined pool.
-            "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
-            "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+
+            # Spatial-reconstruction variants inspired by 03b_gnn_spatial_training.py's GNN:
+            # reconstruct one denoised curve per pixel from itself + its k nearest neighbours
+            # (within the same well), then classify with the *same* cnn_gru_dual architecture.
+            # Skipped automatically (per-dataset) if this dataset's metadata lacks
+            # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
+            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+
+            # From outlier unsupervised training
+            # "lstm_ae_clf",
+
+            # # New gated dual-branch fusion models
+            # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+            # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]
 
         if args.force_rerun:
@@ -210,6 +259,9 @@ if __name__ == "__main__":
                 cv_splits=[(train_idx, test_idx)],
                 save_model_dir=lofo_model_dir,
                 save_model_curve_type=curve_type,
+                coords=combined["coords"],
+                well_ids=combined["well_ids"],
+                k_neighbors=args.k_neighbors,
             )
 
             lofo_results[fold_label] = res

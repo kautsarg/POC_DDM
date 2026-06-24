@@ -24,7 +24,8 @@ REAL_TASK_ID=$((8-TASK_ID))
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi
 TRAIN_FOLDER="${EXP_FOLDER}_nc_subtract"
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07b_cross_dataset_attribution_vis.py --exp_folder "$TRAIN_FOLDER" --force_rerun
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07b_cross_dataset_attribution_vis.py --exp_folder "$TRAIN_FOLDER" --filter_key None --force_rerun
+
 
 deactivate
