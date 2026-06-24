@@ -3,6 +3,7 @@ import math
 import joblib
 import argparse
 import numpy as np
+import pandas as pd
 import scipy.stats
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -782,6 +783,7 @@ def plot_latent_feature_mapping(
     dataset_name, save_path,
     TOP_N=10,
     w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
+    return_scores=False,
 ):
     """
     Scans latent dimensions in rank order (most important first, same ranking and
@@ -818,6 +820,12 @@ def plot_latent_feature_mapping(
     save_path        : Path or str
     TOP_N            : unique-feature rows to show per branch (default 5)
     w_*              : score weights, must sum to 1
+    return_scores    : if True, also return a long-format DataFrame with every
+                       (branch, latent_rank, feature) triple's raw Spearman/MI/cosine/
+                       combined scores -- not just the TOP_N-unique-feature subset this
+                       function plots. Captures values already computed below; does not
+                       recompute anything. Returns None when False (default), unchanged
+                       behavior for every existing caller.
     """
     from sklearn.feature_selection import mutual_info_regression
 
@@ -873,6 +881,8 @@ def plot_latent_feature_mapping(
     #    candidates to choose TOP_N rows with distinct best-matching features.
     # ------------------------------------------------------------------
     sections = []
+    score_rows = [] if return_scores else None
+    profile_rows = [] if return_scores else None
     for label, order, imp_shape, z_np, raw_maps in branch_sections:
         full_k = len(order)
         is_3d  = len(imp_shape) == 2
@@ -892,9 +902,11 @@ def plot_latent_feature_mapping(
             if mx > 0:
                 sal_profiles[i] /= mx
 
-        spearman_m = np.zeros((full_k, n_feats))
-        mi_m       = np.zeros((full_k, n_feats))
-        cosine_m   = np.zeros((full_k, n_feats))
+        spearman_m       = np.zeros((full_k, n_feats))
+        mi_m             = np.zeros((full_k, n_feats))
+        cosine_m         = np.zeros((full_k, n_feats))
+        spearman_valid_m = np.zeros((full_k, n_feats), dtype=bool)
+        mi_valid_m       = np.zeros((full_k, n_feats), dtype=bool)
 
         for i in range(full_k):
             z_i = z_traces[i]
@@ -916,6 +928,7 @@ def plot_latent_feature_mapping(
 
                 corr, _ = scipy.stats.spearmanr(z_sub, f_sub)
                 spearman_m[i, j] = 0.0 if np.isnan(corr) else abs(corr)
+                spearman_valid_m[i, j] = True
 
                 try:
                     mi = mutual_info_regression(
@@ -924,7 +937,11 @@ def plot_latent_feature_mapping(
                 except Exception:
                     mi = 0.0
                 mi_m[i, j] = mi
+                mi_valid_m[i, j] = True
 
+        # mi_raw: pre-normalization MI, captured before the in-place /= mi_max below --
+        # only kept around for the return_scores export (see "mi_raw" column).
+        mi_raw_m = mi_m.copy()
         mi_max = mi_m.max()
         if mi_max > 0:
             mi_m /= mi_max
@@ -953,6 +970,88 @@ def plot_latent_feature_mapping(
             "sal_profiles": sal_profiles[selected], "combined": combined[selected],
             "best_feat_idx": best_feat_idx_full[selected], "best_score": combined[selected, best_feat_idx_full[selected]],
         })
+
+        if return_scores:
+            # Full (latent_rank x feature) table for this branch -- every pair the loop
+            # above already computed, not just the TOP_N-unique-feature subset above.
+            branch_label = label if label is not None else "single"
+            kept_latents = set(selected)
+            valid_idx = np.where(valid_col)[0]
+            for i in range(full_k):
+                # 1=best feature for this latent, ranked by `combined` among valid
+                # features only (matches best_feat_idx_full's own candidate pool).
+                feat_ranks = scipy.stats.rankdata(-combined[i, valid_idx], method="ordinal")
+                rank_by_valid_pos = dict(zip(valid_idx.tolist(), feat_ranks.tolist()))
+                for j in valid_idx:
+                    j = int(j)
+                    rank_for_latent = int(rank_by_valid_pos[j])
+                    score_rows.append({
+                        "branch": branch_label,
+                        "latent_rank": i + 1,
+                        "latent_index": int(order[i]),
+                        "feature": feat_names[j],
+                        "spearman": spearman_m[i, j] if spearman_valid_m[i, j] else np.nan,
+                        "spearman_valid": bool(spearman_valid_m[i, j]),
+                        "mi": mi_m[i, j] if mi_valid_m[i, j] else np.nan,
+                        "mi_raw": mi_raw_m[i, j] if mi_valid_m[i, j] else np.nan,
+                        "mi_valid": bool(mi_valid_m[i, j]),
+                        "cosine": cosine_m[i, j],
+                        "combined": combined[i, j],
+                        "feature_rank_for_latent": rank_for_latent,
+                        "is_best_feature": rank_for_latent == 1,
+                        "kept_in_plot": i in kept_latents,
+                        "w_spearman": w_spearman, "w_mi": w_mi, "w_cosine": w_cosine,
+                    })
+
+            # Saliency profiles for ONLY the kept (plotted) latents -- the figure
+            # never shows the other full_k - k latents, so saving all of them would
+            # just be wasted space. This is what's needed to redraw the left panel
+            # without rerunning the model (see render_latent_feature_mapping_figure).
+            for i in selected:
+                profile_rows.append({
+                    "branch": branch_label,
+                    "latent_rank": i + 1,
+                    "latent_index": int(order[i]),
+                    "sal_profile": sal_profiles[i].copy(),
+                })
+
+    render_latent_feature_mapping_figure(
+        sections, mean_curve, std_curve, t, feat_names,
+        model_name, dataset_name, save_path,
+        w_spearman=w_spearman, w_mi=w_mi, w_cosine=w_cosine,
+        feat_matrix=feat_matrix,
+    )
+
+    if return_scores:
+        return pd.DataFrame(score_rows), pd.DataFrame(profile_rows)
+
+
+def render_latent_feature_mapping_figure(
+    sections, mean_curve, std_curve, timestamps, feat_names,
+    model_name, dataset_name, save_path,
+    w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
+    feat_matrix=None,
+):
+    """Draws and saves the figure plot_latent_feature_mapping produces, from
+    precomputed `sections` (list of dicts: label/order/k/true_ranks/sal_profiles/
+    combined/best_feat_idx/best_score -- see plot_latent_feature_mapping's branch
+    loop). Factored out of plot_latent_feature_mapping so a saved scores+profiles
+    joblib (return_scores=True) can be reconstructed into this exact same figure
+    later without rerunning model inference -- see the reconstruction notebook.
+
+    feat_matrix (Batch, n_feats), optional: only used for the dotted timing-feature
+    marker line on the left panel; pass None to skip that one minor visual detail
+    (e.g. when reconstructing from a joblib that didn't persist the raw feature
+    matrix -- everything else renders identically).
+    """
+    t = np.asarray(timestamps, dtype=float)
+    T = len(mean_curve)
+    if len(t) != T:
+        t = np.linspace(0, T - 1, T)
+    t_step  = t[1] - t[0] if T > 1 else 1
+    t_start = t[0]  - t_step / 2
+    t_end   = t[-1] + t_step / 2
+    n_feats = len(feat_names)
 
     total_rows = sum(sec["k"] for sec in sections)
 
@@ -1075,7 +1174,7 @@ def plot_latent_feature_mapping(
             # t50, ...), mark its median value on the time axis so the saliency
             # peak can be visually compared against where that feature is defined.
             best_name = feat_names[best_j]
-            if _FEAT_GROUP.get(best_name) == 'timing':
+            if feat_matrix is not None and _FEAT_GROUP.get(best_name) == 'timing':
                 t_vals = feat_matrix[:, best_j]
                 t_vals = t_vals[np.isfinite(t_vals)]
                 if len(t_vals) > 0:
@@ -1179,6 +1278,60 @@ def plot_latent_feature_mapping(
 # ====================================================================
 # MODULE 7: PIPELINE ORCHESTRATOR
 # ====================================================================
+def merge_and_save_scores(scores_df, profiles_df, curve_meta, path,
+                          score_key_columns, profile_key_columns):
+    """Load->merge->dump checkpoint for the latent-feature scores+profiles+curve_meta
+    bundle, mirroring 03_main_training.py's load_or_init_results/make_checkpoint_fn
+    pattern for all_ml_results.
+
+    scores_df/profiles_df: this run's freshly-computed rows (see
+    plot_latent_feature_mapping's return_scores=True). Any existing rows at `path`
+    are loaded and concatenated first, then drop_duplicates(keep="last") makes this
+    run's rows win for any key already present (matching --force_rerun's "recompute
+    and overwrite" semantics) while preserving untouched keys from earlier
+    invocations (e.g. a different --filter_key/--curve_type processed previously).
+
+    curve_meta: dict keyed by curve_type -> {"mean_curve", "std_curve", "timestamps",
+    "feat_names"} -- everything render_latent_feature_mapping_figure needs besides
+    scores/profiles to redraw the figure later without rerunning the model. Merged by
+    plain dict update, so this run's curve_type entry overwrites only that entry.
+
+    Saved as one dict {"scores": ..., "profiles": ..., "curve_meta": ...} so a single
+    joblib.load gives everything needed to reconstruct the visualisation.
+    """
+    scores_df = scores_df if scores_df is not None else pd.DataFrame()
+    profiles_df = profiles_df if profiles_df is not None else pd.DataFrame()
+    if scores_df.empty and profiles_df.empty:
+        return
+
+    existing = None
+    if path.exists():
+        try:
+            existing = joblib.load(path)
+        except Exception as e:
+            print(f"     [!] Could not load existing scores at {path} ({e}); overwriting.")
+
+    existing_scores = existing.get("scores") if existing else None
+    existing_profiles = existing.get("profiles") if existing else None
+    existing_curve_meta = existing.get("curve_meta", {}) if existing else {}
+
+    if existing_scores is not None and not existing_scores.empty:
+        scores_df = pd.concat([existing_scores, scores_df], ignore_index=True)
+    scores_df = scores_df.drop_duplicates(subset=score_key_columns, keep="last").reset_index(drop=True)
+
+    if existing_profiles is not None and not existing_profiles.empty:
+        profiles_df = pd.concat([existing_profiles, profiles_df], ignore_index=True)
+    profiles_df = profiles_df.drop_duplicates(subset=profile_key_columns, keep="last").reset_index(drop=True)
+
+    merged_curve_meta = {**existing_curve_meta, **curve_meta}
+
+    bundle = {"scores": scores_df, "profiles": profiles_df, "curve_meta": merged_curve_meta}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(bundle, path, compress=3)
+    print(f"     [✓] Saved latent-feature scores ({len(scores_df)} rows) + "
+          f"profiles ({len(profiles_df)} rows) -> {path}")
+
+
 def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=10):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
@@ -1271,8 +1424,9 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(
             X_batch, data_dict["timestamps"]
         )
+        score_dfs, profile_dfs = [], []
         for model_name in models.keys():
-            plot_latent_feature_mapping(
+            result = plot_latent_feature_mapping(
                 artifacts, model_name,
                 X_batch, data_dict["timestamps"],
                 feat_matrix, feat_sensitivity, feat_names,
@@ -1280,6 +1434,42 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
                 exp_path.name,
                 mapping_paths[model_name],
                 TOP_N=top_n,
+                return_scores=True,
+            )
+            if result is None:
+                continue
+            scores_df, profiles_df = result
+            if not scores_df.empty:
+                scores_df["model_name"] = model_name
+                scores_df["filter_key"] = filt_label
+                scores_df["curve_type"] = curve_type
+                scores_df["exp_path_name"] = exp_path.name
+                score_dfs.append(scores_df)
+            if not profiles_df.empty:
+                profiles_df["model_name"] = model_name
+                profiles_df["filter_key"] = filt_label
+                profiles_df["curve_type"] = curve_type
+                profiles_df["exp_path_name"] = exp_path.name
+                profile_dfs.append(profiles_df)
+
+        if score_dfs or profile_dfs:
+            # main_features: the SAME filtering plot_latent_feature_mapping applies
+            # internally (config.XAI_KINETIC_FEATURE_GROUP keys present in feat_names)
+            # -- recomputed here (not returned by the function) so the saved bundle's
+            # feat_names matches exactly what render_latent_feature_mapping_figure
+            # needs for correct bar ordering/colouring on reconstruction.
+            main_features = [f for f in config.XAI_KINETIC_FEATURE_GROUP.keys() if f in feat_names]
+            curve_meta = {curve_type: {
+                "mean_curve": mean_curve, "std_curve": std_curve,
+                "timestamps": data_dict["timestamps"], "feat_names": main_features,
+            }}
+            scores_path = dataset_vis_dir / "latent_feature_scores.joblib"
+            merge_and_save_scores(
+                pd.concat(score_dfs, ignore_index=True) if score_dfs else pd.DataFrame(),
+                pd.concat(profile_dfs, ignore_index=True) if profile_dfs else pd.DataFrame(),
+                curve_meta, scores_path,
+                score_key_columns=["model_name", "filter_key", "curve_type", "branch", "latent_rank", "feature"],
+                profile_key_columns=["model_name", "filter_key", "curve_type", "branch", "latent_rank"],
             )
 
         print(f"  [✓] Processed {exp_path.name}")

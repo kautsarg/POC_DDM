@@ -5,6 +5,7 @@ import importlib
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import joblib
 import tensorflow as tf
 
@@ -22,6 +23,7 @@ plot_latent_tsne             = _attrib.plot_latent_tsne
 plot_latent_saliency_heatmap = _attrib.plot_latent_saliency_heatmap
 compute_kinetic_feature_cache = _attrib.compute_kinetic_feature_cache
 plot_latent_feature_mapping  = _attrib.plot_latent_feature_mapping
+merge_and_save_scores        = _attrib.merge_and_save_scores
 set_global_determinism       = _attrib.set_global_determinism
 
 # Reuse 06b's group/fold discovery -- same cross_dataset_cv/ layout.
@@ -77,6 +79,14 @@ def run_fold(group_dir, fold_label, curve_type, filter_keys, force_rerun=False, 
     # reused across whichever filters' models are actually found below.
     feat_cache = None
 
+    # Accumulated across every filter_key processed below, then merged/saved once at
+    # the end of this fold's run. curve_type is in the output filename (not just a
+    # column) because --task_id flattens (group, fold, curve_type) onto the SLURM
+    # array axis (see __main__ below) -- two different curve_types for the same fold
+    # can run as separate, concurrent processes, and a single shared filename across
+    # curve_types would race on the load->merge->dump cycle with no locking.
+    score_dfs, profile_dfs = [], []
+
     for filter_key in filter_keys:
         filt_label = "none" if filter_key is None else str(filter_key)
         name_suffix = f"{filt_label}_{curve_type}"
@@ -117,14 +127,50 @@ def run_fold(group_dir, fold_label, curve_type, filter_keys, force_rerun=False, 
         feat_matrix, feat_sensitivity, feat_names = feat_cache
 
         for model_name in models.keys():
-            plot_latent_feature_mapping(
+            result = plot_latent_feature_mapping(
                 artifacts, model_name, X_batch, timestamps,
                 feat_matrix, feat_sensitivity, feat_names,
                 mean_curve, std_curve, dataset_label,
-                mapping_paths[model_name], TOP_N=top_n)
+                mapping_paths[model_name], TOP_N=top_n,
+                return_scores=True)
+            if result is None:
+                continue
+            scores_df, profiles_df = result
+            if not scores_df.empty:
+                scores_df["model_name"] = model_name
+                scores_df["filter_key"] = filt_label
+                scores_df["curve_type"] = curve_type
+                scores_df["group_name"] = group_name
+                scores_df["fold_label"] = fold_label
+                score_dfs.append(scores_df)
+            if not profiles_df.empty:
+                profiles_df["model_name"] = model_name
+                profiles_df["filter_key"] = filt_label
+                profiles_df["curve_type"] = curve_type
+                profiles_df["group_name"] = group_name
+                profiles_df["fold_label"] = fold_label
+                profile_dfs.append(profiles_df)
 
         print(f"  [✓] Processed filter={filt_label}")
         tf.keras.backend.clear_session()
+
+    if (score_dfs or profile_dfs) and feat_cache is not None:
+        feat_matrix, feat_sensitivity, feat_names = feat_cache
+        main_features = [f for f in config.XAI_KINETIC_FEATURE_GROUP.keys() if f in feat_names]
+        curve_meta = {curve_type: {
+            "mean_curve": mean_curve, "std_curve": std_curve,
+            "timestamps": timestamps, "feat_names": main_features,
+        }}
+        scores_path = model_dir / f"latent_feature_scores_{curve_type}.joblib"
+        merge_and_save_scores(
+            pd.concat(score_dfs, ignore_index=True) if score_dfs else pd.DataFrame(),
+            pd.concat(profile_dfs, ignore_index=True) if profile_dfs else pd.DataFrame(),
+            curve_meta, scores_path,
+            score_key_columns=["model_name", "filter_key", "curve_type", "group_name",
+                              "fold_label", "branch", "latent_rank", "feature"],
+            profile_key_columns=["model_name", "filter_key", "curve_type", "group_name",
+                                "fold_label", "branch", "latent_rank"],
+        )
 
 
 if __name__ == "__main__":
