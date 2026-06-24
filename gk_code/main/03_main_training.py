@@ -2,7 +2,7 @@ import os
 import sys
 import gc
 import argparse
-import joblib 
+import joblib
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -10,6 +10,7 @@ sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
+import pandas as pd
 
 
 import config
@@ -69,7 +70,10 @@ if __name__ == "__main__":
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
                              "won't be bit-exact. Only affects this script.")
-    
+    parser.add_argument("--k_neighbors", type=int, default=24,
+                        help="Neighbours per pixel (within the same well) for "
+                             "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
+
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -96,6 +100,31 @@ if __name__ == "__main__":
     dataset = training_data["dataset"]
     kinetic_features = training_data["kinetic_features"]
     Y_well = training_data["Y_well"]
+
+    # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
+    # model_utils.build_neighbor_curve_stack). Soft-optional: unlike 03b_gnn_spatial_training.py
+    # (which trains GNN models exclusively and exits if metadata is missing), 03 trains many
+    # non-spatial models too -- a dataset lacking metadata just means those two models get
+    # skipped (with a warning from evaluate_outlier_filters), everything else still runs.
+    # well_ids is derived from the RAW (pre label-mapping) Y_well -- the physical/spatial
+    # grouping for neighbour-finding, deliberately independent of how config.LABEL_MAPPINGS
+    # later buckets labels for the classification target (mirrors 03b's identical comment).
+    coords_full, well_ids_full = None, None
+    if "metadata" in training_data:
+        metadata_df = pd.DataFrame(training_data["metadata"])
+        if {"pixel_row_idx", "pixel_col_idx"}.issubset(metadata_df.columns):
+            coords_full = np.stack([
+                metadata_df["pixel_row_idx"].values.astype(float),
+                metadata_df["pixel_col_idx"].values.astype(float),
+            ], axis=1)
+            well_ids_full = (metadata_df["well_id"].values if "well_id" in metadata_df.columns
+                              else np.array(Y_well).copy())
+        else:
+            print("  [*] No pixel_row_idx/pixel_col_idx in metadata -- "
+                  "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon will be skipped for this dataset.")
+    else:
+        print("  [*] No 'metadata' in training data -- "
+              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon will be skipped for this dataset.")
 
     # Filter Clean data only
     dataset_name, dataset, kinetic_features = filter_datasets(dataset_name, dataset, kinetic_features)
@@ -181,14 +210,21 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual", 
-            
+            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual",
+
+            # Spatial-reconstruction variants inspired by 03b_gnn_spatial_training.py's GNN:
+            # reconstruct one denoised curve per pixel from itself + its k nearest neighbours
+            # (within the same well), then classify with the *same* cnn_gru_dual architecture.
+            # Skipped automatically (per-dataset) if this dataset's metadata lacks
+            # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
+            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+
             # From outlier unsupervised training
-            "lstm_ae_clf",
-            
-            # New gated dual-branch fusion models
-            "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
-            "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+            # "lstm_ae_clf",
+
+            # # New gated dual-branch fusion models
+            # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+            # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]
 
         model_interp_dir = exp_path / "model_interpretation"
@@ -224,6 +260,9 @@ if __name__ == "__main__":
                 save_model_curve_type=ref_save_ct,
                 pretrained_encoder_path=ref_enc_path,
                 pretrained_scaler_path=ref_scaler_path,
+                coords=coords_full,
+                well_ids=well_ids_full,
+                k_neighbors=args.k_neighbors,
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -271,6 +310,9 @@ if __name__ == "__main__":
                     save_model_curve_type=xai_curve_type,
                     pretrained_encoder_path=native_enc_path,
                     pretrained_scaler_path=native_scaler_path,
+                    coords=coords_full,
+                    well_ids=well_ids_full,
+                    k_neighbors=args.k_neighbors,
                 )
 
             all_ml_results[clean_title]["Native"] = res_native

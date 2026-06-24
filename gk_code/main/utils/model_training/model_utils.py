@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold, train_test_split
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
@@ -99,34 +99,168 @@ class CurveResampler:
 # DUAL MODEL
 # ====================================================================
 
-def create_cnn_gru_dual_model(input_size_curve, output_size):
+def _build_cnn_gru_dual_branches(input_curve):
+    """Dual-branch CNN (Local) + BiGRU (Global) feature extractor.
+
+    Takes a Keras tensor of shape (T, 1) and returns the pre-output fused embedding.
+    Factored out of create_cnn_gru_dual_model so the neighbor-reconstruction variants
+    (create_cnn_gru_dual_attn_recon_model) can feed a *different* curve tensor — e.g.
+    one reconstructed from a pixel + its spatial neighbours — into this exact same
+    downstream architecture, rather than duplicating it.
     """
-    Dual-branch architecture combining CNN (Local) and BiGRU (Global) 
-    using only the raw curve as input.
-    """
-    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    
     # 1. Local Feature Branch (CNN)
     c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
     c = tf.keras.layers.Flatten()(c)
     cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
-    
+
     # 2. Global Feature Branch (BiGRU)
     g = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(input_curve)
     g = tf.keras.layers.LayerNormalization()(g)
     g = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(g)
     g = tf.keras.layers.Dropout(0.2)(g)
     gru_emb = tf.keras.layers.Dense(32, activation='relu')(g)
-    
-    # 3. Fusion & Output
+
+    # 3. Fusion
     merged = tf.keras.layers.Concatenate()([cnn_emb, gru_emb])
     z = tf.keras.layers.Dense(64, activation='relu')(merged)
     z = tf.keras.layers.Dropout(0.2)(z)
+    return z
+
+
+def create_cnn_gru_dual_model(input_size_curve, output_size):
+    """
+    Dual-branch architecture combining CNN (Local) and BiGRU (Global)
+    using only the raw curve as input.
+    """
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    z = _build_cnn_gru_dual_branches(input_curve)
     outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
-    
+
     # Compile
     model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+
+# ====================================================================
+# SPATIAL NEIGHBOR RECONSTRUCTION (cnn_gru_dual_cosine_recon / cnn_gru_dual_attn_recon)
+# ====================================================================
+# Two variants of an idea inspired by the 03b_gnn_spatial_training.py GNN: instead of
+# message-passing on an explicit graph, reconstruct ONE denoised curve per pixel from
+# itself + its k spatial neighbours (within the same well -- cross-well pixels are
+# different reactions/labels entirely, see 03b's well_ids fallback to Y_well), and feed
+# that single curve into the *unmodified* cnn_gru_dual architecture. The two variants
+# differ only in how the reconstruction weights are produced:
+#   - cosine_recon : weights = softmax(cosine similarity to the pixel's own curve).
+#                    Fixed, no learned parameters -- a deterministic preprocessing step.
+#   - attn_recon   : weights = learned attention (own curve's embedding as query, all
+#                    k+1 embeddings as keys), trained end-to-end with the classifier.
+
+def build_neighbor_curve_stack(curves, coords, well_ids, k):
+    """
+    For each row i, finds its k nearest neighbours by pixel coords *within the same
+    well* (mirrors 03b_gnn_spatial_training.py's build_knn_edge_index). Returns
+    (N, k+1, T): the pixel's own curve at index 0, followed by its k nearest
+    neighbours' curves (nearest-first).
+
+    Wells with fewer than k other pixels pad by cycling through whatever neighbours
+    exist (or repeating the pixel itself, for a well of size 1) so every row gets a
+    fixed-size (k+1, T) stack -- needed for a dense tensor rather than a per-well
+    variable-length structure.
+    """
+    n, t = curves.shape
+    stack = np.empty((n, k + 1, t), dtype=curves.dtype)
+
+    for well in np.unique(well_ids):
+        well_idx = np.where(well_ids == well)[0]
+        well_coords = coords[well_idx]
+        well_curves = curves[well_idx]
+        n_well = len(well_idx)
+
+        k_actual = min(k, n_well - 1)
+        if k_actual > 0:
+            nbrs = NearestNeighbors(n_neighbors=k_actual + 1).fit(well_coords)
+            _, neighbor_pos = nbrs.kneighbors(well_coords)  # (n_well, k_actual+1), includes self
+
+        for local_i, global_i in enumerate(well_idx):
+            stack[global_i, 0] = well_curves[local_i]
+
+            if k_actual > 0:
+                chosen = neighbor_pos[local_i]
+                chosen = chosen[chosen != local_i][:k]
+            else:
+                chosen = np.array([], dtype=int)
+
+            if len(chosen) < k:
+                if len(chosen) == 0:
+                    chosen = np.full(k, local_i, dtype=int)          # well of size 1: repeat self
+                else:
+                    reps = int(np.ceil(k / len(chosen)))
+                    chosen = np.tile(chosen, reps)[:k]
+
+            stack[global_i, 1:] = well_curves[chosen]
+
+    return stack
+
+
+def reconstruct_curves_cosine(stack):
+    """
+    stack: (N, k+1, T), own curve at index 0. Reconstruction weights are the
+    softmax of the cosine similarity between each row's own curve and every curve in
+    its stack (including itself) -- no learned parameters, purely a function of the
+    raw curve values.
+    """
+    own = stack[:, 0:1, :]
+    own_norm = own / (np.linalg.norm(own, axis=-1, keepdims=True) + 1e-8)
+    stack_norm = stack / (np.linalg.norm(stack, axis=-1, keepdims=True) + 1e-8)
+    sims = np.sum(own_norm * stack_norm, axis=-1)                    # (N, k+1)
+
+    sims = sims - sims.max(axis=1, keepdims=True)                    # numerical stability
+    weights = np.exp(sims)
+    weights /= weights.sum(axis=1, keepdims=True)
+    return np.sum(weights[:, :, None] * stack, axis=1)               # (N, T)
+
+
+def create_cnn_gru_dual_attn_recon_model(k_plus_1, input_size_curve, output_size, attn_dim=16):
+    """
+    Learnable-attention counterpart to reconstruct_curves_cosine: a small shared
+    per-curve encoder produces an embedding for each of the k+1 curves in the stack;
+    the pixel's own embedding is the query, all k+1 embeddings are keys, and the
+    resulting softmax attention weights are applied to the *raw curves* (not the
+    embeddings) to produce one reconstructed (T,) curve. That curve then flows into
+    _build_cnn_gru_dual_branches -- the exact same downstream architecture
+    create_cnn_gru_dual_model uses -- so the only difference from the baseline is
+    which curve the classifier sees, and the whole thing (encoder + attention +
+    classifier) trains end-to-end via ordinary model.fit.
+    """
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, input_size_curve), name="neighbor_stack_input")
+
+    per_curve_encoder = tf.keras.Sequential([
+        tf.keras.layers.Reshape((input_size_curve, 1)),
+        tf.keras.layers.Conv1D(16, 5, activation='relu', padding='same'),
+        tf.keras.layers.Conv1D(8, 3, activation='relu', padding='same'),
+        tf.keras.layers.GlobalAveragePooling1D(),
+        tf.keras.layers.Dense(attn_dim, activation='relu'),
+    ], name="per_curve_encoder")
+    embeddings = tf.keras.layers.TimeDistributed(per_curve_encoder)(stack_input)   # (N, k+1, attn_dim)
+
+    query = tf.keras.layers.Lambda(lambda x: x[:, 0:1, :])(embeddings)             # (N, 1, attn_dim)
+    scores = tf.keras.layers.Lambda(
+        lambda t: tf.matmul(t[0], t[1], transpose_b=True) / tf.sqrt(tf.cast(attn_dim, tf.float32))
+    )([query, embeddings])                                                        # (N, 1, k+1)
+    attn_weights = tf.keras.layers.Softmax(axis=-1, name="attn_weights")(scores)  # (N, 1, k+1)
+
+    reconstructed = tf.keras.layers.Lambda(
+        lambda t: tf.matmul(t[0], t[1])                                          # (N,1,k+1) @ (N,k+1,T) -> (N,1,T)
+    )([attn_weights, stack_input])
+    reconstructed = tf.keras.layers.Reshape((input_size_curve, 1))(reconstructed)  # (N, T, 1)
+
+    z = _build_cnn_gru_dual_branches(reconstructed)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+
+    model = tf.keras.models.Model(inputs=stack_input, outputs=outputs)
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
@@ -476,6 +610,7 @@ def evaluate_outlier_filters(
     checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None,
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
+    coords=None, well_ids=None, k_neighbors=8,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -488,6 +623,12 @@ def evaluate_outlier_filters(
     global LSTM autoencoder for this exact (experiment, curve_type). If either is
     None/missing, "lstm_ae_clf" is skipped for every filter (no from-scratch
     fallback — the model only makes sense paired with its pretrained backbone).
+
+    coords/well_ids: (N, 2) pixel [row, col] and (N,) well id per sample, aligned to
+    X_curves. Only used by "cnn_gru_dual_cosine_recon"/"cnn_gru_dual_attn_recon" (see
+    build_neighbor_curve_stack) to find each pixel's spatial neighbours within its own
+    well. If either is None, both models are skipped (with a warning) regardless of
+    whether they're in `models` — every other model is unaffected.
     """
     if save_model_dir is not None:
         Path(save_model_dir).mkdir(parents=True, exist_ok=True)
@@ -522,6 +663,8 @@ def evaluate_outlier_filters(
         "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
         "cnn_trans_dual": ("y_preds_AC_cnn_trans_dual_", "y_probs_AC_cnn_trans_dual_", "classes_AC_cnn_trans_dual_"),
         "lstm_ae_clf": ("y_preds_AC_lstm_ae_clf_", "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
+        "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
+        "cnn_gru_dual_attn_recon": ("y_preds_AC_cnn_gru_dual_attn_recon_", "y_probs_AC_cnn_gru_dual_attn_recon_", "classes_AC_cnn_gru_dual_attn_recon_"),
         # 8 gated dual-branch fusion models (model_utils_gated.py).
         **{name: (f"y_preds_AC_{name}_", f"y_probs_AC_{name}_", f"classes_AC_{name}_")
            for name in model_utils_gated._ALL_FACTORIES},
@@ -534,11 +677,14 @@ def evaluate_outlier_filters(
         "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
         "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
         "lstm_ae_clf": "LSTM-AE Clf",
+        "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
         "cnn_gru_gate": "CNN+GRU Gate", "cnn_gru_hadamard": "CNN+GRU Hadamard",
         "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
         "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
         "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     }
+
+    _SPATIAL_RECON_MODELS = ("cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon")
 
     for idx, f in enumerate(outlier_filters):
         filter_name = f if f else 'None (Baseline)'
@@ -558,8 +704,10 @@ def evaluate_outlier_filters(
         X_AC = np.nan_to_num(X_curves[mask], nan=0.0, posinf=0.0, neginf=0.0)
         X_FFI = np.nan_to_num(X_FFI_full[mask], nan=0.0, posinf=0.0, neginf=0.0)
         y_true = y_encoded[mask]
-        
+
         X_manual = X_manual_full[mask] if X_manual_full is not None else None
+        coords_m = coords[mask] if coords is not None else None
+        well_ids_m = well_ids[mask] if well_ids is not None else None
 
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
@@ -572,6 +720,9 @@ def evaluate_outlier_filters(
             y_true = y_true[valid_class_mask]
             if X_manual is not None:
                 X_manual = X_manual[valid_class_mask]
+            if coords_m is not None:
+                coords_m = coords_m[valid_class_mask]
+                well_ids_m = well_ids_m[valid_class_mask]
 
         n_classes = len(np.unique(y_true))
 
@@ -609,6 +760,23 @@ def evaluate_outlier_filters(
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
             res_entry["mask_count"] = int(np.sum(mask))
 
+        # --- Spatial neighbour reconstruction (computed once per filter, not per fold/model
+        # -- it's a deterministic function of the curves/coords surviving this filter, not
+        # of the train/test split). Skipped (with a one-time warning) if coords/well_ids
+        # weren't supplied, regardless of whether the recon models are in `models`.
+        _wanted_recon = [m for m in models if m in _SPATIAL_RECON_MODELS]
+        X_AC_cosine_recon, X_AC_stack = None, None
+        if _wanted_recon:
+            if coords_m is None or well_ids_m is None:
+                print(f"     [SKIP] {', '.join(_wanted_recon)}: no coords/well_ids provided "
+                      f"(pass coords=/well_ids= to evaluate_outlier_filters). Skipping for this filter.")
+            else:
+                neighbor_stack = build_neighbor_curve_stack(X_AC, coords_m, well_ids_m, k=k_neighbors)
+                if "cnn_gru_dual_cosine_recon" in _wanted_recon:
+                    X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
+                if "cnn_gru_dual_attn_recon" in _wanted_recon:
+                    X_AC_stack = neighbor_stack
+
         for m in models:
             if m not in model_key_map: continue
             if "lf" in m and X_manual is None:
@@ -635,6 +803,11 @@ def evaluate_outlier_filters(
                           f"this filter's curves have {X_AC.shape[1]}. Skipping.")
                     continue
 
+            if m == "cnn_gru_dual_cosine_recon" and X_AC_cosine_recon is None:
+                continue  # already warned above (no coords/well_ids)
+            if m == "cnn_gru_dual_attn_recon" and X_AC_stack is None:
+                continue  # already warned above (no coords/well_ids)
+
             preds_key, probs_key, classes_key = model_key_map[m]
             print_name = f"{model_print_map[m]:<11}"
 
@@ -654,8 +827,16 @@ def evaluate_outlier_filters(
             _lstm_ae_failed = False
 
             for fold_idx, (train_idx, test_idx) in enumerate(splits):
-                X_train_curve = X_FFI[train_idx] if m == 'ffi' else X_AC[train_idx]
-                X_test_curve = X_FFI[test_idx] if m == 'ffi' else X_AC[test_idx]
+                if m == 'ffi':
+                    X_train_curve, X_test_curve = X_FFI[train_idx], X_FFI[test_idx]
+                elif m == 'cnn_gru_dual_cosine_recon':
+                    X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
+                elif m == 'cnn_gru_dual_attn_recon':
+                    # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
+                    # array, just with an extra trailing "neighbour" dimension along for the ride.
+                    X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
+                else:
+                    X_train_curve, X_test_curve = X_AC[train_idx], X_AC[test_idx]
                 y_train = y_true[train_idx]
 
                 # Setup Manual Features (Scaled strictly on train fold)
@@ -739,7 +920,7 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif m in ["cnn_gru_dual", "cnn_trans_dual"]:
+                elif m in ["cnn_gru_dual", "cnn_trans_dual", "cnn_gru_dual_cosine_recon"]:
                     tf.keras.backend.clear_session()
 
                     if m == "cnn_gru_dual":
@@ -747,6 +928,12 @@ def evaluate_outlier_filters(
                         epochs = 500
                     elif m == "cnn_trans_dual":
                         model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes)
+                        epochs = 500
+                    elif m == "cnn_gru_dual_cosine_recon":
+                        # Same architecture as cnn_gru_dual -- only the input curve differs
+                        # (X_train_curve here is the cosine-similarity-reconstructed curve,
+                        # not the raw per-pixel one; see reconstruct_curves_cosine above).
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
                         epochs = 500
 
                     # Notice we only pass X_train_curve here, not a list of inputs!
@@ -762,6 +949,33 @@ def evaluate_outlier_filters(
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
+                elif m == "cnn_gru_dual_attn_recon":
+                    # X_train_curve/X_test_curve here are (n, k+1, T) neighbour stacks, not
+                    # (n, T) curves -- create_cnn_gru_dual_attn_recon_model takes that stack
+                    # directly and learns the reconstruction + classifier jointly. No XAI
+                    # save (07_attribution_vis_all.py's saliency pipeline assumes a plain
+                    # (T,) curve input; out of scope here).
+                    tf.keras.backend.clear_session()
+                    model = create_cnn_gru_dual_attn_recon_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    epochs = 500
+
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, y_train_fit,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -978,6 +1192,10 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('GNN-GAT (Spatial)', 'y_preds_AC_gnn_gat_'))
         if 'y_preds_AC_gnn_gcn_' in sample_res:
             method_info.append(('GNN-GCN (Spatial)', 'y_preds_AC_gnn_gcn_'))
+        if 'y_preds_AC_cnn_gru_dual_cosine_recon_' in sample_res:
+            method_info.append(('CNN+GRU Dual (Cosine Recon)', 'y_preds_AC_cnn_gru_dual_cosine_recon_'))
+        if 'y_preds_AC_cnn_gru_dual_attn_recon_' in sample_res:
+            method_info.append(('CNN+GRU Dual (Attn Recon)', 'y_preds_AC_cnn_gru_dual_attn_recon_'))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")

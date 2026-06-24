@@ -23,6 +23,9 @@ Retry of that model, scoped down per explicit request:
     script's bespoke --modes/hardcoded "ori_curves"-only CLI to 03's current
     --curve_type/CURVE_TYPE_ALIASES convention, and added --force_rerun (the legacy
     script always loaded+merged into existing results, with no overwrite option).
+    --force_rerun here only forces gnn_gat/gnn_gcn to recompute -- unlike 03's
+    --force_rerun, it never wipes all_ml_results wholesale, since this file is shared
+    with 03 and holds every other model's results for the same dataset too.
   - Optimization: added an early-stopping + validation-loss loop (held-out validation
     wells, built as separate small graphs via the same build_subset_graphs used for
     train/test -- inductive, not transductive label-masking within one graph, which
@@ -646,11 +649,19 @@ if __name__ == "__main__":
     outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
+    # Unlike 03_main_training.py's --force_rerun (which owns every model in this file and
+    # can safely wipe all_ml_results wholesale), 03b shares this same results file with 03
+    # -- it only owns the gnn_gat/gnn_gcn entries within it. Wiping the dict here would also
+    # discard every other already-trained model's results for this dataset. So --force_rerun
+    # always loads the existing dict and instead forces just the GNN models' cache-hit check
+    # to bypass (evaluate_gnn_outlier_filters' rerun_models param already does this per-model,
+    # only overwriting that model's keys in res_entry -- see GNN_MODEL_KEY_MAP usage there).
+    all_ml_results = load_or_init_results(results_file_path)
+    rerun_models = set(config.RERUN_MODELS)
     if args.force_rerun:
-        print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")
-        all_ml_results = {}
-    else:
-        all_ml_results = load_or_init_results(results_file_path)
+        print(f"  -> [FORCE RERUN] Forcing GNN models ({', '.join(GNN_MODEL_NAMES)}) to recompute; "
+              f"other models' cached results in {results_file_path} are left untouched.")
+        rerun_models |= set(GNN_MODEL_NAMES)
 
     total_samples = len(y_full)
     total_datasets = len(dataset_name)
@@ -679,7 +690,7 @@ if __name__ == "__main__":
             coords=coords_full, well_ids=well_ids,
             outlier_filters=outlier_filters, dataset_name=clean_title, mode_name="Native",
             cached_results=cached_native, n_splits=args.n_splits,
-            checkpoint_fn=checkpoint_native, k=args.k, rerun_models=config.RERUN_MODELS,
+            checkpoint_fn=checkpoint_native, k=args.k, rerun_models=rerun_models,
             max_epochs=args.max_epochs, patience=args.patience,
         )
         all_ml_results[clean_title]["Native"] = res_native

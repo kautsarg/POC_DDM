@@ -288,6 +288,12 @@ MODEL_KEY_MAP = {
     # never finds a model to load and skips it, same as any other missing model name.
     "gnn_gat":             ("y_preds_AC_gnn_gat_",             "y_probs_AC_gnn_gat_",             "classes_AC_gnn_gat_"),
     "gnn_gcn":             ("y_preds_AC_gnn_gcn_",             "y_probs_AC_gnn_gcn_",             "classes_AC_gnn_gcn_"),
+    # Spatial neighbour-reconstruction variants of cnn_gru_dual (03_main_training.py) --
+    # see model_utils.build_neighbor_curve_stack/reconstruct_curves_cosine/
+    # create_cnn_gru_dual_attn_recon_model. Same single-curve-input result shape as
+    # cnn_gru_dual itself; only the curve fed into the classifier differs.
+    "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
+    "cnn_gru_dual_attn_recon":   ("y_preds_AC_cnn_gru_dual_attn_recon_",   "y_probs_AC_cnn_gru_dual_attn_recon_",   "classes_AC_cnn_gru_dual_attn_recon_"),
 }
 
 MODEL_PRINT_MAP = {
@@ -302,6 +308,7 @@ MODEL_PRINT_MAP = {
     "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
     "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     "gnn_gat": "GNN (GAT)", "gnn_gcn": "GNN (GCN)",
+    "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
 }
 
 FILTER_PRINT_MAP = {
