@@ -144,7 +144,8 @@ if __name__ == "__main__":
     y_full = encoder.fit_transform(Y_well)
 
     # outlier_filters = config.OUTLIER_FILTERS
-    outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+    # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+    outlier_filters = [None]
 
     print(f"[*] Found {len(outlier_filters)-1} Dynamic Outlier Filters to test.")
 
@@ -222,9 +223,9 @@ if __name__ == "__main__":
             # From outlier unsupervised training
             # "lstm_ae_clf",
 
-            # # New gated dual-branch fusion models
-            # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
-            # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+            # New gated dual-branch fusion models
+            "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+            "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]
 
         model_interp_dir = exp_path / "model_interpretation"

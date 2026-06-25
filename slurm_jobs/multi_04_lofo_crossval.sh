@@ -4,8 +4,8 @@
 
 # Request resources for a single job
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a40
 #SBATCH --array=0

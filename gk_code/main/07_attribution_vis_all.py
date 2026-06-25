@@ -968,6 +968,11 @@ def plot_latent_feature_mapping(
         sections.append({
             "label": label, "order": order[selected], "k": k, "true_ranks": true_ranks,
             "sal_profiles": sal_profiles[selected], "combined": combined[selected],
+            # Raw per-metric matrices alongside "combined" -- lets render_latent_feature_mapping_figure's
+            # `metric=` parameter switch which one drives the bar chart/best-feature pick, without
+            # recomputing anything (mi here is the normalized mi_m, matching what "combined" was
+            # actually built from -- same 0-1 scale as spearman/cosine for the shared bar y-limits).
+            "spearman": spearman_m[selected], "mi": mi_m[selected], "cosine": cosine_m[selected],
             "best_feat_idx": best_feat_idx_full[selected], "best_score": combined[selected, best_feat_idx_full[selected]],
         })
 
@@ -1026,24 +1031,54 @@ def plot_latent_feature_mapping(
         return pd.DataFrame(score_rows), pd.DataFrame(profile_rows)
 
 
+_METRIC_TITLES = {
+    "combined": None,  # filled in below using the actual w_spearman/w_mi/w_cosine weights
+    "spearman": "Score = |Spearman correlation| between latent activation and feature value",
+    "mi":       "Score = Mutual Information (normalized) between latent activation and feature value",
+    "cosine":   "Score = Cosine similarity between saliency profile and feature sensitivity profile",
+    "mi_cosine": "Score = Mutual Information (normalized) + Cosine similarity between saliency profile and feature sensitivity profile",
+}
+_METRIC_CBAR_LABELS = {
+    "combined": "Combined Mapping Score",
+    "spearman": "|Spearman Correlation|",
+    "mi":       "Mutual Information (normalized)",
+    "cosine":   "Cosine Similarity",
+    "mi_cosine": "Mutual Information + Cosine Similarity",
+}
+
+
 def render_latent_feature_mapping_figure(
     sections, mean_curve, std_curve, timestamps, feat_names,
     model_name, dataset_name, save_path,
     w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
-    feat_matrix=None,
+    feat_matrix=None, metric="combined",
 ):
     """Draws and saves the figure plot_latent_feature_mapping produces, from
     precomputed `sections` (list of dicts: label/order/k/true_ranks/sal_profiles/
-    combined/best_feat_idx/best_score -- see plot_latent_feature_mapping's branch
-    loop). Factored out of plot_latent_feature_mapping so a saved scores+profiles
-    joblib (return_scores=True) can be reconstructed into this exact same figure
-    later without rerunning model inference -- see the reconstruction notebook.
+    combined/spearman/mi/cosine/best_feat_idx/best_score -- see
+    plot_latent_feature_mapping's branch loop). Factored out of
+    plot_latent_feature_mapping so a saved scores+profiles joblib
+    (return_scores=True) can be reconstructed into this exact same figure later
+    without rerunning model inference -- see the reconstruction notebook.
+
+    metric: which score drives the bar chart and the per-latent best-feature pick --
+    one of "combined" (default, the existing weighted blend), "spearman", "mi"
+    (normalized, the same scale "combined" was built from), or "cosine". The set of
+    latents shown (and their order) is unchanged regardless of metric -- that
+    selection happens upstream in plot_latent_feature_mapping via "combined" and is
+    baked into `sections` -- only which score is plotted/highlighted per shown latent
+    changes. Note "best_feat_idx"/"best_score" in `sections` are always
+    combined-based; for any other metric this function recomputes the best feature
+    as the argmax of that metric's own row, which can legitimately point at a
+    different feature than the combined-based pick.
 
     feat_matrix (Batch, n_feats), optional: only used for the dotted timing-feature
     marker line on the left panel; pass None to skip that one minor visual detail
     (e.g. when reconstructing from a joblib that didn't persist the raw feature
     matrix -- everything else renders identically).
     """
+    if metric not in ("combined", "spearman", "mi", "cosine", "mi_cosine"):
+        raise ValueError(f"metric must be one of 'combined'/'spearman'/'mi'/'cosine'/'mi_cosine', got {metric!r}")
     t = np.asarray(timestamps, dtype=float)
     T = len(mean_curve)
     if len(t) != T:
@@ -1062,13 +1097,15 @@ def render_latent_feature_mapping_figure(
     # ------------------------------------------------------------------
     row_h   = 1.6          # inches per row
     fig_h   = total_rows * row_h + 1.8   # +title space
-    fig_w   = 22
-    bar_w_ratio = 5        # right panel is 5× wider than the mini curve
+    fig_w   = 18.3         # shrunk from 22: bar panel is ~20% narrower (see bar_w_ratio)
+    bar_w_ratio = 4        # right panel is 4x wider than the mini curve (was 5x)
 
+    score_subtitle = _METRIC_TITLES[metric] or (
+        f"Score = {w_spearman:.0%}·|Spearman| + {w_mi:.0%}·MI + {w_cosine:.0%}·Cos(saliency, sensitivity)"
+    )
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor='white')
     fig.suptitle(
-        f"{dataset_name} | {model_name.upper()} — Latent → Feature Mapping\n"
-        f"Score = {w_spearman:.0%}·|Spearman| + {w_mi:.0%}·MI + {w_cosine:.0%}·Cos(saliency, sensitivity)",
+        f"{dataset_name} | {model_name.upper()} — Latent → Feature Mapping\n{score_subtitle}",
         fontsize=12, fontweight='bold', y=1.0
     )
 
@@ -1141,16 +1178,34 @@ def render_latent_feature_mapping_figure(
         k             = sec["k"]
         true_ranks    = sec["true_ranks"]
         sal_profiles  = sec["sal_profiles"]
-        combined      = sec["combined"]
-        best_feat_idx = sec["best_feat_idx"]
-        best_score    = sec["best_score"]
+        metric_scores = sec[metric]
+
+        # Best-feature picks, one per shown latent in this section. For metric="combined"
+        # this is just each row's own argmax -- already guaranteed unique across the
+        # section, since that's exactly how plot_latent_feature_mapping chose which
+        # latents to include here in the first place (its own greedy unique-feature
+        # TOP_N selection). For any other metric, argmax-per-row has no such guarantee
+        # (each row's argmax was computed independently) -- so apply the same greedy
+        # unique-feature logic here, scoped to this section: walk latents in display
+        # order, assign each the highest-scoring feature not already claimed by an
+        # earlier latent in this section, falling back to a duplicate only if every
+        # feature has already been claimed (k > n_feats, not expected in practice).
+        if metric == "combined":
+            best_js = [int(np.argmax(metric_scores[i])) for i in range(k)]
+        else:
+            used, best_js = set(), []
+            for i in range(k):
+                ranked = np.argsort(-metric_scores[i])
+                chosen = next((int(j) for j in ranked if j not in used), int(ranked[0]))
+                used.add(chosen)
+                best_js.append(chosen)
 
         for i in range(k):
             flat_idx   = order[i]
             sal_prof   = sal_profiles[i]        # (T,)
-            scores_row = combined[i]            # (n_feats,)
-            best_j     = best_feat_idx[i]
-            score_best = best_score[i]
+            scores_row = metric_scores[i]       # (n_feats,)
+            best_j     = best_js[i]
+            score_best = scores_row[best_j]
 
             # --- Left panel: mini curve + saliency ---
             ax_curve = fig.add_subplot(gs[global_row, 0])
@@ -1267,7 +1322,7 @@ def render_latent_feature_mapping_figure(
     sm.set_array([])
     cbar_ax = fig.add_axes([0.975, 0.10, 0.008, 0.80])
     fig.colorbar(sm, cax=cbar_ax).set_label(
-        "Combined Mapping Score", rotation=270, labelpad=12, fontsize=8
+        _METRIC_CBAR_LABELS[metric], rotation=270, labelpad=12, fontsize=8
     )
 
     fig.savefig(save_path, dpi=200, bbox_inches='tight', facecolor='white')

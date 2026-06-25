@@ -4,6 +4,7 @@ import os
 # ====================================================================
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=INFO, 1=WARN, 2=ERROR, 3=FATAL
 
+import gc
 import time
 import random
 from pathlib import Path
@@ -760,22 +761,28 @@ def evaluate_outlier_filters(
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
             res_entry["mask_count"] = int(np.sum(mask))
 
-        # --- Spatial neighbour reconstruction (computed once per filter, not per fold/model
-        # -- it's a deterministic function of the curves/coords surviving this filter, not
-        # of the train/test split). Skipped (with a one-time warning) if coords/well_ids
-        # weren't supplied, regardless of whether the recon models are in `models`.
+        # --- Spatial neighbour reconstruction setup ---
+        # The actual (N, k+1, T) neighbour stack is built LAZILY, inside the per-model
+        # loop below, right before the first of these two models that needs it -- NOT
+        # eagerly here. It's k+1x the size of the raw curve array (float32, still cast
+        # down from the source curves' likely float64) and for large combined pools
+        # (e.g. 04_cross_dataset_training.py's LOFO pools) this is multiple GB; building
+        # it up front meant it sat in memory for the *entire* filter, including while
+        # training cnn/gru/transformer/etc, which don't use it at all -- a real OOM risk
+        # that's now avoided by building it only when reached, and freeing it (`_free_spatial_recon`
+        # below) once both spatial models for this filter are done.
         _wanted_recon = [m for m in models if m in _SPATIAL_RECON_MODELS]
+        _recon_unavailable = bool(_wanted_recon) and (coords_m is None or well_ids_m is None)
+        if _recon_unavailable:
+            print(f"     [SKIP] {', '.join(_wanted_recon)}: no coords/well_ids provided "
+                  f"(pass coords=/well_ids= to evaluate_outlier_filters). Skipping for this filter.")
         X_AC_cosine_recon, X_AC_stack = None, None
-        if _wanted_recon:
-            if coords_m is None or well_ids_m is None:
-                print(f"     [SKIP] {', '.join(_wanted_recon)}: no coords/well_ids provided "
-                      f"(pass coords=/well_ids= to evaluate_outlier_filters). Skipping for this filter.")
-            else:
-                neighbor_stack = build_neighbor_curve_stack(X_AC, coords_m, well_ids_m, k=k_neighbors)
-                if "cnn_gru_dual_cosine_recon" in _wanted_recon:
-                    X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
-                if "cnn_gru_dual_attn_recon" in _wanted_recon:
-                    X_AC_stack = neighbor_stack
+        _recon_models_left = set(_wanted_recon)  # shrinks as each is reached below
+
+        def _free_spatial_recon():
+            nonlocal X_AC_cosine_recon, X_AC_stack
+            X_AC_cosine_recon, X_AC_stack = None, None
+            gc.collect()
 
         for m in models:
             if m not in model_key_map: continue
@@ -803,9 +810,7 @@ def evaluate_outlier_filters(
                           f"this filter's curves have {X_AC.shape[1]}. Skipping.")
                     continue
 
-            if m == "cnn_gru_dual_cosine_recon" and X_AC_cosine_recon is None:
-                continue  # already warned above (no coords/well_ids)
-            if m == "cnn_gru_dual_attn_recon" and X_AC_stack is None:
+            if m in _SPATIAL_RECON_MODELS and _recon_unavailable:
                 continue  # already warned above (no coords/well_ids)
 
             preds_key, probs_key, classes_key = model_key_map[m]
@@ -816,11 +821,28 @@ def evaluate_outlier_filters(
                 fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
                 acc = np.mean(fold_accs) * 100
                 std = np.std(fold_accs) * 100
-            
+
                 print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
                 print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: Cached")
+                if m in _recon_models_left:
+                    _recon_models_left.discard(m)
+                    if not _recon_models_left:
+                        _free_spatial_recon()
                 continue
-            
+
+            # Lazily build the (N, k+1, T) neighbour stack the first time it's actually
+            # needed for training (not on a cache hit, see above) -- see the comment where
+            # _recon_models_left is defined for why this isn't done eagerly.
+            if m in _SPATIAL_RECON_MODELS and X_AC_cosine_recon is None and X_AC_stack is None:
+                neighbor_stack = build_neighbor_curve_stack(
+                    X_AC.astype(np.float32, copy=False), coords_m, well_ids_m, k=k_neighbors)
+                if "cnn_gru_dual_cosine_recon" in _wanted_recon:
+                    X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
+                if "cnn_gru_dual_attn_recon" in _wanted_recon:
+                    X_AC_stack = neighbor_stack
+                else:
+                    del neighbor_stack
+
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
             start_time = time.perf_counter()
@@ -1121,8 +1143,13 @@ def evaluate_outlier_filters(
             fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], preds)]
             acc = np.mean(fold_accs) * 100
             std = np.std(fold_accs) * 100
-            
+
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: {formatted_time}")
+
+            if m in _recon_models_left:
+                _recon_models_left.discard(m)
+                if not _recon_models_left:
+                    _free_spatial_recon()
 
         results_dict[f] = res_entry
 
