@@ -206,8 +206,33 @@ def _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_sa
         print("    [SAVED] Unified pipeline state updated.")
 
 
+def _build_variant_lists(data):
+    """Enumerate every curve variant currently present in data['curves']/data['sigmoid_curves']."""
+    dataset_name = ["ori_curves"]
+    dataset = [data["curves"]["ori_curves"]]   # same object — not a copy
+
+    if "ori_curves_avg" in data["curves"]:
+        dataset_name.append("ori_curves_avg")
+        dataset.append(data["curves"]["ori_curves_avg"])
+
+    if "ori_curves_norm" in data["curves"]:
+        dataset_name.append("ori_curves_norm")
+        dataset.append(data["curves"]["ori_curves_norm"])
+
+    for k, v in data["sigmoid_curves"].items():
+        dataset_name.append(f"{k}_fitted_full")
+        dataset.append(v["fitted_full"])
+        dataset_name.append(f"{k}_fitted_stretched")
+        dataset.append(v["fitted_stretched"])
+
+    return dataset_name, dataset
+
+
 def _load_or_build_state(exp_path, unified_save_path, force_rerun):
-    """Load persisted pipeline state, or build a fresh one from preprocessed curves."""
+    """Load persisted pipeline state, or build a fresh one from preprocessed curves.
+    Also detects curve variants added to "curves" since 02 last ran (e.g. a new
+    --normalize_curves variant from 01/01b) and appends just those, without rebuilding
+    or recomputing anything already cached."""
     pipeline_state = {}
 
     if os.path.exists(unified_save_path):
@@ -229,56 +254,62 @@ def _load_or_build_state(exp_path, unified_save_path, force_rerun):
                   "linear_feature_combinations", "important_feature_combinations", "importance_dfs"):
             pipeline_state.pop(k, None)
 
+    # 01 and 02 share one joblib (config.TRAINING_DATA_PATH) — 01 patches "curves"/
+    # "sigmoid_curves"/"well_labels"/"timestamps"/"metadata" directly into the same
+    # file 02 loads above, so no second file read is needed here. See
+    # joblib_redundancy.md "01 + 02: one shared joblib, scripts stay separate".
+    if "curves" not in pipeline_state:
+        print(f"Skipping {exp_path.name} - run 01_curve_preprocessing_v6.py first "
+              f"(no 'curves' key in '{config.TRAINING_DATA_PATH}').")
+        sys.exit(0)
+
+    expected_name, expected_arr = _build_variant_lists(pipeline_state)
+
     if "dataset" not in pipeline_state:
-        # 01 and 02 share one joblib (config.TRAINING_DATA_PATH) — 01 patches "curves"/
-        # "sigmoid_curves"/"well_labels"/"timestamps"/"metadata" directly into the same
-        # file 02 loads above, so no second file read is needed here. See
-        # joblib_redundancy.md "01 + 02: one shared joblib, scripts stay separate".
-        if "curves" not in pipeline_state:
-            print(f"Skipping {exp_path.name} - run 01_curve_preprocessing_v6.py first "
-                  f"(no 'curves' key in '{config.TRAINING_DATA_PATH}').")
-            sys.exit(0)
-
-        data = pipeline_state
-        dataset_name = ["ori_curves"]
-        dataset = [data["curves"]["ori_curves"]]   # same object — not a copy
-
-        if "ori_curves_avg" in data["curves"]:
-            dataset_name.append("ori_curves_avg")
-            dataset.append(data["curves"]["ori_curves_avg"])
-
-        for k, v in data["sigmoid_curves"].items():
-            dataset_name.append(f"{k}_fitted_full")
-            dataset.append(v["fitted_full"])
-            dataset_name.append(f"{k}_fitted_stretched")
-            dataset.append(v["fitted_stretched"])
-
         pipeline_state.update({
-            "dataset_name": dataset_name,   # plain list, NOT np.array() — keeps array
-            "dataset": dataset,             # objects identical to curves[...] so joblib
-            "Y_well": data["well_labels"],  # dedupes them on disk (see Change in plan)
-            # "timestamps" already present from 01 — no need to re-set it
-            # metadata_df intentionally NOT stored — derived on demand from "metadata"
+            "dataset_name": expected_name,            # plain list, NOT np.array() — keeps array
+            "dataset": expected_arr,                  # objects identical to curves[...] so joblib
+            "Y_well": pipeline_state["well_labels"],   # dedupes them on disk
         })
+    else:
+        existing_name = list(pipeline_state["dataset_name"])
+        new_vars = [(n, a) for n, a in zip(expected_name, expected_arr) if n not in existing_name]
+        if new_vars:
+            print(f"  -> Detected new curve variant(s) since last run: "
+                  f"{[n for n, _ in new_vars]}. Appending without recomputing existing ones...")
+            for n, a in new_vars:
+                pipeline_state["dataset_name"].append(n)
+                pipeline_state["dataset"].append(a)
 
     return pipeline_state
 
 
 
 def _ensure_kinetic_features(pipeline_state, unified_save_path):
-    """Compute kinetic features for all dataset variants if not already cached."""
+    """Compute kinetic features for any dataset variants not already cached."""
     dataset_name = pipeline_state["dataset_name"]
+    dataset = pipeline_state["dataset"]
     Y_well = pipeline_state["Y_well"]
+    timestamps = pipeline_state["timestamps"]
+    metadata_df = pd.DataFrame(pipeline_state["metadata"])   # derived on demand — not persisted
 
     cached = pipeline_state.get("kinetic_features")
-    if cached and len(cached[0]) == len(Y_well):
+    cache_valid = cached and len(cached[0]) == len(Y_well)
+
+    if cache_valid and len(cached) == len(dataset_name):
         print("  -> Using cached kinetic features from unified state.")
         return
 
+    if cache_valid and len(cached) < len(dataset_name):
+        new_names = dataset_name[len(cached):]
+        print(f"  -> Extracting kinetic features for new variant(s): {new_names}...")
+        new_features = [build_kinetic_features(dataset[i], timestamps, metadata_df)
+                         for i in range(len(cached), len(dataset_name))]
+        pipeline_state["kinetic_features"] = list(cached) + new_features
+        joblib.dump(pipeline_state, unified_save_path, compress=3)
+        return
+
     print("  -> Extracting initial kinetic features (CPU Bound)...")
-    timestamps = pipeline_state["timestamps"]
-    metadata_df = pd.DataFrame(pipeline_state["metadata"])   # derived on demand — not persisted
-    dataset = pipeline_state["dataset"]
     kinetic_features = [build_kinetic_features(c, timestamps, metadata_df) for c in dataset]
 
     # Drop legacy "avg_"-prefixed variants that may appear in older cache files.
@@ -322,25 +353,32 @@ def _generate_boxplots(dataset_name, kinetic_features, Y_well, exp_path):
 
 
 def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save_path, save_plot_flag, reports_dir):
-    """Compute correlation triplets + RF importances; results cached into pipeline_state."""
-    if ("linear_feature_combinations" in pipeline_state
-            and "important_feature_combinations" in pipeline_state):
-        print("  -> Using cached feature combinations and importance data from unified state.")
-        return (
-            pipeline_state["linear_feature_combinations"],
-            pipeline_state["important_feature_combinations"],
-            pipeline_state["importance_dfs"],
-        )
-
+    """Compute correlation triplets + RF importances; results cached into pipeline_state.
+    Only computes for dataset variants not yet covered (e.g. a new variant appended to
+    dataset_name since the last run) — existing cached entries are reused untouched."""
     dataset_name = pipeline_state["dataset_name"]
     kinetic_features = pipeline_state["kinetic_features"]
+
+    cached_linear = pipeline_state.get("linear_feature_combinations")
+    cached_important = pipeline_state.get("important_feature_combinations")
+    cached_importance_dfs = pipeline_state.get("importance_dfs")
+
+    if cached_linear is not None and len(cached_linear) == len(dataset_name):
+        print("  -> Using cached feature combinations and importance data from unified state.")
+        return cached_linear, cached_important, cached_importance_dfs
+
+    start = len(cached_linear) if cached_linear is not None else 0
+    new_names = dataset_name[start:]
+    new_kinetic_features = kinetic_features[start:]
+    if start > 0:
+        print(f"  -> Computing feature combinations/importances for new variant(s): {new_names}...")
 
     # --- Best correlated feature triplets ---
     print("\n=== EXTRACTING BEST LINEAR TRIPLETS (CORRELATION) ===")
     linear_feature_combinations = []
     heatmap_buffers = []
 
-    for name, features_df in zip(dataset_name, kinetic_features):
+    for name, features_df in zip(new_names, new_kinetic_features):
         clean_title = name.replace("_", " ").title()
         numeric_df = features_df.select_dtypes(include=['number'])
 
@@ -397,7 +435,7 @@ def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save
 
         print("\n=== GENERATING 3D COMBINATION PLOTS ===")
         plot_3d_buffers = []
-        for name, kf, combos in zip(dataset_name, kinetic_features, linear_feature_combinations):
+        for name, kf, combos in zip(new_names, new_kinetic_features, linear_feature_combinations):
             if not combos:
                 continue
             clean_title = name.replace("_", " ").title()
@@ -432,7 +470,7 @@ def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save
     print("\n=== EXTRACTING TOP 5 INDEPENDENT FEATURES (RANDOM FOREST) ===")
     importance_dfs, rf_buffers, important_feature_combinations = [], [], []
 
-    for name, features_df in zip(dataset_name, kinetic_features):
+    for name, features_df in zip(new_names, new_kinetic_features):
         clean_title = name.replace("_", " ").title()
         numeric_df = (features_df.select_dtypes(include=['number'])
                       .replace([np.inf, -np.inf], np.nan).fillna(0))
@@ -480,6 +518,10 @@ def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save
     if save_plot_flag and rf_buffers:
         save_html_report(reports_dir / "all_feature_importances.html",
                          "Feature Importance Analysis", None, rf_buffers)
+
+    linear_feature_combinations = (cached_linear or []) + linear_feature_combinations
+    important_feature_combinations = (cached_important or []) + important_feature_combinations
+    importance_dfs = (cached_importance_dfs or []) + importance_dfs
 
     pipeline_state["linear_feature_combinations"] = linear_feature_combinations
     pipeline_state["important_feature_combinations"] = important_feature_combinations

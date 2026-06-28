@@ -39,10 +39,14 @@ echo "Strategy: $STRATEGY -- flat task_ids: $TASK_IDS"
 
 for TID in $TASK_IDS; do
     echo "=== [$STRATEGY] Processing combo flat-task_id=$TID ==="
-    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $TID --exp_folder "$EXP_FOLDER" --one_to_one
-    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $TID --exp_folder "$TRAIN_FOLDER"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $TID --exp_folder "$EXP_FOLDER" --one_to_one --normalize_curves
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $TID --exp_folder "$TRAIN_FOLDER"
+
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
+    
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
 done
 
 deactivate

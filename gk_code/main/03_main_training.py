@@ -211,7 +211,9 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual",
+            "knn", "cnn", "gru", "transformer", 
+            "cnn_lf", "gru_lf", "trans_lf", 
+            "cnn_gru_dual", "cnn_trans_dual",
 
             # Spatial-reconstruction variants inspired by 03b_gnn_spatial_training.py's GNN:
             # reconstruct one denoised curve per pixel from itself + its k nearest neighbours

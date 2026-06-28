@@ -302,11 +302,19 @@ def run_all_fits(processed_curves, indices_dict, ori_timestamps):
 # 5. SAVING MODULE
 # ==========================================
 
+def normalize_curves_minmax(curves):
+    curves = np.asarray(curves, dtype=np.float64)
+    row_min = curves.min(axis=1, keepdims=True)
+    row_max = curves.max(axis=1, keepdims=True)
+    denom = np.where(row_max - row_min == 0, 1, row_max - row_min)
+    return (curves - row_min) / denom
+
+
 def save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves,
                                      indices_dict, pixel_temp_dfs, baseline_value,
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
                                      window_size_ori, window_size_1stder, margin, max_significant_index,
-                                     compute_sigmoid_fits=False):
+                                     compute_sigmoid_fits=False, normalize_curves=False):
     """
     Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
     (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
@@ -318,15 +326,19 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
     # well_2d_bs_active/well_2d_nl_bs_active/well_temp_lin2d/well_2d_temp_npr/
     # well_temp_mean_then_lin are NOT persisted — confirmed zero consumers anywhere
     # (light_pipeline reconstructs well_2d_bs_active independently, never reads it here).
+    curves_dict = {
+        "ori_curves": processed_curves[0],
+        "ori_curves_avg": ori_curves_avg,
+        "ori_curve_dydx": processed_curves[1],
+        "ori_dydx_avg": processed_curves[2],
+        "cleaned_std": processed_curves[3],
+        "cleaned_lowest": processed_curves[4],
+    }
+    if normalize_curves:
+        curves_dict["ori_curves_norm"] = normalize_curves_minmax(processed_curves[0])
+
     save_data = {
-        "curves": {
-            "ori_curves": processed_curves[0],
-            "ori_curves_avg": ori_curves_avg,
-            "ori_curve_dydx": processed_curves[1],
-            "ori_dydx_avg": processed_curves[2],
-            "cleaned_std": processed_curves[3],
-            "cleaned_lowest": processed_curves[4],
-        },
+        "curves": curves_dict,
         "sigmoid_curves": fitting_results,
         "idxs": {
             "idx_start": well0.idx_start,
@@ -384,6 +396,9 @@ if __name__ == "__main__":
                         help="Compute the derivative/cleaning chain (ori_curve_dydx, ori_dydx_avg, cleaned_std, "
                              "cleaned_lowest) and the 5-parameter sigmoid fits derived from it. Unused by 02-08 "
                              "under default --curve_type args; off by default to save compute and storage.")
+    parser.add_argument("--normalize_curves", action="store_true",
+                        help="Add an 'ori_curves_norm' variant: each curve independently min-max scaled to "
+                             "[0,1]. Selectable downstream via --curve_type ori_curve_norm.")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -430,16 +445,26 @@ if __name__ == "__main__":
             existing_data = None
 
         if existing_data is not None and "curves" in existing_data:
-            if "ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data:
+            needs_avg_patch = not ("ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data)
+            needs_norm_patch = args.normalize_curves and "ori_curves_norm" not in existing_data["curves"]
+
+            if not needs_avg_patch and not needs_norm_patch:
                 print(f"Cache hit: {save_exp_path}")
                 print("  ✓ Experiment complete!\n")
                 sys.exit(0)
 
-            print(f"Cache hit: {save_exp_path} (patching missing 'ori_curves_avg'/'window_size_ori')")
-            existing_data["curves"]["ori_curves_avg"] = moving_average_vec(
-                existing_data["curves"]["ori_curves"], config.WINDOW_SIZE_ORI
-            )
-            existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
+            patched_fields = []
+            if needs_avg_patch:
+                existing_data["curves"]["ori_curves_avg"] = moving_average_vec(
+                    existing_data["curves"]["ori_curves"], config.WINDOW_SIZE_ORI
+                )
+                existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
+                patched_fields.append("ori_curves_avg/window_size_ori")
+            if needs_norm_patch:
+                existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
+                patched_fields.append("ori_curves_norm")
+
+            print(f"Cache hit: {save_exp_path} (patching missing {', '.join(patched_fields)})")
             joblib.dump(existing_data, save_path, compress=3)
             print(f"  -> Patched {save_path}")
             print("  ✓ Experiment complete!\n")
@@ -576,7 +601,8 @@ if __name__ == "__main__":
                                     indices_dict, pixel_temp_dfs, baseline_value,
                                     Y_well, X_time, all_exp_data, ori_curves_avg,
                                     config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index,
-                                    compute_sigmoid_fits=args.compute_sigmoid_fits)
+                                    compute_sigmoid_fits=args.compute_sigmoid_fits,
+                                    normalize_curves=args.normalize_curves)
     
     unique_wells = np.unique(Y_well)
 

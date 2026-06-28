@@ -180,13 +180,36 @@ def is_cache_hit(save_path):
     return existing_data is not None and "curves" in existing_data
 
 
-def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results):
+def patch_missing_norm_variant(save_path, normalize_curves):
+    """On a cache hit, add a missing 'ori_curves_norm' from the already-cached 'ori_curves'
+    instead of forcing a full re-run (which would re-read the CSV/Excel and re-fit sigmoids)."""
+    if not normalize_curves:
+        return
+    existing_data = joblib.load(save_path)
+    if "ori_curves_norm" in existing_data["curves"]:
+        return
+    existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
+    joblib.dump(existing_data, save_path, compress=3)
+    print(f"  -> Patched missing 'ori_curves_norm' into {save_path}")
+
+
+def normalize_curves_minmax(curves):
+    curves = np.asarray(curves, dtype=np.float64)
+    row_min = curves.min(axis=1, keepdims=True)
+    row_max = curves.max(axis=1, keepdims=True)
+    denom = np.where(row_max - row_min == 0, 1, row_max - row_min)
+    return (curves - row_min) / denom
+
+
+def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False):
     fitted_full, fitted_stretched, params, rmse = sigmoid_results
 
+    curves_dict = {"ori_curves": curves}
+    if normalize_curves:
+        curves_dict["ori_curves_norm"] = normalize_curves_minmax(curves)
+
     save_data = {
-        "curves": {
-            "ori_curves": curves,
-        },
+        "curves": curves_dict,
         "sigmoid_curves": {
             "original": {
                 "fitted_full": fitted_full,
@@ -224,6 +247,9 @@ if __name__ == "__main__":
                         help="Pairwise one-to-one mode (use with --exp_folder=config.LAB_1TO1_EXP_FOLDER): "
                              "build one curve_for_training.joblib per (strategy, label-pair) combination, "
                              "in its own subfolder, instead of one shared joblib per strategy folder.")
+    parser.add_argument("--normalize_curves", action="store_true",
+                        help="Add an 'ori_curves_norm' variant: each curve independently min-max scaled to "
+                             "[0,1]. Selectable downstream via --curve_type ori_curve_norm.")
     args = parser.parse_args()
 
     if args.one_to_one:
@@ -240,6 +266,7 @@ if __name__ == "__main__":
         save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
 
         if is_cache_hit(save_path) and not args.force_rerun:
+            patch_missing_norm_variant(save_path, args.normalize_curves)
             print(f"Cache hit: {exp_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
@@ -249,7 +276,8 @@ if __name__ == "__main__":
         curves, timestamps, well_labels, sigmoid_results = load_lab_curves_one_to_one(
             args.exp_folder, strategy, label1, label2)
 
-        save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results)
+        save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
+                            normalize_curves=args.normalize_curves)
 
         print(f"  -> X (Curves) shape:       {curves.shape}")
         print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
@@ -268,6 +296,7 @@ if __name__ == "__main__":
     save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
 
     if is_cache_hit(save_path) and not args.force_rerun:
+        patch_missing_norm_variant(save_path, args.normalize_curves)
         print(f"Cache hit: {exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)
@@ -279,7 +308,8 @@ if __name__ == "__main__":
     print("  -> Processing Sigmoid Curves...")
     sigmoid_results = sigmoid_fitting_5p(curves, timestamps)
 
-    save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results)
+    save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
+                        normalize_curves=args.normalize_curves)
 
     print(f"  -> X (Curves) shape:       {curves.shape}")
     print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")

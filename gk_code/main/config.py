@@ -59,6 +59,7 @@ EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_o
 CURVE_TYPE_ALIASES = {
     "ori_curve": "ori_curves",
     "ori_curve_avg": "ori_curves_avg",
+    "ori_curve_norm": "ori_curves_norm",
 }
 
 def resolve_curve_dataset_idx(curve_type, dataset_name_list):
