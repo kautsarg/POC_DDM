@@ -757,20 +757,21 @@ def evaluate_outlier_filters(
 
             splits = list(splitter.split(X_AC, y_true))
         
+        current_mask_count = int(np.sum(mask))
+        cached_mask_count = res_entry.get("mask_count")
+        if cached_mask_count is not None and cached_mask_count != current_mask_count:
+            print(f"     [Warning] Cached results for filter '{filter_name}' were built from "
+                  f"{cached_mask_count} filtered samples; current data has {current_mask_count} "
+                  f"(likely changed upstream). Discarding stale cache for this filter.")
+            res_entry = {}
+
         if "y_trues_" not in res_entry:
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
-            res_entry["mask_count"] = int(np.sum(mask))
+
+        res_entry["mask_count"] = current_mask_count
+        res_entry["y_true_count"] = len(y_true)
 
         # --- Spatial neighbour reconstruction setup ---
-        # The actual (N, k+1, T) neighbour stack is built LAZILY, inside the per-model
-        # loop below, right before the first of these two models that needs it -- NOT
-        # eagerly here. It's k+1x the size of the raw curve array (float32, still cast
-        # down from the source curves' likely float64) and for large combined pools
-        # (e.g. 04_cross_dataset_training.py's LOFO pools) this is multiple GB; building
-        # it up front meant it sat in memory for the *entire* filter, including while
-        # training cnn/gru/transformer/etc, which don't use it at all -- a real OOM risk
-        # that's now avoided by building it only when reached, and freeing it (`_free_spatial_recon`
-        # below) once both spatial models for this filter are done.
         _wanted_recon = [m for m in models if m in _SPATIAL_RECON_MODELS]
         _recon_unavailable = bool(_wanted_recon) and (coords_m is None or well_ids_m is None)
         if _recon_unavailable:
