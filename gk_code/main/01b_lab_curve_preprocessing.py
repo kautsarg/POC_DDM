@@ -25,11 +25,13 @@ FILE_MAPPING = {
     'AMCA_qdLAMP': '5Plex_dLAMP_oldData.csv',
     'Z_area': 'area_strategy.csv',
     'Z_range': 'range_strategy.xlsx',
+    'Z_range_filtered': 'range_strategy_filtered.xlsx',
 }
 
 FILE_MAPPING_ONE_TO_ONE = {
     '1_area': 'area_strategy.csv',
     '2_range': 'range_strategy.xlsx',
+    '3_range_filtered': 'range_strategy_filtered.xlsx',
 }
 FILE_TARGET = {
     'ACA_qdPCR':   'LoadedPanels',
@@ -37,11 +39,13 @@ FILE_TARGET = {
     'AMCA_qdLAMP': 'Target',
     'Z_area':   'Target',
     'Z_range':  'Target',
+    'Z_range_filtered': 'Target',
 }
 
 FILE_TARGET_ONE_TO_ONE = {
     '1_area':   'Target',
     '2_range':  'Target',
+    '3_range_filtered': 'Target',
 }
 
 def get_numeric_sort_key(col_name):
@@ -201,11 +205,76 @@ def normalize_curves_minmax(curves):
     return (curves - row_min) / denom
 
 
-def filter_low_amplitude(curves, well_labels, sigmoid_results, threshold=2):
-    keep_mask = curves[:, -1] >= threshold
-    fitted_full, fitted_stretched, params, rmse = sigmoid_results
-    filtered_sigmoid = (fitted_full[keep_mask], fitted_stretched[keep_mask], params[keep_mask], rmse[keep_mask])
-    return curves[keep_mask], well_labels[keep_mask], filtered_sigmoid
+def compute_ttp(curves, threshold_frac=0.1):
+    """Per-curve first-cycle index reaching threshold_frac of that curve's own range,
+    anchored to the curve's own starting value (cycle 0), not its global min."""
+    max_vals = curves.max(axis=1, keepdims=True)
+    min_vals = curves[:, [0]]
+    threshold_vals = min_vals + (max_vals - min_vals) * threshold_frac
+    return np.argmax(curves >= threshold_vals, axis=1)
+
+
+def _ttp_tradeoff_curve(ttp_idx, well_labels, n_cycles):
+    unique_ttps = sorted(set(ttp_idx.tolist()))
+    targets = sorted(set(well_labels))
+    min_ttp = min(unique_ttps)
+    total_counts = {t: int((well_labels == t).sum()) for t in targets}
+
+    cycles_left_list, min_retention_list = [], []
+    for max_ttp in unique_ttps:
+        keep = ttp_idx <= max_ttp
+        cycles_left = n_cycles - (max_ttp - min_ttp)
+        retentions = [100 * int(((well_labels == t) & keep).sum()) / total_counts[t] for t in targets]
+        cycles_left_list.append(cycles_left)
+        min_retention_list.append(min(retentions))
+    return np.array(unique_ttps), np.array(cycles_left_list), np.array(min_retention_list)
+
+
+def _choose_max_ttp_by_knee(unique_ttps, cycles_left, min_retention):
+    """max_ttp at the point of max perpendicular distance from the line connecting the
+    tradeoff curve's two endpoints (cycles_left vs worst-case label retention)."""
+    x = (cycles_left - cycles_left.min()) / (cycles_left.max() - cycles_left.min() + 1e-9)
+    y = (min_retention - min_retention.min()) / (min_retention.max() - min_retention.min() + 1e-9)
+    p1, p2 = np.array([x[0], y[0]]), np.array([x[-1], y[-1]])
+    line_vec_norm = (p2 - p1) / np.linalg.norm(p2 - p1)
+    points = np.stack([x, y], axis=1)
+    vecs = points - p1
+    proj_points = p1 + np.outer(vecs @ line_vec_norm, line_vec_norm)
+    dist = np.linalg.norm(points - proj_points, axis=1)
+    return int(unique_ttps[np.argmax(dist)])
+
+
+def build_ttp_aligned_curves(curves, timestamps, well_labels, preserve_cycles=None, threshold_frac=0.1):
+    """TTP-align + baseline-correct curves: compute TTP, pick max_ttp (knee-detected by
+    default, or derived from preserve_cycles if given), drop curves whose TTP exceeds it,
+    shift+crop survivors to a common length, then subtract each curve's own (post-shift)
+    first value so they all start at 0."""
+    ttp_idx = compute_ttp(curves, threshold_frac)
+    n_cycles = curves.shape[1]
+    min_ttp = int(ttp_idx.min())
+
+    if preserve_cycles is not None:
+        max_ttp = min_ttp + (n_cycles - preserve_cycles)
+    else:
+        unique_ttps, cycles_left, min_retention = _ttp_tradeoff_curve(ttp_idx, well_labels, n_cycles)
+        max_ttp = _choose_max_ttp_by_knee(unique_ttps, cycles_left, min_retention)
+
+    keep = ttp_idx <= max_ttp
+    curves_kept = curves[keep]
+    well_labels_kept = well_labels[keep]
+    shifts = ttp_idx[keep] - min_ttp
+    max_shift = int(shifts.max())
+    final_len = n_cycles - max_shift
+
+    aligned = np.empty((curves_kept.shape[0], final_len))
+    for i in range(curves_kept.shape[0]):
+        s = int(shifts[i])
+        aligned[i] = curves_kept[i, s:s + final_len]
+
+    baseline_corrected = aligned - aligned[:, [0]]
+    aligned_timestamps = timestamps[:final_len]
+
+    return baseline_corrected, aligned_timestamps, well_labels_kept, max_ttp
 
 
 def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False):
@@ -257,27 +326,35 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_curves", action="store_true",
                         help="Add an 'ori_curves_norm' variant: each curve independently min-max scaled to "
                              "[0,1]. Selectable downstream via --curve_type ori_curve_norm.")
-    parser.add_argument("--remove_low_amp", action="store_true",
-                        help="Drop curves whose last value is < 2. Saved into a separate "
-                             "'<name>_filtered' folder instead of the normal one.")
+    parser.add_argument("--ori_curve_aligned", action="store_true",
+                        help="Also build a separate, self-contained TTP-aligned + baseline-corrected "
+                             "dataset in a sibling '<name>_aligned' folder (its own curves/well_labels, "
+                             "since TTP filtering drops some curves -- no row-count mismatch with the "
+                             "regular dataset). Processed by 02-08 like any other experiment folder.")
+    parser.add_argument("--preserve_cycles", type=int, default=None,
+                        help="With --ori_curve_aligned: directly specify how many cycles to preserve "
+                             "after alignment, instead of auto-picking max_ttp via knee detection.")
     args = parser.parse_args()
 
     if args.one_to_one:
         combos = discover_one_to_one_combos(args.exp_folder)
-        suffix = "_filtered" if args.remove_low_amp else ""
         for _, _, _, combo_name in combos:
-            os.makedirs(os.path.join(args.exp_folder, combo_name + suffix), exist_ok=True)
+            os.makedirs(os.path.join(args.exp_folder, combo_name), exist_ok=True)
 
         if args.task_id >= len(combos):
             print(f"Task ID {args.task_id} is out of bounds for {len(combos)} combinations. Exiting.")
             sys.exit(0)
 
         strategy, label1, label2, combo_name = combos[args.task_id]
-        combo_name += suffix
         exp_path = Path(args.exp_folder, combo_name)
         save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
+        aligned_exp_path = Path(str(exp_path) + "_aligned") if args.ori_curve_aligned else None
+        aligned_save_path = os.path.join(aligned_exp_path, config.TRAINING_DATA_PATH) if aligned_exp_path else None
 
-        if is_cache_hit(save_path) and not args.force_rerun:
+        main_cache_hit = is_cache_hit(save_path) and not args.force_rerun
+        aligned_cache_hit = (not args.ori_curve_aligned) or (is_cache_hit(aligned_save_path) and not args.force_rerun)
+
+        if main_cache_hit and aligned_cache_hit:
             patch_missing_norm_variant(save_path, args.normalize_curves)
             print(f"Cache hit: {exp_path}")
             print("  ✓ Experiment complete!\n")
@@ -288,16 +365,38 @@ if __name__ == "__main__":
         curves, timestamps, well_labels, sigmoid_results = load_lab_curves_one_to_one(
             args.exp_folder, strategy, label1, label2)
 
-        if args.remove_low_amp:
-            curves, well_labels, sigmoid_results = filter_low_amplitude(curves, well_labels, sigmoid_results)
-
-        save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
-                            normalize_curves=args.normalize_curves)
+        if main_cache_hit:
+            patch_missing_norm_variant(save_path, args.normalize_curves)
+        else:
+            save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
+                                normalize_curves=args.normalize_curves)
 
         print(f"  -> X (Curves) shape:       {curves.shape}")
         print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
         print(f"  -> Mean RMSE Fit Error:    {np.nanmean(sigmoid_results[3]):.4f}")
         print("  ✓ Experiment complete!\n")
+
+        if args.ori_curve_aligned and not aligned_cache_hit:
+            aligned_exp_path.mkdir(parents=True, exist_ok=True)
+            print(f"Processing TTP-aligned dataset: {aligned_exp_path}")
+            aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp = build_ttp_aligned_curves(
+                curves, timestamps, well_labels, preserve_cycles=args.preserve_cycles)
+
+            print("  -> Processing Sigmoid Curves (aligned)...")
+            aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
+
+            save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
+                                aligned_well_labels, aligned_sigmoid_results)
+
+            print(f"  -> max_ttp used:           {max_ttp}")
+            print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")
+            print(f"  -> well_labels (Targets):  {np.unique(aligned_well_labels)}")
+            print(f"  -> Mean RMSE Fit Error:    {np.nanmean(aligned_sigmoid_results[3]):.4f}")
+            print("  ✓ Aligned experiment complete!\n")
+        elif args.ori_curve_aligned:
+            print(f"Cache hit: {aligned_exp_path}")
+            print("  ✓ Aligned experiment complete!\n")
+
         sys.exit(0)
 
     exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder)
@@ -308,13 +407,16 @@ if __name__ == "__main__":
         sys.exit(0)
 
     exp_path = exp_paths[args.task_id]
-    save_exp_path = Path(str(exp_path) + "_filtered") if args.remove_low_amp else exp_path
-    save_exp_path.mkdir(parents=True, exist_ok=True)
-    save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
+    save_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
+    aligned_exp_path = Path(str(exp_path) + "_aligned") if args.ori_curve_aligned else None
+    aligned_save_path = os.path.join(aligned_exp_path, config.TRAINING_DATA_PATH) if aligned_exp_path else None
 
-    if is_cache_hit(save_path) and not args.force_rerun:
+    main_cache_hit = is_cache_hit(save_path) and not args.force_rerun
+    aligned_cache_hit = (not args.ori_curve_aligned) or (is_cache_hit(aligned_save_path) and not args.force_rerun)
+
+    if main_cache_hit and aligned_cache_hit:
         patch_missing_norm_variant(save_path, args.normalize_curves)
-        print(f"Cache hit: {save_exp_path}")
+        print(f"Cache hit: {exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)
 
@@ -322,16 +424,36 @@ if __name__ == "__main__":
 
     curves, timestamps, well_labels = load_lab_curves(exp_path)
 
-    print("  -> Processing Sigmoid Curves...")
-    sigmoid_results = sigmoid_fitting_5p(curves, timestamps)
+    if main_cache_hit:
+        patch_missing_norm_variant(save_path, args.normalize_curves)
+    else:
+        print("  -> Processing Sigmoid Curves...")
+        sigmoid_results = sigmoid_fitting_5p(curves, timestamps)
+        save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
+                            normalize_curves=args.normalize_curves)
+        print(f"  -> X (Curves) shape:       {curves.shape}")
+        print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
+        print(f"  -> Mean RMSE Fit Error:    {np.nanmean(sigmoid_results[3]):.4f}")
 
-    if args.remove_low_amp:
-        curves, well_labels, sigmoid_results = filter_low_amplitude(curves, well_labels, sigmoid_results)
-
-    save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results,
-                        normalize_curves=args.normalize_curves)
-
-    print(f"  -> X (Curves) shape:       {curves.shape}")
-    print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
-    print(f"  -> Mean RMSE Fit Error:    {np.nanmean(sigmoid_results[3]):.4f}")
     print("  ✓ Experiment complete!\n")
+
+    if args.ori_curve_aligned and not aligned_cache_hit:
+        aligned_exp_path.mkdir(parents=True, exist_ok=True)
+        print(f"Processing TTP-aligned dataset: {aligned_exp_path}")
+        aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp = build_ttp_aligned_curves(
+            curves, timestamps, well_labels, preserve_cycles=args.preserve_cycles)
+
+        print("  -> Processing Sigmoid Curves (aligned)...")
+        aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
+
+        save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
+                            aligned_well_labels, aligned_sigmoid_results)
+
+        print(f"  -> max_ttp used:           {max_ttp}")
+        print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")
+        print(f"  -> well_labels (Targets):  {np.unique(aligned_well_labels)}")
+        print(f"  -> Mean RMSE Fit Error:    {np.nanmean(aligned_sigmoid_results[3]):.4f}")
+        print("  ✓ Aligned experiment complete!\n")
+    elif args.ori_curve_aligned:
+        print(f"Cache hit: {aligned_exp_path}")
+        print("  ✓ Aligned experiment complete!\n")
