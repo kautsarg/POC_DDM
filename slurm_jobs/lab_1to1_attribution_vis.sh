@@ -41,7 +41,7 @@ echo "Strategy: $STRATEGY -- model: $MODEL -- flat task_ids: $TASK_IDS"
 
 for TID in $TASK_IDS; do
     echo "=== [$STRATEGY] Processing combo flat-task_id=$TID ==="
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $TID --exp_folder "$EXP_FOLDER" --curve_type ori_curve --model_names $MODEL
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $TID --exp_folder "$EXP_FOLDER" --curve_type ori_curve # --model_names $MODEL
 done
 
 deactivate

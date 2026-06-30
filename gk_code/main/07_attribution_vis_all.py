@@ -116,8 +116,8 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             'cnn', 'bigru', 'transformer', 'lstm_ae_clf',
             'cnn_lf', 'bigru_lf', 'transformer_lf',
             'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual',
-            'cnn_gru_gate', 'cnn_gru_hadamard', 'cnn_gru_crossattn', 'cnn_gru_film',
-            'cnn_trans_gate', 'cnn_trans_hadamard', 'cnn_trans_crossattn', 'cnn_trans_film',
+            # 'cnn_gru_gate', 'cnn_gru_hadamard', 'cnn_gru_crossattn', 'cnn_gru_film',
+            # 'cnn_trans_gate', 'cnn_trans_hadamard', 'cnn_trans_crossattn', 'cnn_trans_film',
         ]
 
     for name in model_names:
