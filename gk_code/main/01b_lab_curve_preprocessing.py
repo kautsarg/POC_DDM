@@ -9,6 +9,7 @@ import joblib
 from pathlib import Path
 from joblib import Parallel, delayed
 
+import pywt
 import config
 import sigmoid_fitting as sp
 
@@ -184,17 +185,22 @@ def is_cache_hit(save_path):
     return existing_data is not None and "curves" in existing_data
 
 
-def patch_missing_norm_variant(save_path, normalize_curves):
-    """On a cache hit, add a missing 'ori_curves_norm' from the already-cached 'ori_curves'
-    instead of forcing a full re-run (which would re-read the CSV/Excel and re-fit sigmoids)."""
-    if not normalize_curves:
+def patch_missing_variants(save_path, normalize_curves, wavelet_sym8):
+    """On a cache hit, add missing curve variants from the already-cached 'ori_curves'
+    instead of forcing a full re-run (re-read CSV/Excel + re-fit sigmoids)."""
+    if not normalize_curves and not wavelet_sym8:
         return
     existing_data = joblib.load(save_path)
-    if "ori_curves_norm" in existing_data["curves"]:
-        return
-    existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
-    joblib.dump(existing_data, save_path, compress=3)
-    print(f"  -> Patched missing 'ori_curves_norm' into {save_path}")
+    patched = []
+    if normalize_curves and "ori_curves_norm" not in existing_data["curves"]:
+        existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
+        patched.append("ori_curves_norm")
+    if wavelet_sym8 and "ori_curves_wavelet_sym8" not in existing_data["curves"]:
+        existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
+        patched.append("ori_curves_wavelet_sym8")
+    if patched:
+        joblib.dump(existing_data, save_path, compress=3)
+        print(f"  -> Patched missing {', '.join(patched)} into {save_path}")
 
 
 def normalize_curves_minmax(curves):
@@ -203,6 +209,18 @@ def normalize_curves_minmax(curves):
     row_max = curves.max(axis=1, keepdims=True)
     denom = np.where(row_max - row_min == 0, 1, row_max - row_min)
     return (curves - row_min) / denom
+
+
+def wavelet_denoise_curves(curves, wavelet="sym8", level=5):
+    curves = np.asarray(curves, dtype=np.float64)
+    out = np.empty_like(curves)
+    for i, c in enumerate(curves):
+        coeffs = pywt.wavedec(c, wavelet, level=level)
+        sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+        thr = sigma * np.sqrt(2 * np.log(len(c)))
+        new_coeffs = [coeffs[0]] + [pywt.threshold(d, thr, mode="soft") for d in coeffs[1:]]
+        out[i] = pywt.waverec(new_coeffs, wavelet)[:len(c)]
+    return out
 
 
 def compute_ttp(curves, threshold_frac=0.1):
@@ -277,12 +295,14 @@ def build_ttp_aligned_curves(curves, timestamps, well_labels, preserve_cycles=No
     return baseline_corrected, aligned_timestamps, well_labels_kept, max_ttp
 
 
-def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False):
+def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False, wavelet_sym8=False):
     fitted_full, fitted_stretched, params, rmse = sigmoid_results
 
     curves_dict = {"ori_curves": curves}
     if normalize_curves:
         curves_dict["ori_curves_norm"] = normalize_curves_minmax(curves)
+    if wavelet_sym8:
+        curves_dict["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(curves)
 
     save_data = {
         "curves": curves_dict,
@@ -326,6 +346,9 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_curves", action="store_true",
                         help="Add an 'ori_curves_norm' variant: each curve independently min-max scaled to "
                              "[0,1]. Selectable downstream via --curve_type ori_curve_norm.")
+    parser.add_argument("--wavelet_sym8", action="store_true",
+                        help="Add an 'ori_curves_wavelet_sym8' variant: sym8 wavelet denoising with "
+                             "Donoho-Johnstone universal threshold. Selectable via --curve_type ori_curve_wavelet_sym8.")
     parser.add_argument("--ori_curve_aligned", action="store_true",
                         help="Also build a separate, self-contained TTP-aligned + baseline-corrected "
                              "dataset in a sibling '<name>_aligned' folder (its own curves/well_labels, "
@@ -355,7 +378,7 @@ if __name__ == "__main__":
         aligned_cache_hit = (not args.ori_curve_aligned) or (is_cache_hit(aligned_save_path) and not args.force_rerun)
 
         if main_cache_hit and aligned_cache_hit:
-            patch_missing_norm_variant(save_path, args.normalize_curves)
+            patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
             print(f"Cache hit: {exp_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
@@ -366,10 +389,11 @@ if __name__ == "__main__":
             args.exp_folder, strategy, label1, label2)
 
         if main_cache_hit:
-            patch_missing_norm_variant(save_path, args.normalize_curves)
+            patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
         else:
             save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
-                                normalize_curves=args.normalize_curves)
+                                normalize_curves=args.normalize_curves,
+                                wavelet_sym8=args.wavelet_sym8)
 
         print(f"  -> X (Curves) shape:       {curves.shape}")
         print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
@@ -415,7 +439,7 @@ if __name__ == "__main__":
     aligned_cache_hit = (not args.ori_curve_aligned) or (is_cache_hit(aligned_save_path) and not args.force_rerun)
 
     if main_cache_hit and aligned_cache_hit:
-        patch_missing_norm_variant(save_path, args.normalize_curves)
+        patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
         print(f"Cache hit: {exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)
@@ -425,7 +449,7 @@ if __name__ == "__main__":
     curves, timestamps, well_labels = load_lab_curves(exp_path)
 
     if main_cache_hit:
-        patch_missing_norm_variant(save_path, args.normalize_curves)
+        patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
     else:
         print("  -> Processing Sigmoid Curves...")
         sigmoid_results = sigmoid_fitting_5p(curves, timestamps)

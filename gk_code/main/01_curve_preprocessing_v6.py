@@ -9,6 +9,7 @@ from pathlib import Path
 from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
 
+import pywt
 import config
 
 # Add custom paths
@@ -310,11 +311,23 @@ def normalize_curves_minmax(curves):
     return (curves - row_min) / denom
 
 
+def wavelet_denoise_curves(curves, wavelet="sym8", level=5):
+    curves = np.asarray(curves, dtype=np.float64)
+    out = np.empty_like(curves)
+    for i, c in enumerate(curves):
+        coeffs = pywt.wavedec(c, wavelet, level=level)
+        sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+        thr = sigma * np.sqrt(2 * np.log(len(c)))
+        new_coeffs = [coeffs[0]] + [pywt.threshold(d, thr, mode="soft") for d in coeffs[1:]]
+        out[i] = pywt.waverec(new_coeffs, wavelet)[:len(c)]
+    return out
+
+
 def save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves,
                                      indices_dict, pixel_temp_dfs, baseline_value,
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
                                      window_size_ori, window_size_1stder, margin, max_significant_index,
-                                     compute_sigmoid_fits=False, normalize_curves=False):
+                                     compute_sigmoid_fits=False, normalize_curves=False, wavelet_sym8=False):
     """
     Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
     (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
@@ -336,6 +349,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
     }
     if normalize_curves:
         curves_dict["ori_curves_norm"] = normalize_curves_minmax(processed_curves[0])
+    if wavelet_sym8:
+        curves_dict["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(processed_curves[0])
 
     save_data = {
         "curves": curves_dict,
@@ -399,6 +414,9 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_curves", action="store_true",
                         help="Add an 'ori_curves_norm' variant: each curve independently min-max scaled to "
                              "[0,1]. Selectable downstream via --curve_type ori_curve_norm.")
+    parser.add_argument("--wavelet_sym8", action="store_true",
+                        help="Add an 'ori_curves_wavelet_sym8' variant: sym8 wavelet denoising with "
+                             "Donoho-Johnstone universal threshold. Selectable via --curve_type ori_curve_wavelet_sym8.")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -447,8 +465,9 @@ if __name__ == "__main__":
         if existing_data is not None and "curves" in existing_data:
             needs_avg_patch = not ("ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data)
             needs_norm_patch = args.normalize_curves and "ori_curves_norm" not in existing_data["curves"]
+            needs_wavelet_patch = args.wavelet_sym8 and "ori_curves_wavelet_sym8" not in existing_data["curves"]
 
-            if not needs_avg_patch and not needs_norm_patch:
+            if not needs_avg_patch and not needs_norm_patch and not needs_wavelet_patch:
                 print(f"Cache hit: {save_exp_path}")
                 print("  ✓ Experiment complete!\n")
                 sys.exit(0)
@@ -463,6 +482,9 @@ if __name__ == "__main__":
             if needs_norm_patch:
                 existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
                 patched_fields.append("ori_curves_norm")
+            if needs_wavelet_patch:
+                existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
+                patched_fields.append("ori_curves_wavelet_sym8")
 
             print(f"Cache hit: {save_exp_path} (patching missing {', '.join(patched_fields)})")
             joblib.dump(existing_data, save_path, compress=3)
@@ -602,7 +624,8 @@ if __name__ == "__main__":
                                     Y_well, X_time, all_exp_data, ori_curves_avg,
                                     config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index,
                                     compute_sigmoid_fits=args.compute_sigmoid_fits,
-                                    normalize_curves=args.normalize_curves)
+                                    normalize_curves=args.normalize_curves,
+                                    wavelet_sym8=args.wavelet_sym8)
     
     unique_wells = np.unique(Y_well)
 

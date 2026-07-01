@@ -67,6 +67,26 @@ import tensorflow as tf
 _EMB_DIM = 32  # shared branch output dimension
 
 
+def inception_smoothing_block(inputs, filters=8, kernel_sizes=(3, 7, 15, 31)):
+    """Multi-scale 1D CNN front-end for learned curve smoothing.
+
+    Applies parallel Conv1D branches with different kernel sizes (short→long temporal
+    context), concatenates, then compresses via a 1×1 bottleneck. Output shape:
+    (batch, T, filters) — same temporal length as input due to padding='same'.
+
+    Defined here (not model_utils.py) to avoid the circular import created by
+    model_utils_gated importing from model_utils.
+    """
+    branches = [
+        tf.keras.layers.Conv1D(filters, k, padding='same', activation='relu',
+                               name=f'inc_k{k}')(inputs)
+        for k in kernel_sizes
+    ]
+    merged = tf.keras.layers.Concatenate(name='inc_merge')(branches)
+    return tf.keras.layers.Conv1D(filters, 1, padding='same', activation='relu',
+                                  name='inc_bottleneck')(merged)
+
+
 # Custom layers instead of Lambda: a Lambda's saved bytecode is reconstructed without
 # the original module's globals, so `tf` is unbound and inference raises NameError the
 # moment the model is reloaded in a different process (caught by an actual inference
@@ -324,14 +344,15 @@ def _fuse_film(cnn_emb, other_emb, emb_dim=_EMB_DIM, pfx="fuse"):
 # GATE FUSION MODELS
 # ============================================================
 
-def create_cnn_gru_gate_model(input_size_curve, output_size):
+def create_cnn_gru_gate_model(input_size_curve, output_size, inception_smoothing=False):
     """
     CNN (SE+BN) + BiGRU (attention pooling), fused via 2-layer gate + LayerNorm.
     Merged width: 32.  Gate layer: 'fuse_gate'.
     """
     inp = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    gru_emb    = _gru_branch(inp, pfx="gru")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    gru_emb    = _gru_branch(x, pfx="gru")
     merged     = _fuse_gate(cnn_emb, gru_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_gru_gate")
@@ -342,14 +363,15 @@ def create_cnn_gru_gate_model(input_size_curve, output_size):
 
 def create_cnn_trans_gate_model(input_size_curve, output_size,
                                 head_size=32, num_heads=2, ff_dim=32,
-                                num_blocks=2, dropout=0.1):
+                                num_blocks=2, dropout=0.1, inception_smoothing=False):
     """
     CNN (SE+BN) + Transformer, fused via 2-layer gate + LayerNorm.
     Merged width: 32.  Gate layer: 'fuse_gate'.
     """
     inp        = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    trans_emb  = _trans_branch(inp, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    trans_emb  = _trans_branch(x, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
     merged     = _fuse_gate(cnn_emb, trans_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_trans_gate")
@@ -362,14 +384,15 @@ def create_cnn_trans_gate_model(input_size_curve, output_size,
 # HADAMARD FUSION MODELS
 # ============================================================
 
-def create_cnn_gru_hadamard_model(input_size_curve, output_size):
+def create_cnn_gru_hadamard_model(input_size_curve, output_size, inception_smoothing=False):
     """
     CNN (SE+BN) + BiGRU (attention pooling), fused via [cnn ‖ gru ‖ BN(cnn⊙gru)].
     Merged width: 96.
     """
     inp = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    gru_emb    = _gru_branch(inp, pfx="gru")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    gru_emb    = _gru_branch(x, pfx="gru")
     merged     = _fuse_hadamard(cnn_emb, gru_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_gru_hadamard")
@@ -380,14 +403,15 @@ def create_cnn_gru_hadamard_model(input_size_curve, output_size):
 
 def create_cnn_trans_hadamard_model(input_size_curve, output_size,
                                     head_size=32, num_heads=2, ff_dim=32,
-                                    num_blocks=2, dropout=0.1):
+                                    num_blocks=2, dropout=0.1, inception_smoothing=False):
     """
     CNN (SE+BN) + Transformer, fused via [cnn ‖ trans ‖ BN(cnn⊙trans)].
     Merged width: 96.
     """
     inp        = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    trans_emb  = _trans_branch(inp, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    trans_emb  = _trans_branch(x, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
     merged     = _fuse_hadamard(cnn_emb, trans_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_trans_hadamard")
@@ -400,7 +424,7 @@ def create_cnn_trans_hadamard_model(input_size_curve, output_size,
 # CO-ATTENTION (bidirectional cross-attention) FUSION MODELS
 # ============================================================
 
-def create_cnn_gru_crossattn_model(input_size_curve, output_size, num_heads=2):
+def create_cnn_gru_crossattn_model(input_size_curve, output_size, num_heads=2, inception_smoothing=False):
     """
     CNN (SE+BN) + BiGRU, fused via co-attention (bidirectional cross-attention).
       - BiGRU exposes full sequence as key/value for CNN to attend over.
@@ -409,8 +433,9 @@ def create_cnn_gru_crossattn_model(input_size_curve, output_size, num_heads=2):
     Merged width: 64.  Attention layers: 'fuse_mha1' (CNN→GRU), 'fuse_mha2' (GRU→CNN).
     """
     inp = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    cnn_seq, cnn_emb  = _cnn_branch(inp, pfx="cnn")
-    gru_seq, gru_emb  = _gru_branch(inp, return_seq=True, pfx="gru")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    cnn_seq, cnn_emb  = _cnn_branch(x, pfx="cnn")
+    gru_seq, gru_emb  = _gru_branch(x, return_seq=True, pfx="gru")
     merged = _fuse_coattn(cnn_seq, cnn_emb, gru_seq, gru_emb,
                           num_heads=num_heads, pfx="fuse")
     out   = _head(merged, output_size)
@@ -422,7 +447,7 @@ def create_cnn_gru_crossattn_model(input_size_curve, output_size, num_heads=2):
 
 def create_cnn_trans_crossattn_model(input_size_curve, output_size,
                                      head_size=32, num_heads=2, ff_dim=32,
-                                     num_blocks=2, dropout=0.1):
+                                     num_blocks=2, dropout=0.1, inception_smoothing=False):
     """
     CNN (SE+BN) + Transformer, fused via co-attention.
       - Transformer exposes its pre-pool sequence as key/value for CNN.
@@ -430,9 +455,10 @@ def create_cnn_trans_crossattn_model(input_size_curve, output_size,
     Merged width: 64.  Attention layers: 'fuse_mha1', 'fuse_mha2'.
     """
     inp = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    cnn_seq, cnn_emb     = _cnn_branch(inp, pfx="cnn")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    cnn_seq, cnn_emb     = _cnn_branch(x, pfx="cnn")
     trans_seq, trans_emb = _trans_branch(
-        inp, head_size, num_heads, ff_dim, num_blocks, dropout, return_seq=True, pfx="trans")
+        x, head_size, num_heads, ff_dim, num_blocks, dropout, return_seq=True, pfx="trans")
     merged = _fuse_coattn(cnn_seq, cnn_emb, trans_seq, trans_emb,
                           num_heads=num_heads, pfx="fuse")
     out   = _head(merged, output_size)
@@ -446,15 +472,16 @@ def create_cnn_trans_crossattn_model(input_size_curve, output_size,
 # FiLM FUSION MODELS
 # ============================================================
 
-def create_cnn_gru_film_model(input_size_curve, output_size):
+def create_cnn_gru_film_model(input_size_curve, output_size, inception_smoothing=False):
     """
     CNN (SE+BN) + BiGRU (attention pooling), fused via two-stage FiLM.
     CNN drives both conditioning stages.  Merged width: 64.
     FiLM params: 'fuse_gamma1/2', 'fuse_beta1/2'.
     """
     inp = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    gru_emb    = _gru_branch(inp, pfx="gru")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    gru_emb    = _gru_branch(x, pfx="gru")
     merged     = _fuse_film(cnn_emb, gru_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_gru_film")
@@ -465,14 +492,15 @@ def create_cnn_gru_film_model(input_size_curve, output_size):
 
 def create_cnn_trans_film_model(input_size_curve, output_size,
                                 head_size=32, num_heads=2, ff_dim=32,
-                                num_blocks=2, dropout=0.1):
+                                num_blocks=2, dropout=0.1, inception_smoothing=False):
     """
     CNN (SE+BN) + Transformer, fused via two-stage FiLM.
     Merged width: 64.  FiLM params: 'fuse_gamma1/2', 'fuse_beta1/2'.
     """
     inp        = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    _, cnn_emb = _cnn_branch(inp, pfx="cnn")
-    trans_emb  = _trans_branch(inp, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
+    x = inception_smoothing_block(inp) if inception_smoothing else inp
+    _, cnn_emb = _cnn_branch(x, pfx="cnn")
+    trans_emb  = _trans_branch(x, head_size, num_heads, ff_dim, num_blocks, dropout, pfx="trans")
     merged     = _fuse_film(cnn_emb, trans_emb, pfx="fuse")
     out        = _head(merged, output_size)
     model      = tf.keras.Model(inp, out, name="cnn_trans_film")

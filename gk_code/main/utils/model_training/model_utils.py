@@ -129,13 +129,14 @@ def _build_cnn_gru_dual_branches(input_curve):
     return z
 
 
-def create_cnn_gru_dual_model(input_size_curve, output_size):
+def create_cnn_gru_dual_model(input_size_curve, output_size, inception_smoothing=False):
     """
     Dual-branch architecture combining CNN (Local) and BiGRU (Global)
     using only the raw curve as input.
     """
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    z = _build_cnn_gru_dual_branches(input_curve)
+    x = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    z = _build_cnn_gru_dual_branches(x)
     outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
 
     # Compile
@@ -267,21 +268,22 @@ def create_cnn_gru_dual_attn_recon_model(k_plus_1, input_size_curve, output_size
     return model
 
 
-def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1, inception_smoothing=False):
     """
-    Dual-branch architecture combining CNN (Local) and Transformer (Global) 
+    Dual-branch architecture combining CNN (Local) and Transformer (Global)
     using only the raw curve as input.
     """
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    
+    x = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+
     # 1. Local Feature Branch (CNN)
-    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(x)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
     c = tf.keras.layers.Flatten()(c)
     cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
-    
+
     # 2. Global Feature Branch (Transformer)
-    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(input_curve)
+    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(x)
     t = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(t)
     
     new_seq_len = t.shape[1] 
@@ -317,10 +319,11 @@ def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=3
 # ====================================================================
 # LATE FUSION NEURAL NETWORKS (Multi-Input)
 # ====================================================================
-def create_cnn_lf_model(input_size_curve, input_size_features, output_size):
+def create_cnn_lf_model(input_size_curve, input_size_features, output_size, inception_smoothing=False):
     # 1. Raw Curve Branch
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    x = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    c = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    x = tf.keras.layers.Conv1D(16, 5, activation='relu')(c)
     x = tf.keras.layers.Conv1D(8, 3, activation='relu')(x)
     x = tf.keras.layers.Flatten()(x)
     curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
@@ -339,9 +342,10 @@ def create_cnn_lf_model(input_size_curve, input_size_features, output_size):
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def create_lstm_lf_model(input_size_curve, input_size_features, output_size):
+def create_lstm_lf_model(input_size_curve, input_size_features, output_size, inception_smoothing=False):
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(input_curve)
+    c = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(c)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
     x = tf.keras.layers.Dropout(0.2)(x)
@@ -360,10 +364,11 @@ def create_lstm_lf_model(input_size_curve, input_size_features, output_size):
     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def create_gru_lf_model(input_size_curve, input_size_features, output_size):
+def create_gru_lf_model(input_size_curve, input_size_features, output_size, inception_smoothing=False):
     # 1. Raw Curve Branch (GRU)
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(input_curve)
+    c = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(c)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
     x = tf.keras.layers.Dropout(0.2)(x)
@@ -385,10 +390,10 @@ def create_gru_lf_model(input_size_curve, input_size_features, output_size):
     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def create_transformer_lf_model(input_size_curve, input_size_features, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+def create_transformer_lf_model(input_size_curve, input_size_features, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1, inception_smoothing=False):
     input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    
-    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(input_curve)
+    c = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(c)
     x = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(x)
     
     new_seq_len = x.shape[1] 
@@ -429,9 +434,10 @@ class KerasModelWrapper(KerasClassifier):
     pass
 
 # 1. 1D CNN
-def create_cnn_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3): 
+def create_cnn_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3, inception_smoothing=False):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.Conv1D(16, kernel_size_1, activation='relu')(inputs)
+    inp = model_utils_gated.inception_smoothing_block(inputs) if inception_smoothing else inputs
+    x = tf.keras.layers.Conv1D(16, kernel_size_1, activation='relu')(inp)
     x = tf.keras.layers.Conv1D(8, kernel_size_2, activation='relu')(x)
     x = tf.keras.layers.Flatten()(x)
     x = tf.keras.layers.Dense(output_size, activation='softmax')(x)
@@ -443,10 +449,10 @@ def create_cnn_model(input_size, output_size, kernel_size_1=5, kernel_size_2=3):
     return model
 
 # 2. LSTM (Bidirectional + Gradient Clipping)
-def create_lstm_model(input_size, output_size):
+def create_lstm_model(input_size, output_size, inception_smoothing=False):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    # Wrapped in Bidirectional
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(inputs)
+    inp = model_utils_gated.inception_smoothing_block(inputs) if inception_smoothing else inputs
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(inp)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
     x = tf.keras.layers.Dropout(0.2)(x)
@@ -497,9 +503,10 @@ def load_lstm_ae_clf_model(pretrained_encoder_path, pretrained_scaler_path, inpu
     return model, scaler
 
 # 3. GRU (Bidirectional + Gradient Clipping)
-def create_gru_model(input_size, output_size):
+def create_gru_model(input_size, output_size, inception_smoothing=False):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inputs)
+    inp = model_utils_gated.inception_smoothing_block(inputs) if inception_smoothing else inputs
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inp)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
     x = tf.keras.layers.Dropout(0.2)(x)
@@ -513,9 +520,10 @@ def create_gru_model(input_size, output_size):
     return model
 
 # 4. Simple RNN (Bidirectional + Gradient Clipping)
-def create_rnn_model(input_size, output_size):
+def create_rnn_model(input_size, output_size, inception_smoothing=False):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(32, return_sequences=True))(inputs)
+    inp = model_utils_gated.inception_smoothing_block(inputs) if inception_smoothing else inputs
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(32, return_sequences=True))(inp)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(16))(x)
     x = tf.keras.layers.Dropout(0.2)(x)
@@ -529,12 +537,13 @@ def create_rnn_model(input_size, output_size):
     return model
 
 # 5. Transformer
-def create_transformer_model(input_size, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+def create_transformer_model(input_size, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1, inception_smoothing=False):
     inputs = tf.keras.layers.Input(shape=(input_size, 1))
-    
+    inp = model_utils_gated.inception_smoothing_block(inputs) if inception_smoothing else inputs
+
     # --- THE DOWNSAMPLING STEM ---
     # Shrinks sequence from 600 -> ~150 while projecting to 32 features
-    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(inputs)
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(inp)
     x = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(x)
     
     # Calculate the new sequence length mathematically for the Positional Embedding
@@ -603,6 +612,8 @@ _XAI_SAVE_NAME = {
     'lstm_ae_clf': 'lstm_ae_clf',
     **{name: name for name in model_utils_gated._ALL_FACTORIES},
 }
+# _inc entries so 07_attribution_vis_all can locate inception-smoothed model files.
+_XAI_SAVE_NAME.update({f"{m}_inc": f"{v}_inc" for m, v in list(_XAI_SAVE_NAME.items())})
 
 
 def evaluate_outlier_filters(
@@ -612,6 +623,7 @@ def evaluate_outlier_filters(
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=8,
+    inception_smoothing=False,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -684,6 +696,19 @@ def evaluate_outlier_filters(
         "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
         "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     }
+
+    # When inception_smoothing=True, remap result cache keys and labels to _inc variants
+    # so results from inception and baseline runs coexist without overwriting each other.
+    # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape — both excluded.
+    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"}
+    if inception_smoothing:
+        for _m in list(model_key_map.keys()):
+            if _m not in _NO_INC_INCEPTION:
+                _pk, _prk, _ck = model_key_map[_m]
+                model_key_map[_m] = (_pk.rstrip("_") + "_inc_", _prk.rstrip("_") + "_inc_", _ck.rstrip("_") + "_inc_")
+                if _m in model_print_map:
+                    model_print_map[_m] = f"{model_print_map[_m]} (Inc)"
+    _xai_sfx = "_inc" if inception_smoothing else ""
 
     _SPATIAL_RECON_MODELS = ("cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon")
 
@@ -910,16 +935,16 @@ def evaluate_outlier_filters(
                 if m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
                     tf.keras.backend.clear_session()
                     if m == "cnn_lf":
-                        model = create_cnn_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        model = create_cnn_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 1000
                     elif m == "lstm_lf":
-                        model = create_lstm_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        model = create_lstm_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
                     elif m == "trans_lf":
-                        model = create_transformer_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        model = create_transformer_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
                     elif m == "gru_lf":
-                        model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes)
+                        model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
 
                     if _val_split_ok:
@@ -931,9 +956,9 @@ def evaluate_outlier_filters(
                         model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
 
                     prob = model.predict([X_test_curve, X_test_man], verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -947,16 +972,16 @@ def evaluate_outlier_filters(
                     tf.keras.backend.clear_session()
 
                     if m == "cnn_gru_dual":
-                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
                     elif m == "cnn_trans_dual":
-                        model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes)
+                        model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
                     elif m == "cnn_gru_dual_cosine_recon":
                         # Same architecture as cnn_gru_dual -- only the input curve differs
                         # (X_train_curve here is the cosine-similarity-reconstructed curve,
                         # not the raw per-pixel one; see reconstruct_curves_cosine above).
-                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
                         epochs = 500
 
                     # Notice we only pass X_train_curve here, not a list of inputs!
@@ -969,9 +994,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1015,7 +1040,7 @@ def evaluate_outlier_filters(
                     # instead of named functions (model_utils_gated.py).
                     tf.keras.backend.clear_session()
 
-                    model = model_utils_gated._ALL_FACTORIES[m](X_train_curve.shape[1], n_classes)
+                    model = model_utils_gated._ALL_FACTORIES[m](X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
                     epochs = 500
 
                     if _val_split_ok:
@@ -1027,9 +1052,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1082,9 +1107,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve_scaled, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve_scaled, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1096,11 +1121,11 @@ def evaluate_outlier_filters(
 
                 else:
                     # Standard 1D Models (scikeras/sklearn)
-                    if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "lstm": clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "gru": clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "rnn": clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "transformer": clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "lstm": clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "gru": clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "rnn": clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif m == "transformer": clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
                     elif m == "rf": clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
                     elif m == "knn": clf = KNeighborsClassifier(n_neighbors=10)
                     elif m == "ffi": clf = LogisticRegression(max_iter=1000)
@@ -1115,9 +1140,9 @@ def evaluate_outlier_filters(
                         clf.fit(X_train_curve, y_train)
 
                     if _do_xai_save and m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
                         clf.model_.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
 
                     preds.append(clf.predict(X_test_curve))
                     probs.append(clf.predict_proba(X_test_curve))

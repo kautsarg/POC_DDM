@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_splits", type=int, default=1)
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--training_mode", type=str, nargs="+", choices=["native", "reference"], default=["native"], help="Which training mode(s) to run: 'native' (train on this dataset's own curves) and/or 'reference' (train on the original ori_curves, using this dataset's outlier filters)")
-    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve variant(s) to train on and save XAI models for (e.g. 'ori_curve' 'ori_curve_avg')")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"], help="Which curve variant(s) to train on and save XAI models for (e.g. 'ori_curve' 'ori_curve_avg')")
     parser.add_argument("--fast_mode", action="store_true",
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
@@ -73,6 +73,10 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
+    parser.add_argument("--inception_smoothing", action="store_true",
+                        help="Prepend a learned multi-scale inception smoothing block to all models "
+                             "(parallel Conv1D with kernel sizes 3/7/15/31 + 1x1 bottleneck). "
+                             "Input remains ori_curves; smoothing is learned end-to-end.")
 
     args = parser.parse_args()
 
@@ -211,18 +215,18 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn", "gru", "transformer", 
-            "cnn_lf", "gru_lf", "trans_lf", 
-            "cnn_gru_dual", "cnn_trans_dual",
+            "knn", "cnn", 
+            # "cnn_lf", 
+            "gru", "cnn_gru_dual", 
+            #  "gru_lf", 
+            "transformer", "cnn_trans_dual",
+            #  "trans_lf", 
 
-            # Spatial-reconstruction variants inspired by 03b_gnn_spatial_training.py's GNN:
-            # reconstruct one denoised curve per pixel from itself + its k nearest neighbours
-            # (within the same well), then classify with the *same* cnn_gru_dual architecture.
-            # Skipped automatically (per-dataset) if this dataset's metadata lacks
+            # Spatial-reconstruction variants inspired GNN:
             # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
             "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
 
-            # From outlier unsupervised training
+            # # From pretained outlier unsupervised training encoder
             # "lstm_ae_clf",
 
             # # New gated dual-branch fusion models
@@ -242,8 +246,7 @@ if __name__ == "__main__":
             ref_save_dir = model_interp_dir if name == "ori_curves" else None
             ref_save_ct = xai_curve_type if ref_save_dir else "ori_curve"
 
-            # Reference always trains on dataset[0] (ori_curves), regardless of which
-            # curve_type `name` is — so the pretrained encoder must match dataset[0], not `name`.
+            # Reference always trains on dataset[0] (ori_curves), outlier filters are calculated from other curves
             ref_enc_path, ref_scaler_path = _lstm_ae_paths(dataset_name[0])
 
             res_ref = evaluate_outlier_filters(
@@ -266,6 +269,7 @@ if __name__ == "__main__":
                 coords=coords_full,
                 well_ids=well_ids_full,
                 k_neighbors=args.k_neighbors,
+                inception_smoothing=args.inception_smoothing,
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -292,8 +296,6 @@ if __name__ == "__main__":
                 cached_native = all_ml_results[clean_title].get("Native", {})
                 checkpoint_native = make_checkpoint_fn(all_ml_results, results_file_path, clean_title, "Native")
 
-                # Native trains on this dataset's own curves (curves_2d, i.e. dataset
-                # variant `name`) — the pretrained encoder must match `name`.
                 native_enc_path, native_scaler_path = _lstm_ae_paths(name)
 
                 res_native = evaluate_outlier_filters(
@@ -316,6 +318,7 @@ if __name__ == "__main__":
                     coords=coords_full,
                     well_ids=well_ids_full,
                     k_neighbors=args.k_neighbors,
+                    inception_smoothing=args.inception_smoothing,
                 )
 
             all_ml_results[clean_title]["Native"] = res_native
@@ -331,11 +334,6 @@ if __name__ == "__main__":
                 save_prefix=prefix_native,
             )
 
-        # --- XAI METADATA: folded into the results dict (no separate model_interpretation
-        # joblib — see joblib_redundancy.md Change 4). 07_attribution_vis_all now reads
-        # top_10_features from classification_performances_*.joblib's per-dataset_name dict.
-        # The same KFS is used across all filters (MI computed on unfiltered train split),
-        # so we store the same feature list for every filter key.
         if "top_10_features" not in all_ml_results[clean_title]:
             all_ml_results[clean_title]["top_10_features"] = {}
         for f in outlier_filters:

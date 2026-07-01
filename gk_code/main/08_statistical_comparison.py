@@ -913,7 +913,7 @@ if __name__ == "__main__":
                         help="Must match the --n_splits used in the corresponding 03 training run.")
     parser.add_argument("--mode", default="Native",
                         help="Training mode: 'Native' or 'Reference'.")
-    parser.add_argument("--curve_type", nargs="+", default=["ori_curve", "ori_curve_avg"],
+    parser.add_argument("--curve_type", nargs="+", default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"],
                         help="Curve types to include (used for curve_types comparison and as fixed value for others).")
     parser.add_argument("--compare", nargs="+",
                         default=["models", "outlier_filters", "curve_types"],

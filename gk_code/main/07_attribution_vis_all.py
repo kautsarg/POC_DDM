@@ -108,7 +108,7 @@ def prepare_dataset(exp_path, filter_key, curve_type="ori_curve"):
         "top_10_features": top_10_features
     }
 
-def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_curve", model_names=None):
+def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_curve", model_names=None, inception_smoothing=False):
     """Loads models and strictly checks shape to prevent ValueError crashes."""
     models = {}
     if model_names is None:
@@ -119,6 +119,8 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             # 'cnn_gru_gate', 'cnn_gru_hadamard', 'cnn_gru_crossattn', 'cnn_gru_film',
             # 'cnn_trans_gate', 'cnn_trans_hadamard', 'cnn_trans_crossattn', 'cnn_trans_film',
         ]
+        if inception_smoothing:
+            model_names = [n + '_inc' for n in model_names]
 
     for name in model_names:
         model_path = model_dir / f"{name}_{filter_key}_{curve_type}_model.keras"
@@ -291,12 +293,13 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
 
     for model_name, model in models.items():
         print(f"    [+] Computing Gradients: {model_name}")
-        if model_name == 'lstm_ae_clf' and x_tf_curve_scaled is not None:
+        _base_name = model_name.removesuffix('_inc')
+        if _base_name == 'lstm_ae_clf' and x_tf_curve_scaled is not None:
             x_tf_curve = x_tf_curve_scaled
         else:
             x_tf_curve = x_tf_curve_raw
-        is_lf = model_name.endswith('_lf')
-        is_dual = model_name.endswith('_dual')
+        is_lf = _base_name.endswith('_lf')
+        is_dual = _base_name.endswith('_dual')
         
         recurrent_layer = find_bidirectional_recurrent_layer(model)
         transformer_layer = find_transformer_block_output(model)
@@ -1388,7 +1391,7 @@ def merge_and_save_scores(scores_df, profiles_df, curve_meta, path,
           f"profiles ({len(profiles_df)} rows) -> {path}")
 
 
-def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=10, model_names=None):
+def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filter_key=None, force_rerun=False, curve_type="ori_curve", task_id=None, top_n=10, model_names=None, inception_smoothing=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     set_global_determinism(0)
 
@@ -1421,7 +1424,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         print(f"  -> Data Loaded | X: {data_dict['X_full'].shape}, y: {data_dict['y_full'].shape}")
 
         print("  -> Loading Pre-Trained Models...")
-        models = load_saved_models(model_dir, str(filter_key), data_dict['X_full'].shape[1], curve_type=curve_type, model_names=model_names)
+        models = load_saved_models(model_dir, str(filter_key), data_dict['X_full'].shape[1], curve_type=curve_type, model_names=model_names, inception_smoothing=inception_smoothing)
         if not models:
             print(f"  [-] Skipping visualisations for {exp_path.name}: No compatible saved models found.")
             continue
@@ -1539,13 +1542,15 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
-    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     parser.add_argument("--top_n", type=int, default=10, help="Unique-feature latent rows to show per branch in the latent->feature mapping plot (default: 10)")
     parser.add_argument("--model_names", type=str, nargs="+", default=None, help="Restrict to these saved models only (default: all available)")
+    parser.add_argument("--inception_smoothing", action="store_true",
+                        help="Load _inc-suffixed model files saved by evaluate_outlier_filters with --inception_smoothing.")
 
     args = parser.parse_args()
     exp_folder = Path(args.exp_folder)
 
     print(exp_folder)
     for curve_type in args.curve_type:
-        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, force_rerun=args.force_rerun, curve_type=curve_type, task_id=args.task_id, top_n=args.top_n, model_names=args.model_names)
+        run_interpretation_pipeline(exp_folder_path=exp_folder, filter_key=args.filter_key, force_rerun=args.force_rerun, curve_type=curve_type, task_id=args.task_id, top_n=args.top_n, model_names=args.model_names, inception_smoothing=args.inception_smoothing)

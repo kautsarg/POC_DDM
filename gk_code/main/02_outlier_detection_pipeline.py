@@ -219,6 +219,10 @@ def _build_variant_lists(data):
         dataset_name.append("ori_curves_norm")
         dataset.append(data["curves"]["ori_curves_norm"])
 
+    if "ori_curves_wavelet_sym8" in data["curves"]:
+        dataset_name.append("ori_curves_wavelet_sym8")
+        dataset.append(data["curves"]["ori_curves_wavelet_sym8"])
+
     for k, v in data["sigmoid_curves"].items():
         dataset_name.append(f"{k}_fitted_full")
         dataset.append(v["fitted_full"])
@@ -280,6 +284,25 @@ def _load_or_build_state(exp_path, unified_save_path, force_rerun):
             for n, a in new_vars:
                 pipeline_state["dataset_name"].append(n)
                 pipeline_state["dataset"].append(a)
+            # Outlier-filter columns are computed per curve variant. Strip them from all existing
+            # kinetic_features entries so the outlier pipeline reruns for every variant — the
+            # new variant would otherwise be skipped because the checks use kinetic_features[0]
+            # as the cache sentinel, and that entry already has all outlier columns from the
+            # previous run.
+            _OUTLIER_PREFIXES = (
+                "knn_top_", "cnn_ae_", "lstm_ae_",
+                "msc_label_", "amf_label_", "mean_std_label_",
+                "spatial_knn_label_", "spatial_grid_label_",
+            )
+            kf_list = pipeline_state.get("kinetic_features")
+            if kf_list:
+                stripped = []
+                for kf in kf_list:
+                    drop_cols = [c for c in kf.columns if any(c.startswith(p) for p in _OUTLIER_PREFIXES)]
+                    stripped.append(kf.drop(columns=drop_cols) if drop_cols else kf)
+                pipeline_state["kinetic_features"] = stripped
+                print(f"  -> Cleared outlier-filter columns from existing kinetic_features "
+                      f"so all variants get (re)computed in the outlier pipeline.")
 
     return pipeline_state
 

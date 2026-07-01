@@ -60,6 +60,7 @@ CURVE_TYPE_ALIASES = {
     "ori_curve": "ori_curves",
     "ori_curve_avg": "ori_curves_avg",
     "ori_curve_norm": "ori_curves_norm",
+    "ori_curve_wavelet_sym8": "ori_curves_wavelet_sym8",
 }
 
 def resolve_curve_dataset_idx(curve_type, dataset_name_list):
@@ -298,6 +299,14 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
     "cnn_gru_dual_attn_recon":   ("y_preds_AC_cnn_gru_dual_attn_recon_",   "y_probs_AC_cnn_gru_dual_attn_recon_",   "classes_AC_cnn_gru_dual_attn_recon_"),
 }
+# _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
+# so results coexist with the baseline in the same joblib without overwriting each other.
+# rf/knn/ffi/gnn_* are non-Keras; cnn_gru_dual_attn_recon has incompatible input shape.
+_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
+MODEL_KEY_MAP.update({
+    f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
+    for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
+})
 
 MODEL_PRINT_MAP = {
     "cnn": "CNN (ACA)", "lstm": "LSTM (ACA)", "gru": "GRU (ACA)",
@@ -313,6 +322,11 @@ MODEL_PRINT_MAP = {
     "gnn_gat": "GNN (GAT)", "gnn_gcn": "GNN (GCN)",
     "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
 }
+# _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
+MODEL_PRINT_MAP.update({
+    f"{m}_inc": f"{label} (Inc)"
+    for m, label in list(MODEL_PRINT_MAP.items()) if m not in _NO_INC
+})
 
 FILTER_PRINT_MAP = {
     None:                             "None (Baseline)",

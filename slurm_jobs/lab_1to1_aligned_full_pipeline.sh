@@ -35,6 +35,14 @@ ids = [i for i, c in enumerate(combos) if c[0] == '$STRATEGY']
 print(' '.join(map(str, ids)))
 " | tail -n 1)
 
+# TASK_IDS=$(python3 -c "
+# import importlib
+# mod = importlib.import_module('01b_lab_curve_preprocessing')
+# combos = mod.discover_one_to_one_combos('$EXP_FOLDER')
+# ids = [i for i, c in enumerate(combos) if c[0] == '$STRATEGY']
+# print(' '.join(map(str, ids[::-1])))
+# " | tail -n 1)
+
 echo "Strategy: $STRATEGY -- flat task_ids: $TASK_IDS"
 
 for TID in $TASK_IDS; do
