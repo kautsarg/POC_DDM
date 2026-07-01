@@ -25,7 +25,7 @@ export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
 # Map PBS_ARRAY_INDEX -> dataset subfolder under POC_DDM_datasets (sorted, discovered at runtime)
-DATASETS_ROOT="/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets"
+DATASETS_ROOT="/rds/general/user/gk225/home/refactor/POC_DDM_datasets"
 mapfile -t EXP_FOLDERS < <(find "$DATASETS_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 
 EXP_FOLDER="${DATASETS_ROOT}/${EXP_FOLDERS[$((PBS_ARRAY_INDEX-1))]}"

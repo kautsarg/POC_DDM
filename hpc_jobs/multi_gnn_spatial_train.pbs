@@ -29,7 +29,7 @@ cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
 REAL_TASK_ID=$((PBS_ARRAY_INDEX))
 
-EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi_nc_subtract
+EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi_nc_subtract
 
 # Trains both gnn_gat and gnn_gcn (03b_gnn_spatial_training.py runs both variants in
 # one process -- see GNN_MODEL_NAMES) on this dataset's Native curves, across the same

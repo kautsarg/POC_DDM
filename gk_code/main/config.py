@@ -22,7 +22,7 @@ from cycler import cycler
 # the visualisation output root.
 
 LAB_ROOT_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets"
-HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets"
+HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/refactor/POC_DDM_datasets"
 LOCAL_ROOT_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data"
 
 # Pick whichever root actually exists on this machine, in priority order.

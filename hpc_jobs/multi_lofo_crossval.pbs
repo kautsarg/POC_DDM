@@ -22,10 +22,12 @@ source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
 export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
-if [ "$PBS_ARRAY_INDEX" -eq 0 ]; then
-    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0
-else
-    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/POC_DDM_multi/ --task_id 0
-fi
+# if [ "$PBS_ARRAY_INDEX" -eq 0 ]; then
+#     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0
+# else
+#     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi/ --task_id 0
+# fi
+
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0
 
 deactivate

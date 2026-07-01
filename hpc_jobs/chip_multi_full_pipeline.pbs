@@ -1,15 +1,15 @@
 #!/bin/bash
-#PBS -N multi_full_pipeline
+#PBS -N chip_multi_full_pipeline
 #PBS -l walltime=72:00:00
 #PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
-#PBS -J 2-4
-#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
-#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline/
+#PBS -J 0-9
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/chip_multi_full_pipeline/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/chip_multi_full_pipeline/
 #PBS -k eo
 
 set -e
 
-mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_full_pipeline
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/chip_multi_full_pipeline
 
 # Load modules
 module load Python/3.12.3-GCCcore-13.3.0
@@ -22,8 +22,8 @@ export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
-REAL_TASK_ID=$((8-PBS_ARRAY_INDEX))
-EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi
+REAL_TASK_ID=$((PBS_ARRAY_INDEX))
+EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_chip_init
 
 for nc_subtract in 0 1; do
     if [ "$nc_subtract" -eq 1 ]; then
@@ -37,7 +37,7 @@ for nc_subtract in 0 1; do
     echo "################################################################################"
     echo $TRAIN_FOLDER
     echo "################################################################################"
-    
+
     # python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1
     python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun

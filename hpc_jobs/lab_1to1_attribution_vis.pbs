@@ -23,7 +23,7 @@ export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/
 
 cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
-EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/LAB_OneToOne
+EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/LAB_OneToOne
 
 STRATEGIES=(1_area 2_range)
 MODELS=(bigru cnn_gru_dual)
@@ -45,7 +45,7 @@ echo "Strategy: $STRATEGY -- model: $MODEL -- flat task_ids: $TASK_IDS"
 
 for TID in $TASK_IDS; do
     echo "=== [$STRATEGY] Processing combo flat-task_id=$TID ==="
-    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $TID --exp_folder "$EXP_FOLDER" --curve_type ori_curve --model_names $MODEL --force_rerun
+    python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $TID --exp_folder "$EXP_FOLDER" --curve_type ori_curve # --model_names $MODEL
 done
 
 deactivate

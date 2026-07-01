@@ -25,19 +25,14 @@ cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
 REAL_TASK_ID=$((PBS_ARRAY_INDEX))
 
-EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/LAB_DDM_paper
+EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/LAB_DDM_paper
 
 TRAIN_FOLDER="$EXP_FOLDER"
 
-# LAB_DDM_paper has no spatial grid and no ori_curves_avg variant (see
-# 01b_lab_curve_preprocessing.py) -- pass --curve_type ori_curve explicitly to 03/05/06/07,
-# since their default ["ori_curve", "ori_curve_avg"] makes 05/06/07 hard-fail
-# (config.resolve_curve_dataset_idx raises ValueError) the moment "ori_curves_avg" isn't found.
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --force_rerun
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --curve_type ori_curve --force_rerun
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --curve_type ori_curve --force_rerun
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --curve_type ori_curve --force_rerun
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --curve_type ori_curve --force_rerun
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER"
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER"
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --curve_type ori_curve --n_splits 5
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --curve_type ori_curve --n_splits 5
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER"
 
 deactivate

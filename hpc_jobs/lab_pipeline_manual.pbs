@@ -25,7 +25,7 @@ cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 
 REAL_TASK_ID=$((PBS_ARRAY_INDEX))
 
-EXP_FOLDER=/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_datasets/LAB_DDM_paper
+EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/LAB_DDM_paper
 
 TRAIN_FOLDER="$EXP_FOLDER"
 
