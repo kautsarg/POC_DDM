@@ -210,11 +210,11 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn", 
+            "knn", "cnn",  "cnn_inc", 
             # "cnn_lf", 
-            "gru", "cnn_gru_dual", 
+            "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
             #  "gru_lf", 
-            "transformer", "cnn_trans_dual",
+            "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
             #  "trans_lf", 
 
             # Spatial-reconstruction variants inspired GNN:
