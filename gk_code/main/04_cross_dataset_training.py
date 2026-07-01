@@ -157,8 +157,6 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
-    parser.add_argument("--inception_smoothing", action="store_true",
-                        help="Prepend a learned multi-scale inception smoothing block to all Keras models.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -264,7 +262,6 @@ if __name__ == "__main__":
                 coords=combined["coords"],
                 well_ids=combined["well_ids"],
                 k_neighbors=args.k_neighbors,
-                inception_smoothing=args.inception_smoothing,
             )
 
             lofo_results[fold_label] = res

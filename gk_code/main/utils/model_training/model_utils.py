@@ -623,7 +623,6 @@ def evaluate_outlier_filters(
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=8,
-    inception_smoothing=False,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -697,18 +696,15 @@ def evaluate_outlier_filters(
         "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     }
 
-    # When inception_smoothing=True, remap result cache keys and labels to _inc variants
-    # so results from inception and baseline runs coexist without overwriting each other.
+    # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
     # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape — both excluded.
     _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"}
-    if inception_smoothing:
-        for _m in list(model_key_map.keys()):
-            if _m not in _NO_INC_INCEPTION:
-                _pk, _prk, _ck = model_key_map[_m]
-                model_key_map[_m] = (_pk.rstrip("_") + "_inc_", _prk.rstrip("_") + "_inc_", _ck.rstrip("_") + "_inc_")
-                if _m in model_print_map:
-                    model_print_map[_m] = f"{model_print_map[_m]} (Inc)"
-    _xai_sfx = "_inc" if inception_smoothing else ""
+    for _m in list(model_key_map.keys()):
+        if _m not in _NO_INC_INCEPTION:
+            _pk, _prk, _ck = model_key_map[_m]
+            model_key_map[f"{_m}_inc"] = (_pk.rstrip("_") + "_inc_", _prk.rstrip("_") + "_inc_", _ck.rstrip("_") + "_inc_")
+            if _m in model_print_map:
+                model_print_map[f"{_m}_inc"] = f"{model_print_map[_m]} (Inc)"
 
     _SPATIAL_RECON_MODELS = ("cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon")
 
@@ -797,7 +793,8 @@ def evaluate_outlier_filters(
         res_entry["y_true_count"] = len(y_true)
 
         # --- Spatial neighbour reconstruction setup ---
-        _wanted_recon = [m for m in models if m in _SPATIAL_RECON_MODELS]
+        _wanted_recon = [m for m in models if m.removesuffix('_inc') in _SPATIAL_RECON_MODELS]
+        _wanted_recon_bases = {m.removesuffix('_inc') for m in _wanted_recon}
         _recon_unavailable = bool(_wanted_recon) and (coords_m is None or well_ids_m is None)
         if _recon_unavailable:
             print(f"     [SKIP] {', '.join(_wanted_recon)}: no coords/well_ids provided "
@@ -812,10 +809,12 @@ def evaluate_outlier_filters(
 
         for m in models:
             if m not in model_key_map: continue
-            if "lf" in m and X_manual is None:
+            _base_m = m.removesuffix('_inc')
+            _model_inc = m.endswith('_inc')
+            if "lf" in _base_m and X_manual is None:
                 print(f"     [Error] Model {m} requires KFS features, but KFS was not provided.")
                 continue
-            if m == "lstm_ae_clf":
+            if _base_m == "lstm_ae_clf":
                 _has_files = (pretrained_encoder_path and pretrained_scaler_path
                              and os.path.exists(pretrained_encoder_path)
                              and os.path.exists(pretrained_scaler_path))
@@ -836,7 +835,7 @@ def evaluate_outlier_filters(
                           f"this filter's curves have {X_AC.shape[1]}. Skipping.")
                     continue
 
-            if m in _SPATIAL_RECON_MODELS and _recon_unavailable:
+            if _base_m in _SPATIAL_RECON_MODELS and _recon_unavailable:
                 continue  # already warned above (no coords/well_ids)
 
             preds_key, probs_key, classes_key = model_key_map[m]
@@ -859,12 +858,12 @@ def evaluate_outlier_filters(
             # Lazily build the (N, k+1, T) neighbour stack the first time it's actually
             # needed for training (not on a cache hit, see above) -- see the comment where
             # _recon_models_left is defined for why this isn't done eagerly.
-            if m in _SPATIAL_RECON_MODELS and X_AC_cosine_recon is None and X_AC_stack is None:
+            if _base_m in _SPATIAL_RECON_MODELS and X_AC_cosine_recon is None and X_AC_stack is None:
                 neighbor_stack = build_neighbor_curve_stack(
                     X_AC.astype(np.float32, copy=False), coords_m, well_ids_m, k=k_neighbors)
-                if "cnn_gru_dual_cosine_recon" in _wanted_recon:
+                if "cnn_gru_dual_cosine_recon" in _wanted_recon_bases:
                     X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
-                if "cnn_gru_dual_attn_recon" in _wanted_recon:
+                if "cnn_gru_dual_attn_recon" in _wanted_recon_bases:
                     X_AC_stack = neighbor_stack
                 else:
                     del neighbor_stack
@@ -875,11 +874,11 @@ def evaluate_outlier_filters(
             _lstm_ae_failed = False
 
             for fold_idx, (train_idx, test_idx) in enumerate(splits):
-                if m == 'ffi':
+                if _base_m == 'ffi':
                     X_train_curve, X_test_curve = X_FFI[train_idx], X_FFI[test_idx]
-                elif m == 'cnn_gru_dual_cosine_recon':
+                elif _base_m == 'cnn_gru_dual_cosine_recon':
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
-                elif m == 'cnn_gru_dual_attn_recon':
+                elif _base_m == 'cnn_gru_dual_attn_recon':
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -903,7 +902,7 @@ def evaluate_outlier_filters(
                 # (not stratified) and could miss whole classes depending on row ordering.
                 # Falls back to no validation split if a class is too sparse in this fold.
                 _val_split_ok = False
-                if m not in ("rf", "knn", "ffi"):
+                if _base_m not in ("rf", "knn", "ffi"):
                     try:
                         _tr_sub, _val_sub = train_test_split(
                             np.arange(len(y_train)), test_size=0.1, stratify=y_train, random_state=0)
@@ -932,19 +931,19 @@ def evaluate_outlier_filters(
                 ] if _val_split_ok else []
 
                 # Train Standard vs. Late Fusion models
-                if m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
+                if _base_m in ["cnn_lf", "lstm_lf", "trans_lf", "gru_lf"]:
                     tf.keras.backend.clear_session()
-                    if m == "cnn_lf":
-                        model = create_cnn_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    if _base_m == "cnn_lf":
+                        model = create_cnn_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 1000
-                    elif m == "lstm_lf":
-                        model = create_lstm_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    elif _base_m == "lstm_lf":
+                        model = create_lstm_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
-                    elif m == "trans_lf":
-                        model = create_transformer_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    elif _base_m == "trans_lf":
+                        model = create_transformer_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
-                    elif m == "gru_lf":
-                        model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    elif _base_m == "gru_lf":
+                        model = create_gru_lf_model(X_train_curve.shape[1], X_train_man.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
 
                     if _val_split_ok:
@@ -956,9 +955,9 @@ def evaluate_outlier_filters(
                         model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict([X_test_curve, X_test_man], verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -968,20 +967,20 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif m in ["cnn_gru_dual", "cnn_trans_dual", "cnn_gru_dual_cosine_recon"]:
+                elif _base_m in ["cnn_gru_dual", "cnn_trans_dual", "cnn_gru_dual_cosine_recon"]:
                     tf.keras.backend.clear_session()
 
-                    if m == "cnn_gru_dual":
-                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    if _base_m == "cnn_gru_dual":
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
-                    elif m == "cnn_trans_dual":
-                        model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    elif _base_m == "cnn_trans_dual":
+                        model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
-                    elif m == "cnn_gru_dual_cosine_recon":
+                    elif _base_m == "cnn_gru_dual_cosine_recon":
                         # Same architecture as cnn_gru_dual -- only the input curve differs
                         # (X_train_curve here is the cosine-similarity-reconstructed curve,
                         # not the raw per-pixel one; see reconstruct_curves_cosine above).
-                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
 
                     # Notice we only pass X_train_curve here, not a list of inputs!
@@ -994,9 +993,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1006,7 +1005,7 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif m == "cnn_gru_dual_attn_recon":
+                elif _base_m == "cnn_gru_dual_attn_recon":
                     # X_train_curve/X_test_curve here are (n, k+1, T) neighbour stacks, not
                     # (n, T) curves -- create_cnn_gru_dual_attn_recon_model takes that stack
                     # directly and learns the reconstruction + classifier jointly. No XAI
@@ -1033,14 +1032,14 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif m in model_utils_gated._ALL_FACTORIES:
+                elif _base_m in model_utils_gated._ALL_FACTORIES:
                     # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
                     # single-curve-input, no-manual-features shape as cnn_gru_dual /
                     # cnn_trans_dual above, just dispatched through the factory dict
                     # instead of named functions (model_utils_gated.py).
                     tf.keras.backend.clear_session()
 
-                    model = model_utils_gated._ALL_FACTORIES[m](X_train_curve.shape[1], n_classes, inception_smoothing=inception_smoothing)
+                    model = model_utils_gated._ALL_FACTORIES[_base_m](X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
                     epochs = 500
 
                     if _val_split_ok:
@@ -1052,9 +1051,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1064,7 +1063,7 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif m == "lstm_ae_clf":
+                elif _base_m == "lstm_ae_clf":
                     tf.keras.backend.clear_session()
 
                     # Shape compatibility already verified once before the fold loop
@@ -1107,9 +1106,9 @@ def evaluate_outlier_filters(
                         model.fit(X_train_curve_scaled, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         model.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve_scaled, verbose=0)
                     pred = np.argmax(prob, axis=1)
@@ -1121,14 +1120,14 @@ def evaluate_outlier_filters(
 
                 else:
                     # Standard 1D Models (scikeras/sklearn)
-                    if m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "lstm": clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "gru": clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "rnn": clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "transformer": clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=inception_smoothing, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
-                    elif m == "rf": clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
-                    elif m == "knn": clf = KNeighborsClassifier(n_neighbors=10)
-                    elif m == "ffi": clf = LogisticRegression(max_iter=1000)
+                    if _base_m == "cnn": clf = KerasModelWrapper(model=create_cnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=_model_inc, epochs=1000, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif _base_m == "lstm": clf = KerasModelWrapper(model=create_lstm_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=_model_inc, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif _base_m == "gru": clf = KerasModelWrapper(model=create_gru_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=_model_inc, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif _base_m == "rnn": clf = KerasModelWrapper(model=create_rnn_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=_model_inc, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif _base_m == "transformer": clf = KerasModelWrapper(model=create_transformer_model, model__input_size=X_train_curve.shape[1], model__output_size=n_classes, model__inception_smoothing=_model_inc, epochs=500, batch_size=512, shuffle=True, verbose=False, random_state=0)
+                    elif _base_m == "rf": clf = RandomForestClassifier(n_estimators=100, random_state=0, n_jobs=-1)
+                    elif _base_m == "knn": clf = KNeighborsClassifier(n_neighbors=10)
+                    elif _base_m == "ffi": clf = LogisticRegression(max_iter=1000)
                     else:
                         raise ValueError(f"Model '{m}' is not properly defined in the training loop.")
 
@@ -1139,16 +1138,16 @@ def evaluate_outlier_filters(
                     else:
                         clf.fit(X_train_curve, y_train)
 
-                    if _do_xai_save and m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m] + _xai_sfx}_{f}_{save_model_curve_type}_model.keras"
+                    if _do_xai_save and _base_m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         clf.model_.save(_xai_path)
-                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m] + _xai_sfx} -> {_xai_path}")
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     preds.append(clf.predict(X_test_curve))
                     probs.append(clf.predict_proba(X_test_curve))
                     classes_list.append(clf.classes_)
 
-                    if m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
+                    if _base_m in ["cnn", "lstm", "gru", "rnn", "transformer"]:
                         tf.keras.backend.clear_session()
 
             if _lstm_ae_failed:

@@ -73,11 +73,6 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
-    parser.add_argument("--inception_smoothing", action="store_true",
-                        help="Prepend a learned multi-scale inception smoothing block to all models "
-                             "(parallel Conv1D with kernel sizes 3/7/15/31 + 1x1 bottleneck). "
-                             "Input remains ori_curves; smoothing is learned end-to-end.")
-
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -269,7 +264,6 @@ if __name__ == "__main__":
                 coords=coords_full,
                 well_ids=well_ids_full,
                 k_neighbors=args.k_neighbors,
-                inception_smoothing=args.inception_smoothing,
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -318,7 +312,6 @@ if __name__ == "__main__":
                     coords=coords_full,
                     well_ids=well_ids_full,
                     k_neighbors=args.k_neighbors,
-                    inception_smoothing=args.inception_smoothing,
                 )
 
             all_ml_results[clean_title]["Native"] = res_native
