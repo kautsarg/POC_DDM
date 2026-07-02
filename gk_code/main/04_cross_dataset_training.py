@@ -173,7 +173,8 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    for curve_type in args.curve_type:
+    # for curve_type in args.curve_type:
+    for curve_type in reversed(args.curve_type):
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
         combined = combine_group(exp_paths, group_name, curve_type=curve_type)
@@ -202,18 +203,21 @@ if __name__ == "__main__":
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
-        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+        # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+        outlier_filters = [None]
         models = [
-            "cnn", "gru", "transformer", "cnn_gru_dual", "cnn_trans_dual",
+            "knn", "cnn",  "cnn_inc", 
+            # "cnn_lf", 
+            "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
+            #  "gru_lf", 
+            "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
+            #  "trans_lf", 
 
-            # Spatial-reconstruction variants inspired by 03b_gnn_spatial_training.py's GNN:
-            # reconstruct one denoised curve per pixel from itself + its k nearest neighbours
-            # (within the same well), then classify with the *same* cnn_gru_dual architecture.
-            # Skipped automatically (per-dataset) if this dataset's metadata lacks
+            # Spatial-reconstruction variants inspired GNN:
             # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
             "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
 
-            # From outlier unsupervised training
+            # # From pretained outlier unsupervised training encoder
             # "lstm_ae_clf",
 
             # # New gated dual-branch fusion models
@@ -230,6 +234,7 @@ if __name__ == "__main__":
         lofo_splits = build_lofo_splits(combined["dataset_id"])
         total_folds = len(lofo_splits)
         for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
+        # for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(lofo_splits.items()))):
             progress_pct = ((fold_idx + 1) / total_folds) * 100
             print(f"\n{'='*75}")
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")

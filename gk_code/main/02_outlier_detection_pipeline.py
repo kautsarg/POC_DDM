@@ -644,18 +644,18 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
         """Return configs whose label column is absent from dataset[0]'s features."""
         return [pct for pct in knn_filter_config if label_fn(pct) not in kinetic_features[0].columns]
 
-    # --- CNN AutoEncoder (Global) ---
-    missing_cnn_glb = _missing_ae(lambda p: f"cnn_ae_glb_ds{downsample_factor}_label_{p}")
-    if missing_cnn_glb:
-        extracted_dfs = run_cnn_autoencoder_pipeline(
-            ae_names, ae_dataset, Y_well, ref_curves,
-            str(exp_path / "ae_outlier"), missing_cnn_glb,
-            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
-        for i, name in enumerate(ae_names):
-            features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
-        flush()
-    else:
-        print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
+    # --- CNN AutoEncoder (Global) --- [DISABLED]
+    # missing_cnn_glb = _missing_ae(lambda p: f"cnn_ae_glb_ds{downsample_factor}_label_{p}")
+    # if missing_cnn_glb:
+    #     extracted_dfs = run_cnn_autoencoder_pipeline(
+    #         ae_names, ae_dataset, Y_well, ref_curves,
+    #         str(exp_path / "ae_outlier"), missing_cnn_glb,
+    #         save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
+    #     for i, name in enumerate(ae_names):
+    #         features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
+    #     flush()
+    # else:
+    #     print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
     # --- LSTM AutoEncoder (Global) ---
     missing_lstm_glb = _missing_ae(lambda p: f"lstm_ae_glb_ds{downsample_factor}_label_{p}")
@@ -674,18 +674,18 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     else:
         print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
 
-    # --- KNN Filter ---
-    missing_knn = [pct for pct in knn_filter_config
-                   if f"knn_top_{pct}" not in kinetic_features[0].columns]
-    if missing_knn:
-        extracted_dfs = run_knnfilter_pipeline(
-            dataset_name, dataset, Y_well, ref_curves,
-            str(exp_path / "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
-        for i in range(len(dataset_name)):
-            features_to_concat[i].append(extracted_dfs[i])
-        flush()
-    else:
-        print("  -> [SKIP] KNN Filter: Already calculated.")
+    # --- KNN Filter --- [DISABLED]
+    # missing_knn = [pct for pct in knn_filter_config
+    #                if f"knn_top_{pct}" not in kinetic_features[0].columns]
+    # if missing_knn:
+    #     extracted_dfs = run_knnfilter_pipeline(
+    #         dataset_name, dataset, Y_well, ref_curves,
+    #         str(exp_path / "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
+    #     for i in range(len(dataset_name)):
+    #         features_to_concat[i].append(extracted_dfs[i])
+    #     flush()
+    # else:
+    #     print("  -> [SKIP] KNN Filter: Already calculated.")
 
     # --- Spatial Consistency Filter (KNN neighbors) ---
     missing_spatial_knn = [pct for pct in spatial_knn_configs
@@ -719,53 +719,53 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     else:
         print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
 
-    # --- MSC Filter ---
-    msc_to_run, msc_skip = [], []
-    for exp_label, p_val, feats in msc_configs:
-        (msc_to_run if f"msc_label_{exp_label}" not in kinetic_features[0].columns
-         else msc_skip).append((exp_label, p_val, feats))
-    for exp_label, _, __ in msc_skip:
-        print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
-    if msc_to_run:
-        for exp_label, p_val, feats in msc_to_run:
-            extracted_dfs = run_msc_pipeline(
-                exp_label, p_val, ref_curves, str(exp_path / "msc_outlier"),
-                dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
-            for i in range(len(dataset_name)):
-                features_to_concat[i].append(extracted_dfs[i])
-        flush()
+    # --- MSC Filter --- [DISABLED]
+    # msc_to_run, msc_skip = [], []
+    # for exp_label, p_val, feats in msc_configs:
+    #     (msc_to_run if f"msc_label_{exp_label}" not in kinetic_features[0].columns
+    #      else msc_skip).append((exp_label, p_val, feats))
+    # for exp_label, _, __ in msc_skip:
+    #     print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
+    # if msc_to_run:
+    #     for exp_label, p_val, feats in msc_to_run:
+    #         extracted_dfs = run_msc_pipeline(
+    #             exp_label, p_val, ref_curves, str(exp_path / "msc_outlier"),
+    #             dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
+    #         for i in range(len(dataset_name)):
+    #             features_to_concat[i].append(extracted_dfs[i])
+    #     flush()
 
-    # --- AMF Filter ---
-    amf_to_run, amf_skip = [], []
-    for exp_label, feats in amf_configs:
-        (amf_to_run if f"amf_label_{exp_label}" not in kinetic_features[0].columns
-         else amf_skip).append((exp_label, feats))
-    for exp_label, _ in amf_skip:
-        print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
-    if amf_to_run:
-        for exp_label, feats in amf_to_run:
-            extracted_dfs = run_amf_pipeline(
-                exp_label, feats, ref_curves, str(exp_path / "amf_outlier"),
-                dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
-            for i in range(len(dataset_name)):
-                features_to_concat[i].append(extracted_dfs[i])
-        flush()
+    # --- AMF Filter --- [DISABLED]
+    # amf_to_run, amf_skip = [], []
+    # for exp_label, feats in amf_configs:
+    #     (amf_to_run if f"amf_label_{exp_label}" not in kinetic_features[0].columns
+    #      else amf_skip).append((exp_label, feats))
+    # for exp_label, _ in amf_skip:
+    #     print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
+    # if amf_to_run:
+    #     for exp_label, feats in amf_to_run:
+    #         extracted_dfs = run_amf_pipeline(
+    #             exp_label, feats, ref_curves, str(exp_path / "amf_outlier"),
+    #             dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
+    #         for i in range(len(dataset_name)):
+    #             features_to_concat[i].append(extracted_dfs[i])
+    #     flush()
 
-    # --- Mean/Std Filter ---
-    mean_std_to_run, mean_std_skip = [], []
-    for exp_label, num_std in mean_std_configs:
-        (mean_std_to_run if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns
-         else mean_std_skip).append((exp_label, num_std))
-    for exp_label, _ in mean_std_skip:
-        print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
-    if mean_std_to_run:
-        for exp_label, num_std in mean_std_to_run:
-            extracted_dfs = run_meanstd_pipeline(
-                exp_label, num_std, ref_curves, str(exp_path / "meanstd_outlier"),
-                dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
-            for i in range(len(dataset_name)):
-                features_to_concat[i].append(extracted_dfs[i])
-        flush()
+    # --- Mean/Std Filter --- [DISABLED]
+    # mean_std_to_run, mean_std_skip = [], []
+    # for exp_label, num_std in mean_std_configs:
+    #     (mean_std_to_run if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns
+    #      else mean_std_skip).append((exp_label, num_std))
+    # for exp_label, _ in mean_std_skip:
+    #     print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
+    # if mean_std_to_run:
+    #     for exp_label, num_std in mean_std_to_run:
+    #         extracted_dfs = run_meanstd_pipeline(
+    #             exp_label, num_std, ref_curves, str(exp_path / "meanstd_outlier"),
+    #             dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
+    #         for i in range(len(dataset_name)):
+    #             features_to_concat[i].append(extracted_dfs[i])
+    #     flush()
 
     # Safety flush for anything not yet checkpointed.
     flush()

@@ -1248,6 +1248,11 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('CNN+GRU Dual (Cosine Recon)', 'y_preds_AC_cnn_gru_dual_cosine_recon_'))
         if 'y_preds_AC_cnn_gru_dual_attn_recon_' in sample_res:
             method_info.append(('CNN+GRU Dual (Attn Recon)', 'y_preds_AC_cnn_gru_dual_attn_recon_'))
+        # Dynamically add _inc variants for any inception-smoothed models present in results.
+        for _name, _key in list(method_info):
+            _inc_key = _key.rstrip("_") + "_inc_"
+            if _inc_key in sample_res:
+                method_info.append((f"{_name} (Inc)", _inc_key))
 
     if not method_info:
         print(f"  [Warning] No model data found in results dict to plot for {dataset_name}.")
