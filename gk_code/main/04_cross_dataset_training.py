@@ -65,7 +65,7 @@ def load_curve_data(exp_path, curve_type):
 
     return {
         "curves": data["dataset"][idx],
-        "features_df": data["kinetic_features"][idx].reset_index(drop=True),
+        "features_df": data["kinetic_features"][idx].loc[:, ~data["kinetic_features"][idx].columns.duplicated()].reset_index(drop=True),
         "Y_well_raw": Y_well_raw,
         "Y_mapped": Y_mapped,
         "timestamps": np.asarray(data["timestamps"], dtype=float),
@@ -203,8 +203,8 @@ if __name__ == "__main__":
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
-        # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
-        outlier_filters = [None]
+        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+        # outlier_filters = [None]
         models = [
             "knn", "cnn",  "cnn_inc", 
             # "cnn_lf", 

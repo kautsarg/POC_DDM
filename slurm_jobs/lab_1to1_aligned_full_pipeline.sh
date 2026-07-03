@@ -8,7 +8,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-2
+#SBATCH --array=0,2
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -71,9 +71,11 @@ print(all_names.index(aligned_name))
 
     echo "    -> aligned folder task_id=$ALIGNED_TID"
 
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER" --filters
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $ALIGNED_TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
 done
 
 deactivate

@@ -591,10 +591,13 @@ def _generate_tsne_3d(dataset_name, important_feature_combinations, kinetic_feat
                      tsne_buffers)
 
 
+ALL_FILTERS = frozenset({"lstm_ae", "spatial_knn", "spatial_grid"})
+
+
 def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
                             linear_feature_combinations, important_feature_combinations,
                             ae_configs, knn_filter_config, spatial_knn_configs, spatial_grid_configs,
-                            downsample_factor, save_plot_flag):
+                            downsample_factor, save_plot_flag, filters=ALL_FILTERS):
     """Run all outlier detection sub-pipelines, skipping columns already computed."""
     print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
 
@@ -620,8 +623,9 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     def flush():
         _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_save_path)
 
-    # AE methods only run on original (non-fitted) curve variants.
-    ae_names = [n for n in dataset_name if n in ('ori_curves', 'ori_curves_avg')]
+    # AE methods run on all standard curve variants (raw, avg, wavelet).
+    ae_names = [n for n in dataset_name
+                if n in ('ori_curves', 'ori_curves_avg', 'ori_curves_wavelet_sym8')]
     ae_dataset = [dataset[list(dataset_name).index(n)] for n in ae_names]
     ae_idx = [list(dataset_name).index(n) for n in ae_names]
 
@@ -658,21 +662,24 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     #     print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
     # --- LSTM AutoEncoder (Global) ---
-    missing_lstm_glb = _missing_ae(lambda p: f"lstm_ae_glb_ds{downsample_factor}_label_{p}")
-    if missing_lstm_glb:
-        # save_encoder_dir: the global (per_well=False) encoder is also saved standalone
-        # here, reusable later as a pretrained backbone for model_utils.py's "lstm_ae_clf"
-        # classifier (see 03_main_training.py) instead of training a fresh LSTM from scratch.
-        extracted_dfs = run_lstm_autoencoder_pipeline(
-            ae_names, ae_dataset, Y_well, ref_curves,
-            str(exp_path / "ae_per_well_outlier"), missing_lstm_glb,
-            save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False,
-            save_encoder_dir=str(exp_path / "pretrained_encoders"))
-        for i, name in enumerate(ae_names):
-            features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
-        flush()
+    if "lstm_ae" not in filters:
+        print("  -> [DISABLED] LSTM AutoEncoder (Global): not in --filters.")
     else:
-        print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
+        missing_lstm_glb = _missing_ae(lambda p: f"lstm_ae_glb_ds{downsample_factor}_label_{p}")
+        if missing_lstm_glb:
+            # save_encoder_dir: the global (per_well=False) encoder is also saved standalone
+            # here, reusable later as a pretrained backbone for model_utils.py's "lstm_ae_clf"
+            # classifier (see 03_main_training.py) instead of training a fresh LSTM from scratch.
+            extracted_dfs = run_lstm_autoencoder_pipeline(
+                ae_names, ae_dataset, Y_well, ref_curves,
+                str(exp_path / "ae_per_well_outlier"), missing_lstm_glb,
+                save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False,
+                save_encoder_dir=str(exp_path / "pretrained_encoders"))
+            for i, name in enumerate(ae_names):
+                features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
+            flush()
+        else:
+            print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
 
     # --- KNN Filter --- [DISABLED]
     # missing_knn = [pct for pct in knn_filter_config
@@ -688,36 +695,42 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     #     print("  -> [SKIP] KNN Filter: Already calculated.")
 
     # --- Spatial Consistency Filter (KNN neighbors) ---
-    missing_spatial_knn = [pct for pct in spatial_knn_configs
-                           if f"spatial_knn_label_{pct}" not in kinetic_features[0].columns]
-    if not has_spatial_info:
-        print("  -> [SKIP] Spatial Consistency Filter (KNN): No pixel coordinates available.")
-    elif missing_spatial_knn:
-        extracted_dfs = run_spatial_consistency_knn_pipeline(
-            dataset_name, dataset, Y_well, ref_curves, metadata_df,
-            str(exp_path / "spatial_knn_outlier"), missing_spatial_knn,
-            k_neighbors=config.SPATIAL_CONSISTENCY_KNN_K, save_plot=save_plot_flag)
-        for i in range(len(dataset_name)):
-            features_to_concat[i].append(extracted_dfs[i])
-        flush()
+    if "spatial_knn" not in filters:
+        print("  -> [DISABLED] Spatial Consistency Filter (KNN): not in --filters.")
     else:
-        print("  -> [SKIP] Spatial Consistency Filter (KNN): Already calculated.")
+        missing_spatial_knn = [pct for pct in spatial_knn_configs
+                               if f"spatial_knn_label_{pct}" not in kinetic_features[0].columns]
+        if not has_spatial_info:
+            print("  -> [SKIP] Spatial Consistency Filter (KNN): No pixel coordinates available.")
+        elif missing_spatial_knn:
+            extracted_dfs = run_spatial_consistency_knn_pipeline(
+                dataset_name, dataset, Y_well, ref_curves, metadata_df,
+                str(exp_path / "spatial_knn_outlier"), missing_spatial_knn,
+                k_neighbors=config.SPATIAL_CONSISTENCY_KNN_K, save_plot=save_plot_flag)
+            for i in range(len(dataset_name)):
+                features_to_concat[i].append(extracted_dfs[i])
+            flush()
+        else:
+            print("  -> [SKIP] Spatial Consistency Filter (KNN): Already calculated.")
 
     # --- Spatial Consistency Filter (Grid neighbors) ---
-    missing_spatial_grid = [pct for pct in spatial_grid_configs
-                            if f"spatial_grid_label_{pct}" not in kinetic_features[0].columns]
-    if not has_spatial_info:
-        print("  -> [SKIP] Spatial Consistency Filter (Grid): No pixel coordinates available.")
-    elif missing_spatial_grid:
-        extracted_dfs = run_spatial_consistency_grid_pipeline(
-            dataset_name, dataset, Y_well, ref_curves, metadata_df,
-            str(exp_path / "spatial_grid_outlier"), missing_spatial_grid,
-            window=config.SPATIAL_CONSISTENCY_GRID_WINDOW, save_plot=save_plot_flag)
-        for i in range(len(dataset_name)):
-            features_to_concat[i].append(extracted_dfs[i])
-        flush()
+    if "spatial_grid" not in filters:
+        print("  -> [DISABLED] Spatial Consistency Filter (Grid): not in --filters.")
     else:
-        print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
+        missing_spatial_grid = [pct for pct in spatial_grid_configs
+                                if f"spatial_grid_label_{pct}" not in kinetic_features[0].columns]
+        if not has_spatial_info:
+            print("  -> [SKIP] Spatial Consistency Filter (Grid): No pixel coordinates available.")
+        elif missing_spatial_grid:
+            extracted_dfs = run_spatial_consistency_grid_pipeline(
+                dataset_name, dataset, Y_well, ref_curves, metadata_df,
+                str(exp_path / "spatial_grid_outlier"), missing_spatial_grid,
+                window=config.SPATIAL_CONSISTENCY_GRID_WINDOW, save_plot=save_plot_flag)
+            for i in range(len(dataset_name)):
+                features_to_concat[i].append(extracted_dfs[i])
+            flush()
+        else:
+            print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
 
     # --- MSC Filter --- [DISABLED]
     # msc_to_run, msc_skip = [], []
@@ -775,7 +788,7 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
 # MASTER PIPELINE
 # ====================================================================
 
-def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False):
+def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=ALL_FILTERS):
     """End-to-end outlier detection pipeline for a single experiment folder."""
     exp_path = Path(exp_path)
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
@@ -823,6 +836,7 @@ def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False):
         spatial_grid_configs=["elbow", 90, 95],
         downsample_factor=config.AE_DOWNSAMPLE_FACTOR,
         save_plot_flag=save_plot_flag,
+        filters=filters,
     )
 
     print(f"\nExperiment {exp_path.name} finished gracefully!")
@@ -845,7 +859,13 @@ if __name__ == "__main__":
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
                              "won't be bit-exact. Only affects this script.")
-    
+    parser.add_argument("--filters", nargs="*",
+                        choices=sorted(ALL_FILTERS),
+                        default=sorted(ALL_FILTERS),
+                        help="Which outlier filters to run. Default: all "
+                             f"({', '.join(sorted(ALL_FILTERS))}). "
+                             "Pass specific names to run only those, or bare --filters for none.")
+
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -866,4 +886,5 @@ if __name__ == "__main__":
     saved_viz = getattr(config, "SAVED_VIZ", [])
     save_plot_flag = bool(saved_viz) and any(s in str(exp_path) for s in saved_viz)
 
-    run_pipeline(exp_path, force_rerun=args.force_rerun, save_plot_flag=save_plot_flag)
+    run_pipeline(exp_path, force_rerun=args.force_rerun, save_plot_flag=save_plot_flag,
+                 filters=set(args.filters))

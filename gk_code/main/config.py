@@ -709,6 +709,18 @@ LABEL_MAPPINGS = {
 		8: 'NC-Conc-01',
 		9: 'NC-Conc-02',
 	},
+    'D20260624_E00_C00_F4500KHz_U_UTI_Trial_01_neg_test': {
+		0: 'Negative-Test',
+		1: 'Negative-Test',
+		2: 'RealTarget-2',
+		3: 'NC-RealTarget-2',
+		4: 'Negative-Test',
+		5: 'Negative-Test',
+		6: 'Negative-Test',
+		7: 'Negative-Test',
+		8: 'RealTarget',
+		9: 'NC-RealTarget',
+	},
 }
 
 def get_label_mappings(exp_path):

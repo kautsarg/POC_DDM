@@ -379,6 +379,8 @@ if __name__ == "__main__":
 
         if main_cache_hit and aligned_cache_hit:
             patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
+            if args.ori_curve_aligned:
+                patch_missing_variants(aligned_save_path, normalize_curves=True, wavelet_sym8=False)
             print(f"Cache hit: {exp_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
@@ -410,7 +412,8 @@ if __name__ == "__main__":
             aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
 
             save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
-                                aligned_well_labels, aligned_sigmoid_results)
+                                aligned_well_labels, aligned_sigmoid_results,
+                                normalize_curves=True)
 
             print(f"  -> max_ttp used:           {max_ttp}")
             print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")
@@ -419,6 +422,7 @@ if __name__ == "__main__":
             print("  ✓ Aligned experiment complete!\n")
         elif args.ori_curve_aligned:
             print(f"Cache hit: {aligned_exp_path}")
+            patch_missing_variants(aligned_save_path, normalize_curves=True, wavelet_sym8=False)
             print("  ✓ Aligned experiment complete!\n")
 
         sys.exit(0)
@@ -440,6 +444,8 @@ if __name__ == "__main__":
 
     if main_cache_hit and aligned_cache_hit:
         patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
+        if args.ori_curve_aligned:
+            patch_missing_variants(aligned_save_path, normalize_curves=True, wavelet_sym8=False)
         print(f"Cache hit: {exp_path}")
         print("  ✓ Experiment complete!\n")
         sys.exit(0)
@@ -471,7 +477,8 @@ if __name__ == "__main__":
         aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
 
         save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
-                            aligned_well_labels, aligned_sigmoid_results)
+                            aligned_well_labels, aligned_sigmoid_results,
+                            normalize_curves=True)
 
         print(f"  -> max_ttp used:           {max_ttp}")
         print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")
@@ -480,4 +487,5 @@ if __name__ == "__main__":
         print("  ✓ Aligned experiment complete!\n")
     elif args.ori_curve_aligned:
         print(f"Cache hit: {aligned_exp_path}")
+        patch_missing_variants(aligned_save_path, normalize_curves=True, wavelet_sym8=False)
         print("  ✓ Aligned experiment complete!\n")

@@ -45,7 +45,10 @@ def filter_datasets(dataset_name, dataset, kinetic_features):
 
 def load_or_init_results(results_file_path):
     if os.path.exists(results_file_path):
-        return joblib.load(results_file_path)
+        try:
+            return joblib.load(results_file_path)
+        except Exception as e:
+            print(f"  -> [WARNING] Results file corrupt ({e}), starting fresh: {results_file_path}")
     return {}
 
 def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key):
@@ -210,16 +213,16 @@ if __name__ == "__main__":
 
         # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
         models = [
-            "knn", "cnn",  "cnn_inc", 
-            # "cnn_lf", 
-            "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
-            #  "gru_lf", 
-            "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
-            #  "trans_lf", 
+            "knn", "cnn",  # "cnn_inc", 
+            "cnn_lf", 
+            "gru", "cnn_gru_dual", # "cnn_gru_dual_inc",
+             "gru_lf", 
+            "transformer", "cnn_trans_dual", # "cnn_trans_dual_inc",
+             "trans_lf", 
 
             # Spatial-reconstruction variants inspired GNN:
             # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
-            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+            # "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
 
             # # From pretained outlier unsupervised training encoder
             # "lstm_ae_clf",
