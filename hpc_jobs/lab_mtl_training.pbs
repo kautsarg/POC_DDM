@@ -26,27 +26,27 @@ cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
 REAL_TASK_ID=$((PBS_ARRAY_INDEX))
 
 EXP_FOLDER=/rds/general/user/gk225/home/refactor/POC_DDM_datasets/LAB_DDM_paper
+TRAIN_FOLDER="$EXP_FOLDER"
 
-# MTL training only — results are merged into the existing classification_performances*.joblib
-# so standard models do not need to be re-run.
-# Uses --n_splits 5 to match the standard training configuration.
+# MTL training only — results merged into the existing classification_performances*.joblib;
+# standard models do not need to be re-run. Uses --n_splits 5 to match standard training.
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py \
     --task_id $REAL_TASK_ID \
-    --exp_folder "$EXP_FOLDER" \
+    --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
     --mtl
 
-# Report (loads the same joblib — auto-detects MTL keys, appends regression section)
+# Report: loads the same joblib, auto-detects MTL keys, appends regression tab.
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py \
     --task_id $REAL_TASK_ID \
-    --exp_folder "$EXP_FOLDER" \
+    --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5
 
-# XAI attribution for MTL models (dual saliency: classification + regression)
+# XAI: dual saliency (classification + regression) for MTL models.
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/07_attribution_vis_all.py \
     --task_id $REAL_TASK_ID \
-    --exp_folder "$EXP_FOLDER"
+    --exp_folder "$TRAIN_FOLDER"
 
 deactivate

@@ -1513,9 +1513,14 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
             continue
 
         tsne_path = dataset_vis_dir / f"01_TSNE_{name_suffix}.png"
+        _mtl_est = [m for m in models if 'mtl' in m]
         saliency_paths = {m: dataset_vis_dir / f"02_SALIENCY_{m}_{name_suffix}.png" for m in models}
         mapping_paths  = {m: dataset_vis_dir / f"03_LATENT_MAPPING_{m}_{name_suffix}.png" for m in models}
-        expected_outputs = [tsne_path] + list(saliency_paths.values()) + list(mapping_paths.values())
+        _non_mtl_sal_paths = [p for m, p in saliency_paths.items() if 'mtl' not in m]
+        _non_mtl_map_paths = [p for m, p in mapping_paths.items() if 'mtl' not in m]
+        expected_outputs = [tsne_path] + _non_mtl_sal_paths + _non_mtl_map_paths
+        if _mtl_est:
+            expected_outputs.append(dataset_vis_dir / f"02_SALIENCY_mtl_{name_suffix}.png")
         if not force_rerun and all(p.exists() for p in expected_outputs):
             print(f"  [-] Skipping {exp_path.name}: outputs already exist (use --force_rerun to regenerate).")
             continue

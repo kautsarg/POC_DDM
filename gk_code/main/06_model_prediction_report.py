@@ -463,8 +463,8 @@ def render_mtl_metrics_table(mtl_reg_list):
                      for c in ["Model", "Folds", "n valid (mean)", "MAE", "RMSE", "R²", "Pearson r"])
     rows_html = ""
     for i, rd in enumerate(mtl_reg_list):
-        _, agg = _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])
-        n_valid_mean = np.mean([r["n_valid"] for r in _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])[0]])
+        fold_rows, agg = _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])
+        n_valid_mean = np.mean([r["n_valid"] for r in fold_rows])
         bg = "#f2f3f4" if i % 2 == 0 else "white"
         def _fmt(m, s): return f"{m:.3f} ± {s:.3f}" if np.isfinite(m) else "—"
         cells = [

@@ -625,6 +625,7 @@ _XAI_SAVE_NAME = {
 }
 # _inc entries so 07_attribution_vis_all can locate inception-smoothed model files.
 _XAI_SAVE_NAME.update({f"{m}_inc": f"{v}_inc" for m, v in list(_XAI_SAVE_NAME.items())})
+_XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under their own key
 
 
 def evaluate_outlier_filters(

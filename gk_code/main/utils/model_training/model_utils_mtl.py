@@ -74,7 +74,9 @@ class MTLModel(tf.keras.Model):
     @classmethod
     def from_config(cls, config):
         reg_sentinel = config.pop('reg_sentinel', REG_SENTINEL)
-        return cls(reg_sentinel=reg_sentinel, **config)
+        model = super().from_config(config)
+        model.reg_sentinel = reg_sentinel
+        return model
 
 
 # ====================================================================

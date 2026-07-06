@@ -115,11 +115,9 @@ if __name__ == "__main__":
     if args.mtl:
         raw_conc = training_data.get("concentration", None)
         if raw_conc is not None:
-            y_concentration = np.array([
-                float(v) if (v is not None and not (isinstance(v, float) and np.isnan(v)))
-                else _MTL_REG_SENTINEL
-                for v in np.asarray(raw_conc, dtype=object)
-            ], dtype=float)
+            _arr = np.asarray(raw_conc, dtype=object)
+            _float_arr = np.array([float(v) if v is not None else np.nan for v in _arr], dtype=float)
+            y_concentration = np.where(np.isnan(_float_arr), _MTL_REG_SENTINEL, _float_arr)
         else:
             y_concentration = np.full(len(Y_well), _MTL_REG_SENTINEL, dtype=float)
         print(f"  [MTL] Concentration loaded: {int((y_concentration != _MTL_REG_SENTINEL).sum())} "
@@ -258,6 +256,12 @@ if __name__ == "__main__":
         # are preserved in the joblib without redundant retraining.
         if args.mtl:
             models = list(MTL_MODEL_KEYS)
+
+            models = {
+                "cnn_mtl", "lstm_mtl", "gru_mtl", "rnn_mtl", "transformer_mtl",
+                "cnn_gru_dual_mtl", "cnn_trans_dual_mtl",
+                "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+            }
 
         model_interp_dir = exp_path / "model_interpretation"
 
