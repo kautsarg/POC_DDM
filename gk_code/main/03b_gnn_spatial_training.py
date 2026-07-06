@@ -68,7 +68,6 @@ import time
 import argparse
 import warnings
 import joblib
-from safe_io import safe_joblib_dump
 from pathlib import Path
 
 import numpy as np
@@ -81,6 +80,7 @@ from sklearn.metrics import accuracy_score
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 sys.path.insert(0, 'utils')
+from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 import config
 from model_utils import plot_ml_results, set_global_determinism

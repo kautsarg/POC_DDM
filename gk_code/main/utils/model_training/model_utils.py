@@ -18,6 +18,8 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import StandardScaler
 
 import joblib
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from safe_io import safe_keras_save
 import tensorflow as tf
 import absl.logging

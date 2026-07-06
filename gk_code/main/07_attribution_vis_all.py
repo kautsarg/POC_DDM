@@ -1,7 +1,6 @@
 import os
 import math
 import joblib
-from safe_io import safe_joblib_dump
 import argparse
 import numpy as np
 import pandas as pd
@@ -18,6 +17,7 @@ from sklearn.manifold import TSNE
 from mpl_toolkits.axes_grid1 import make_axes_locatable 
 
 sys.path.insert(0, 'utils')
+from safe_io import safe_joblib_dump
 sys.path.insert(0, "utils/model_training")
 import config
 from model_utils import set_global_determinism

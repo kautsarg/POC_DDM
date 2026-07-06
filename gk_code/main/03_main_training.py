@@ -3,11 +3,11 @@ import sys
 import gc
 import argparse
 import joblib
-from safe_io import safe_joblib_dump
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedShuffleSplit
 sys.path.insert(0, 'utils')
+from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from sklearn.feature_selection import mutual_info_classif

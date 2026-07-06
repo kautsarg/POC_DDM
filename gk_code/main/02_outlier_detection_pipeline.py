@@ -6,7 +6,6 @@ import gc
 import base64
 import argparse
 import joblib
-from safe_io import safe_joblib_dump
 import itertools
 from io import BytesIO
 from pathlib import Path
@@ -27,6 +26,7 @@ import tensorflow as tf
 import config
 
 sys.path.insert(0, 'utils')
+from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/02_outlier_detection')
 sys.path.insert(0, 'utils/model_training')
 import chip_utilities as utils

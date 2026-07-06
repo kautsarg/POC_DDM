@@ -11,6 +11,8 @@ from sklearn.preprocessing import MinMaxScaler
 from kneed import KneeLocator
 from outlier_utils import init_html_report, fig_to_base64
 from model_utils import set_global_determinism
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from safe_io import safe_joblib_dump, safe_keras_save
 
 tf.get_logger().setLevel(logging.ERROR)

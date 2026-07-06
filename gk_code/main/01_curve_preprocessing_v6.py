@@ -5,7 +5,6 @@ import argparse
 import numpy as np
 import pandas as pd
 import joblib
-from safe_io import safe_joblib_dump
 from pathlib import Path
 from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
@@ -15,6 +14,7 @@ import config
 
 # Add custom paths
 sys.path.insert(0, 'utils')
+from safe_io import safe_joblib_dump
 sys.path.insert(0, '..')
 sys.path.insert(0, '../..')
 sys.path.insert(0, '0_4_AMCA Code on Chip')
