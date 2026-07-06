@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import joblib
+from safe_io import safe_joblib_dump
 from pathlib import Path
 from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
@@ -13,6 +14,7 @@ import pywt
 import config
 
 # Add custom paths
+sys.path.insert(0, 'utils')
 sys.path.insert(0, '..')
 sys.path.insert(0, '../..')
 sys.path.insert(0, '0_4_AMCA Code on Chip')
@@ -390,7 +392,7 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
             print(f"  -> [WARNING] Existing shared cache at {save_path} unreadable ({e}). Overwriting.")
             existing_state = {}
     existing_state.update(save_data)   # only overwrites 01's own keys — 02's keys (dataset,
-    joblib.dump(existing_state, save_path, compress=3)   # kinetic_features, ...) are left untouched
+    safe_joblib_dump(existing_state, save_path, compress=3)   # kinetic_features, ...) are left untouched
     print(f"  -> Saved numerical results and metadata to {save_path}")
 
 
@@ -487,7 +489,7 @@ if __name__ == "__main__":
                 patched_fields.append("ori_curves_wavelet_sym8")
 
             print(f"Cache hit: {save_exp_path} (patching missing {', '.join(patched_fields)})")
-            joblib.dump(existing_data, save_path, compress=3)
+            safe_joblib_dump(existing_data, save_path, compress=3)
             print(f"  -> Patched {save_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)

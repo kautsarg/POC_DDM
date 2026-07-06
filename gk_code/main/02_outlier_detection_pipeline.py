@@ -6,6 +6,7 @@ import gc
 import base64
 import argparse
 import joblib
+from safe_io import safe_joblib_dump
 import itertools
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +26,7 @@ import tensorflow as tf
 
 import config
 
+sys.path.insert(0, 'utils')
 sys.path.insert(0, 'utils/02_outlier_detection')
 sys.path.insert(0, 'utils/model_training')
 import chip_utilities as utils
@@ -202,7 +204,7 @@ def _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_sa
             features_to_concat[i].clear()
             merged_any = True
     if merged_any:
-        joblib.dump(pipeline_state, unified_save_path, compress=3)
+        safe_joblib_dump(pipeline_state, unified_save_path, compress=3)
         print("    [SAVED] Unified pipeline state updated.")
 
 
@@ -329,7 +331,7 @@ def _ensure_kinetic_features(pipeline_state, unified_save_path):
         new_features = [build_kinetic_features(dataset[i], timestamps, metadata_df)
                          for i in range(len(cached), len(dataset_name))]
         pipeline_state["kinetic_features"] = list(cached) + new_features
-        joblib.dump(pipeline_state, unified_save_path, compress=3)
+        safe_joblib_dump(pipeline_state, unified_save_path, compress=3)
         return
 
     print("  -> Extracting initial kinetic features (CPU Bound)...")
@@ -348,7 +350,7 @@ def _ensure_kinetic_features(pipeline_state, unified_save_path):
         pipeline_state["dataset"] = np.array([])
         pipeline_state["kinetic_features"] = []
 
-    joblib.dump(pipeline_state, unified_save_path, compress=3)
+    safe_joblib_dump(pipeline_state, unified_save_path, compress=3)
 
 
 # ====================================================================
@@ -549,7 +551,7 @@ def _compute_feature_analysis(pipeline_state, Y_well, colors, cmap, unified_save
     pipeline_state["linear_feature_combinations"] = linear_feature_combinations
     pipeline_state["important_feature_combinations"] = important_feature_combinations
     pipeline_state["importance_dfs"] = importance_dfs
-    joblib.dump(pipeline_state, unified_save_path, compress=3)
+    safe_joblib_dump(pipeline_state, unified_save_path, compress=3)
 
     return linear_feature_combinations, important_feature_combinations, importance_dfs
 

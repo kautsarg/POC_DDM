@@ -68,6 +68,7 @@ import time
 import argparse
 import warnings
 import joblib
+from safe_io import safe_joblib_dump
 from pathlib import Path
 
 import numpy as np
@@ -79,6 +80,7 @@ from sklearn.metrics import accuracy_score
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+sys.path.insert(0, 'utils')
 sys.path.insert(0, 'utils/model_training')
 import config
 from model_utils import plot_ml_results, set_global_determinism
@@ -174,7 +176,7 @@ def load_or_init_results(results_file_path):
 def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key):
     def _checkpoint(updated_results):
         all_ml_results[clean_title][mode_key] = updated_results
-        joblib.dump(all_ml_results, results_file_path, compress=3)
+        safe_joblib_dump(all_ml_results, results_file_path, compress=3)
     return _checkpoint
 
 
@@ -694,7 +696,7 @@ if __name__ == "__main__":
             max_epochs=args.max_epochs, patience=args.patience,
         )
         all_ml_results[clean_title]["Native"] = res_native
-        joblib.dump(all_ml_results, results_file_path, compress=3)
+        safe_joblib_dump(all_ml_results, results_file_path, compress=3)
 
         prefix_native = os.path.join(model_plot_path, f"{name}_Native")
         plot_ml_results(

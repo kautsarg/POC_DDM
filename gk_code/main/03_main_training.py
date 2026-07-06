@@ -3,9 +3,11 @@ import sys
 import gc
 import argparse
 import joblib
+from safe_io import safe_joblib_dump
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedShuffleSplit
+sys.path.insert(0, 'utils')
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from sklearn.feature_selection import mutual_info_classif
@@ -54,7 +56,7 @@ def load_or_init_results(results_file_path):
 def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key):
     def _checkpoint(updated_results):
         all_ml_results[clean_title][mode_key] = updated_results
-        joblib.dump(all_ml_results, results_file_path, compress=3)
+        safe_joblib_dump(all_ml_results, results_file_path, compress=3)
     return _checkpoint
 
 # ============================================================
@@ -270,7 +272,7 @@ if __name__ == "__main__":
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
-            joblib.dump(all_ml_results, results_file_path, compress=3)
+            safe_joblib_dump(all_ml_results, results_file_path, compress=3)
 
             prefix_ref = os.path.join(model_plot_path, f"{name}_Reference")
             plot_ml_results(
@@ -318,7 +320,7 @@ if __name__ == "__main__":
                 )
 
             all_ml_results[clean_title]["Native"] = res_native
-            joblib.dump(all_ml_results, results_file_path, compress=3)
+            safe_joblib_dump(all_ml_results, results_file_path, compress=3)
 
             prefix_native = os.path.join(model_plot_path, f"{name}_Native")
             plot_ml_results(
@@ -334,7 +336,7 @@ if __name__ == "__main__":
             all_ml_results[clean_title]["top_10_features"] = {}
         for f in outlier_filters:
             all_ml_results[clean_title]["top_10_features"][str(f)] = top_10_features
-        joblib.dump(all_ml_results, results_file_path, compress=3)
+        safe_joblib_dump(all_ml_results, results_file_path, compress=3)
         print(f"  [XAI] Saved feature metadata into {results_file_path}")
 
         gc.collect()

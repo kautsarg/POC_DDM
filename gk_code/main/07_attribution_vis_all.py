@@ -1,6 +1,7 @@
 import os
 import math
 import joblib
+from safe_io import safe_joblib_dump
 import argparse
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.manifold import TSNE
 from mpl_toolkits.axes_grid1 import make_axes_locatable 
 
+sys.path.insert(0, 'utils')
 sys.path.insert(0, "utils/model_training")
 import config
 from model_utils import set_global_determinism
@@ -1385,7 +1387,7 @@ def merge_and_save_scores(scores_df, profiles_df, curve_meta, path,
 
     bundle = {"scores": scores_df, "profiles": profiles_df, "curve_meta": merged_curve_meta}
     path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, path, compress=3)
+    safe_joblib_dump(bundle, path, compress=3)
     print(f"     [✓] Saved latent-feature scores ({len(scores_df)} rows) + "
           f"profiles ({len(profiles_df)} rows) -> {path}")
 

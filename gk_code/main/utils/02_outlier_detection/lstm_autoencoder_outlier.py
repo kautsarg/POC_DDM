@@ -11,6 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 from kneed import KneeLocator
 from outlier_utils import init_html_report, fig_to_base64
 from model_utils import set_global_determinism
+from safe_io import safe_joblib_dump, safe_keras_save
 
 tf.get_logger().setLevel(logging.ERROR)
 
@@ -42,7 +43,6 @@ def _save_encoder(autoencoder, scaler, save_encoder_dir, dataset_name):
     classifier (model_utils.py's "lstm_ae_clf", fed by 03_main_training.py) must
     apply this same transform to its raw curves before feeding the encoder, or the
     pretrained weights will see out-of-distribution input."""
-    import joblib
     os.makedirs(save_encoder_dir, exist_ok=True)
     encoder = models.Model(
         inputs=autoencoder.input,
@@ -50,8 +50,8 @@ def _save_encoder(autoencoder, scaler, save_encoder_dir, dataset_name):
     )
     encoder_path = os.path.join(save_encoder_dir, f"lstm_ae_encoder_{dataset_name}.keras")
     scaler_path = os.path.join(save_encoder_dir, f"lstm_ae_scaler_{dataset_name}.joblib")
-    encoder.save(encoder_path)
-    joblib.dump(scaler, scaler_path)
+    safe_keras_save(encoder, encoder_path)
+    safe_joblib_dump(scaler, scaler_path)
     print(f"     [XAI] Saved pretrained LSTM-AE encoder -> {encoder_path}")
 
 def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True, save_encoder_dir=None):

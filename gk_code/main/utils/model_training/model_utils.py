@@ -18,6 +18,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import StandardScaler
 
 import joblib
+from safe_io import safe_keras_save
 import tensorflow as tf
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -956,7 +957,7 @@ def evaluate_outlier_filters(
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
-                        model.save(_xai_path)
+                        safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict([X_test_curve, X_test_man], verbose=0)
@@ -994,7 +995,7 @@ def evaluate_outlier_filters(
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
-                        model.save(_xai_path)
+                        safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
@@ -1052,7 +1053,7 @@ def evaluate_outlier_filters(
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
-                        model.save(_xai_path)
+                        safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
@@ -1107,7 +1108,7 @@ def evaluate_outlier_filters(
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
-                        model.save(_xai_path)
+                        safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve_scaled, verbose=0)
@@ -1140,7 +1141,7 @@ def evaluate_outlier_filters(
 
                     if _do_xai_save and _base_m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
-                        clf.model_.save(_xai_path)
+                        safe_keras_save(clf.model_, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
                     preds.append(clf.predict(X_test_curve))

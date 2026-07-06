@@ -1,11 +1,13 @@
 import os
 import sys
+sys.path.insert(0, 'utils')
 import re
 import itertools
 import argparse
 import numpy as np
 import pandas as pd
 import joblib
+from safe_io import safe_joblib_dump
 from pathlib import Path
 from joblib import Parallel, delayed
 
@@ -27,6 +29,14 @@ FILE_MAPPING = {
     'Z_area': 'area_strategy.csv',
     'Z_range': 'range_strategy.xlsx',
     'Z_range_filtered': 'range_strategy_filtered.xlsx',
+}
+FILE_CONC = {
+    'ACA_qdPCR': 'Conc',
+    'AMCA_qdPCR':  'Conc',
+    'AMCA_qdLAMP': 'Conc',
+    'Z_area': None,
+    'Z_range': None,
+    'Z_range_filtered': None
 }
 
 FILE_MAPPING_ONE_TO_ONE = {
@@ -91,7 +101,7 @@ def sigmoid_fitting_5p(curves, ori_timestamps, starting_idxs=None):
 
 
 def load_lab_curves(exp_path):
-    """Read this experiment's CSV/Excel file and return (curves, timestamps, well_labels)."""
+    """Read this experiment's CSV/Excel file and return (curves, timestamps, well_labels, concentration)."""
     folder = exp_path.name
     file_path = os.path.join(exp_path, FILE_MAPPING[folder])
     df = _read_table(file_path)
@@ -104,7 +114,10 @@ def load_lab_curves(exp_path):
     curves = df[sorted_cycle_cols].to_numpy()
     well_labels = df[FILE_TARGET[folder]].to_numpy()
 
-    return curves, timestamps, well_labels
+    conc_col = FILE_CONC.get(folder)
+    concentration = df[conc_col].to_numpy() if conc_col else None
+
+    return curves, timestamps, well_labels, concentration
 
 
 
@@ -156,9 +169,9 @@ def load_and_fit_strategy_once(exp_folder, strategy):
 
     cached = {
         "curves": curves, "timestamps": timestamps, "well_labels": well_labels,
-        "sigmoid_results": sigmoid_results,
+        "sigmoid_results": sigmoid_results, "concentration": None,
     }
-    joblib.dump(cached, cache_path, compress=3)
+    safe_joblib_dump(cached, cache_path, compress=3)
     return cached
 
 
@@ -171,7 +184,7 @@ def load_lab_curves_one_to_one(exp_folder, strategy, label1, label2):
     fitted_full, fitted_stretched, params, rmse = cached["sigmoid_results"]
     sigmoid_results = (fitted_full[mask], fitted_stretched[mask], params[mask], rmse[mask])
 
-    return curves, cached["timestamps"], well_labels, sigmoid_results
+    return curves, cached["timestamps"], well_labels, sigmoid_results, cached.get("concentration")
 
 
 def is_cache_hit(save_path):
@@ -199,7 +212,7 @@ def patch_missing_variants(save_path, normalize_curves, wavelet_sym8):
         existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
         patched.append("ori_curves_wavelet_sym8")
     if patched:
-        joblib.dump(existing_data, save_path, compress=3)
+        safe_joblib_dump(existing_data, save_path, compress=3)
         print(f"  -> Patched missing {', '.join(patched)} into {save_path}")
 
 
@@ -292,10 +305,10 @@ def build_ttp_aligned_curves(curves, timestamps, well_labels, preserve_cycles=No
     baseline_corrected = aligned - aligned[:, [0]]
     aligned_timestamps = timestamps[:final_len]
 
-    return baseline_corrected, aligned_timestamps, well_labels_kept, max_ttp
+    return baseline_corrected, aligned_timestamps, well_labels_kept, max_ttp, keep
 
 
-def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False, wavelet_sym8=False):
+def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid_results, normalize_curves=False, wavelet_sym8=False, concentration=None):
     fitted_full, fitted_stretched, params, rmse = sigmoid_results
 
     curves_dict = {"ori_curves": curves}
@@ -316,6 +329,7 @@ def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid
         },
         "timestamps": timestamps,
         "well_labels": well_labels,
+        "concentration": concentration,
         "metadata": {},
         "baseline_value": 0.0,
     }
@@ -329,7 +343,7 @@ def save_experiment_data(save_exp_path, curves, timestamps, well_labels, sigmoid
             print(f"  -> [WARNING] Existing shared cache at {save_path} unreadable ({e}). Overwriting.")
             existing_state = {}
     existing_state.update(save_data)   # only overwrites this script's own keys -- 02's keys
-    joblib.dump(existing_state, save_path, compress=3)   # (dataset, kinetic_features, ...) are left untouched
+    safe_joblib_dump(existing_state, save_path, compress=3)   # (dataset, kinetic_features, ...) are left untouched
     print(f"  -> Saved numerical results and metadata to {save_path}")
 
 
@@ -387,7 +401,7 @@ if __name__ == "__main__":
 
         print(f"Processing One-to-One Combo: {combo_name}  ({strategy}: {label1} vs {label2})")
 
-        curves, timestamps, well_labels, sigmoid_results = load_lab_curves_one_to_one(
+        curves, timestamps, well_labels, sigmoid_results, concentration = load_lab_curves_one_to_one(
             args.exp_folder, strategy, label1, label2)
 
         if main_cache_hit:
@@ -395,7 +409,8 @@ if __name__ == "__main__":
         else:
             save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
                                 normalize_curves=args.normalize_curves,
-                                wavelet_sym8=args.wavelet_sym8)
+                                wavelet_sym8=args.wavelet_sym8,
+                                concentration=concentration)
 
         print(f"  -> X (Curves) shape:       {curves.shape}")
         print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
@@ -405,15 +420,16 @@ if __name__ == "__main__":
         if args.ori_curve_aligned and not aligned_cache_hit:
             aligned_exp_path.mkdir(parents=True, exist_ok=True)
             print(f"Processing TTP-aligned dataset: {aligned_exp_path}")
-            aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp = build_ttp_aligned_curves(
+            aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp, keep = build_ttp_aligned_curves(
                 curves, timestamps, well_labels, preserve_cycles=args.preserve_cycles)
 
             print("  -> Processing Sigmoid Curves (aligned)...")
             aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
+            aligned_concentration = concentration[keep] if concentration is not None else None
 
             save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
                                 aligned_well_labels, aligned_sigmoid_results,
-                                normalize_curves=True)
+                                normalize_curves=True, concentration=aligned_concentration)
 
             print(f"  -> max_ttp used:           {max_ttp}")
             print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")
@@ -452,7 +468,7 @@ if __name__ == "__main__":
 
     print(f"Processing Experiment: {exp_path}")
 
-    curves, timestamps, well_labels = load_lab_curves(exp_path)
+    curves, timestamps, well_labels, concentration = load_lab_curves(exp_path)
 
     if main_cache_hit:
         patch_missing_variants(save_path, args.normalize_curves, args.wavelet_sym8)
@@ -460,7 +476,8 @@ if __name__ == "__main__":
         print("  -> Processing Sigmoid Curves...")
         sigmoid_results = sigmoid_fitting_5p(curves, timestamps)
         save_experiment_data(exp_path, curves, timestamps, well_labels, sigmoid_results,
-                            normalize_curves=args.normalize_curves)
+                            normalize_curves=args.normalize_curves,
+                            concentration=concentration)
         print(f"  -> X (Curves) shape:       {curves.shape}")
         print(f"  -> well_labels (Targets):  {np.unique(well_labels)}")
         print(f"  -> Mean RMSE Fit Error:    {np.nanmean(sigmoid_results[3]):.4f}")
@@ -470,15 +487,16 @@ if __name__ == "__main__":
     if args.ori_curve_aligned and not aligned_cache_hit:
         aligned_exp_path.mkdir(parents=True, exist_ok=True)
         print(f"Processing TTP-aligned dataset: {aligned_exp_path}")
-        aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp = build_ttp_aligned_curves(
+        aligned_curves, aligned_timestamps, aligned_well_labels, max_ttp, keep = build_ttp_aligned_curves(
             curves, timestamps, well_labels, preserve_cycles=args.preserve_cycles)
 
         print("  -> Processing Sigmoid Curves (aligned)...")
         aligned_sigmoid_results = sigmoid_fitting_5p(aligned_curves, aligned_timestamps)
+        aligned_concentration = concentration[keep] if concentration is not None else None
 
         save_experiment_data(aligned_exp_path, aligned_curves, aligned_timestamps,
                             aligned_well_labels, aligned_sigmoid_results,
-                            normalize_curves=True)
+                            normalize_curves=True, concentration=aligned_concentration)
 
         print(f"  -> max_ttp used:           {max_ttp}")
         print(f"  -> X (Curves) shape:       {aligned_curves.shape} (from {curves.shape})")

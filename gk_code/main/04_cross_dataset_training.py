@@ -3,11 +3,13 @@ import sys
 import gc
 import argparse
 import joblib
+from safe_io import safe_joblib_dump
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import mutual_info_classif
+sys.path.insert(0, 'utils')
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism, CurveResampler
 
@@ -187,7 +189,7 @@ if __name__ == "__main__":
         plot_dir.mkdir(parents=True, exist_ok=True)
 
         resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
-        joblib.dump(combined["resampler"], resampler_path, compress=3)
+        safe_joblib_dump(combined["resampler"], resampler_path, compress=3)
         print(f"  [*] Saved curve resampler -> {resampler_path}")
 
         encoder = LabelEncoder()
@@ -245,7 +247,7 @@ if __name__ == "__main__":
 
             def checkpoint(updated_results, fold_label=fold_label):
                 lofo_results[fold_label] = updated_results
-                joblib.dump(lofo_results, results_file_path, compress=3)
+                safe_joblib_dump(lofo_results, results_file_path, compress=3)
 
             lofo_model_dir = out_dir / "model_interpretation" / fold_label
             lofo_model_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +287,7 @@ if __name__ == "__main__":
             # matrices/class-metrics with real class names instead of integer ids.
             lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
 
-            joblib.dump(lofo_results, results_file_path, compress=3)
+            safe_joblib_dump(lofo_results, results_file_path, compress=3)
 
             # Test-fold snapshot so 07 can run attribution without re-running combine_group.
             features_df_all = combined["features_df"]
@@ -298,7 +300,7 @@ if __name__ == "__main__":
                 nan=0.0, posinf=0.0, neginf=0.0,
             ).astype(np.float32)
             snapshot_path = lofo_model_dir / f"xai_data_{curve_type}.joblib"
-            joblib.dump({
+            safe_joblib_dump({
                 "X_curves_test": combined["curves"][test_idx].astype(np.float32),
                 "features_df_test": features_df_all.iloc[test_idx].reset_index(drop=True),
                 "X_man_train": X_man_train,
