@@ -174,7 +174,8 @@ if __name__ == "__main__":
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
     # for curve_type in args.curve_type:
-    for curve_type in reversed(args.curve_type):
+    # for curve_type in reversed(args.curve_type):
+    for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
         combined = combine_group(exp_paths, group_name, curve_type=curve_type)
@@ -233,8 +234,8 @@ if __name__ == "__main__":
 
         lofo_splits = build_lofo_splits(combined["dataset_id"])
         total_folds = len(lofo_splits)
-        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
-        # for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(lofo_splits.items()))):
+        # for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
+        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(lofo_splits.items()))):
             progress_pct = ((fold_idx + 1) / total_folds) * 100
             print(f"\n{'='*75}")
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
@@ -257,7 +258,7 @@ if __name__ == "__main__":
                 dataset_name=group_name,
                 mode_name=fold_label,
                 cached_results=cached_fold,
-                models=models,
+                models=reversed(models),
                 checkpoint_fn=checkpoint,
                 KFS=top_10_features,
                 rerun_models=config.RERUN_MODELS,

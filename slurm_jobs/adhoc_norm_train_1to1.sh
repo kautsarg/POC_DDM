@@ -1,0 +1,45 @@
+#!/bin/bash
+#SBATCH --job-name=adhoc_norm_train_1to1
+#SBATCH --time=48:00:00
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:1
+#SBATCH --partition=a30
+#SBATCH --array=0,2
+#SBATCH --output=logs/%x/%A_%a.out
+#SBATCH --error=logs/%x/%A_%a.err
+
+mkdir -p "logs/${SLURM_JOB_NAME}"
+
+source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
+export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
+cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
+
+EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_OneToOne
+TRAIN_FOLDER="$EXP_FOLDER"
+
+STRATEGIES=(1_area 2_range 3_range_filtered)
+STRATEGY=${STRATEGIES[$SLURM_ARRAY_TASK_ID]}
+
+TASK_IDS=$(python3 -c "
+import importlib
+mod = importlib.import_module('01b_lab_curve_preprocessing')
+combos = mod.discover_one_to_one_combos('$EXP_FOLDER')
+ids = [i for i, c in enumerate(combos) if c[0] == '$STRATEGY']
+print(' '.join(map(str, ids)))
+" | tail -n 1)
+
+echo "Strategy: $STRATEGY -- flat task_ids: $TASK_IDS"
+
+for TID in $TASK_IDS; do
+    echo "=== [$STRATEGY] ori_curve_norm backfill flat-task_id=$TID ==="
+
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+        --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
+
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
+        --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
+done
+
+deactivate

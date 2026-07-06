@@ -54,8 +54,8 @@ for TID in $TASK_IDS; do
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve
     
-    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
-    # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $TID --exp_folder "$TRAIN_FOLDER" --n_splits 5 --curve_type ori_curve_norm
 done
 
 deactivate
