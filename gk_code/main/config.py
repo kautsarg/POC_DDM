@@ -298,11 +298,27 @@ MODEL_KEY_MAP = {
     # cnn_gru_dual itself; only the curve fed into the classifier differs.
     "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
     "cnn_gru_dual_attn_recon":   ("y_preds_AC_cnn_gru_dual_attn_recon_",   "y_probs_AC_cnn_gru_dual_attn_recon_",   "classes_AC_cnn_gru_dual_attn_recon_"),
+    # MTL variants — same joblib as standard models; keys distinguished by _mtl_ infix.
+    "cnn_mtl":                       ("y_preds_AC_cnn_mtl_",                        "y_probs_AC_cnn_mtl_",                        "classes_AC_cnn_mtl_"),
+    "lstm_mtl":                      ("y_preds_AC_lstm_mtl_",                       "y_probs_AC_lstm_mtl_",                       "classes_AC_lstm_mtl_"),
+    "gru_mtl":                       ("y_preds_AC_gru_mtl_",                        "y_probs_AC_gru_mtl_",                        "classes_AC_gru_mtl_"),
+    "rnn_mtl":                       ("y_preds_AC_rnn_mtl_",                        "y_probs_AC_rnn_mtl_",                        "classes_AC_rnn_mtl_"),
+    "transformer_mtl":               ("y_preds_AC_trans_mtl_",                      "y_probs_AC_trans_mtl_",                      "classes_AC_trans_mtl_"),
+    "cnn_gru_dual_mtl":              ("y_preds_AC_cnn_gru_dual_mtl_",               "y_probs_AC_cnn_gru_dual_mtl_",               "classes_AC_cnn_gru_dual_mtl_"),
+    "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
+    "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
+    "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
-# rf/knn/ffi/gnn_* are non-Keras; cnn_gru_dual_attn_recon has incompatible input shape.
-_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
+# rf/knn/ffi/gnn_* are non-Keras; attn_recon has incompatible input shape; MTL models never
+# use inception smoothing.
+_MTL_MODEL_KEYS = {
+    "cnn_mtl", "lstm_mtl", "gru_mtl", "rnn_mtl", "transformer_mtl",
+    "cnn_gru_dual_mtl", "cnn_trans_dual_mtl",
+    "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+}
+_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -321,6 +337,12 @@ MODEL_PRINT_MAP = {
     "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     "gnn_gat": "GNN (GAT)", "gnn_gcn": "GNN (GCN)",
     "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
+    # MTL
+    "cnn_mtl": "CNN MTL", "lstm_mtl": "LSTM MTL", "gru_mtl": "GRU MTL",
+    "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
+    "cnn_gru_dual_mtl": "CNN+GRU Dual MTL", "cnn_trans_dual_mtl": "CNN+Tr Dual MTL",
+    "cnn_gru_dual_cosine_recon_mtl": "CNN+GRU CosRecon MTL",
+    "cnn_gru_dual_attn_recon_mtl": "CNN+GRU AttnRecon MTL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

@@ -29,6 +29,14 @@ tf.get_logger().setLevel('ERROR')
 from scikeras.wrappers import KerasClassifier
 
 import model_utils_gated
+from model_utils_mtl import (
+    create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
+    create_rnn_mtl_model, create_transformer_mtl_model,
+    create_cnn_gru_dual_mtl_model, create_cnn_trans_dual_mtl_model,
+    create_cnn_gru_dual_attn_recon_mtl_model,
+    _normalize_concentration, _inverse_normalize_concentration,
+    MTL_MODEL_KEYS, REG_SENTINEL,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -626,6 +634,7 @@ def evaluate_outlier_filters(
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=8,
+    multitask=False, y_concentration=None,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -683,6 +692,16 @@ def evaluate_outlier_filters(
         # 8 gated dual-branch fusion models (model_utils_gated.py).
         **{name: (f"y_preds_AC_{name}_", f"y_probs_AC_{name}_", f"classes_AC_{name}_")
            for name in model_utils_gated._ALL_FACTORIES},
+        # MTL models — results stored in same joblib as standard classification models.
+        "cnn_mtl":                       ("y_preds_AC_cnn_mtl_",                        "y_probs_AC_cnn_mtl_",                        "classes_AC_cnn_mtl_"),
+        "lstm_mtl":                      ("y_preds_AC_lstm_mtl_",                       "y_probs_AC_lstm_mtl_",                       "classes_AC_lstm_mtl_"),
+        "gru_mtl":                       ("y_preds_AC_gru_mtl_",                        "y_probs_AC_gru_mtl_",                        "classes_AC_gru_mtl_"),
+        "rnn_mtl":                       ("y_preds_AC_rnn_mtl_",                        "y_probs_AC_rnn_mtl_",                        "classes_AC_rnn_mtl_"),
+        "transformer_mtl":               ("y_preds_AC_trans_mtl_",                      "y_probs_AC_trans_mtl_",                      "classes_AC_trans_mtl_"),
+        "cnn_gru_dual_mtl":              ("y_preds_AC_cnn_gru_dual_mtl_",               "y_probs_AC_cnn_gru_dual_mtl_",               "classes_AC_cnn_gru_dual_mtl_"),
+        "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
+        "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
+        "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
     }
 
     model_print_map = {
@@ -697,11 +716,18 @@ def evaluate_outlier_filters(
         "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
         "cnn_trans_gate": "CNN+Tr Gate", "cnn_trans_hadamard": "CNN+Tr Hadamard",
         "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
+        # MTL
+        "cnn_mtl": "CNN MTL", "lstm_mtl": "LSTM MTL", "gru_mtl": "GRU MTL",
+        "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
+        "cnn_gru_dual_mtl": "CNN+GRU Dual MTL", "cnn_trans_dual_mtl": "CNN+Tr Dual MTL",
+        "cnn_gru_dual_cosine_recon_mtl": "CNN+GRU CosRecon MTL",
+        "cnn_gru_dual_attn_recon_mtl": "CNN+GRU AttnRecon MTL",
     }
 
     # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
-    # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape — both excluded.
-    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"}
+    # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape; MTL models never
+    # use inception smoothing.
+    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"} | set(MTL_MODEL_KEYS)
     for _m in list(model_key_map.keys()):
         if _m not in _NO_INC_INCEPTION:
             _pk, _prk, _ck = model_key_map[_m]
@@ -709,7 +735,10 @@ def evaluate_outlier_filters(
             if _m in model_print_map:
                 model_print_map[f"{_m}_inc"] = f"{model_print_map[_m]} (Inc)"
 
-    _SPATIAL_RECON_MODELS = ("cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon")
+    _SPATIAL_RECON_MODELS = (
+        "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+        "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+    )
 
     for idx, f in enumerate(outlier_filters):
         filter_name = f if f else 'None (Baseline)'
@@ -751,6 +780,13 @@ def evaluate_outlier_filters(
 
         n_classes = len(np.unique(y_true))
 
+        # Concentration array aligned to current filter/rare-class subset (for MTL).
+        y_conc_filtered = None
+        if multitask and y_concentration is not None:
+            _conc_m = y_concentration[mask]
+            if valid_class_mask is not None:
+                _conc_m = _conc_m[valid_class_mask]
+            y_conc_filtered = _conc_m.astype(float)
 
         # # THISSS ############################################################
         # # Curve Normalisations
@@ -864,24 +900,25 @@ def evaluate_outlier_filters(
             if _base_m in _SPATIAL_RECON_MODELS and X_AC_cosine_recon is None and X_AC_stack is None:
                 neighbor_stack = build_neighbor_curve_stack(
                     X_AC.astype(np.float32, copy=False), coords_m, well_ids_m, k=k_neighbors)
-                if "cnn_gru_dual_cosine_recon" in _wanted_recon_bases:
+                if any('cosine_recon' in b for b in _wanted_recon_bases):
                     X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
-                if "cnn_gru_dual_attn_recon" in _wanted_recon_bases:
+                if any('attn_recon' in b for b in _wanted_recon_bases):
                     X_AC_stack = neighbor_stack
                 else:
                     del neighbor_stack
 
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
+            reg_preds_per_fold, reg_trues_per_fold = [], []  # populated only for MTL models
             start_time = time.perf_counter()
             _lstm_ae_failed = False
 
             for fold_idx, (train_idx, test_idx) in enumerate(splits):
                 if _base_m == 'ffi':
                     X_train_curve, X_test_curve = X_FFI[train_idx], X_FFI[test_idx]
-                elif _base_m == 'cnn_gru_dual_cosine_recon':
+                elif _base_m in ('cnn_gru_dual_cosine_recon', 'cnn_gru_dual_cosine_recon_mtl'):
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
-                elif _base_m == 'cnn_gru_dual_attn_recon':
+                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl'):
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -1035,6 +1072,81 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
+                elif _base_m in MTL_MODEL_KEYS:
+                    # MTL models: shared backbone + classification head + regression head.
+                    # Kendall uncertainty weighting (MTLModel custom train/test_step).
+                    tf.keras.backend.clear_session()
+
+                    T = X_train_curve.shape[-1] if _base_m == 'cnn_gru_dual_attn_recon_mtl' else X_train_curve.shape[1]
+                    if _base_m == 'cnn_mtl':
+                        model = create_cnn_mtl_model(T, n_classes); epochs = 1000
+                    elif _base_m == 'lstm_mtl':
+                        model = create_lstm_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'gru_mtl':
+                        model = create_gru_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'rnn_mtl':
+                        model = create_rnn_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'transformer_mtl':
+                        model = create_transformer_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m in ('cnn_gru_dual_mtl', 'cnn_gru_dual_cosine_recon_mtl'):
+                        model = create_cnn_gru_dual_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_trans_dual_mtl':
+                        model = create_cnn_trans_dual_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_attn_recon_mtl':
+                        model = create_cnn_gru_dual_attn_recon_mtl_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                        epochs = 500
+                    model.compile(optimizer=tf.keras.optimizers.Adam(), metrics=['accuracy'])
+
+                    # Fold-level concentration: normalize on train non-sentinels; apply to val/test.
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        model.fit(
+                            X_train_curve_fit,
+                            {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                            validation_data=(X_val_curve,
+                                             {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                            epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                            callbacks=_fit_callbacks)
+                    else:
+                        model.fit(
+                            X_train_curve,
+                            {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                            epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    cls_prob, reg_pred_scaled = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+
+                    tf.keras.backend.clear_session()
+
                 elif _base_m in model_utils_gated._ALL_FACTORIES:
                     # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
                     # single-curve-input, no-manual-features shape as cnn_gru_dual /
@@ -1163,7 +1275,10 @@ def evaluate_outlier_filters(
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
             res_entry[classes_key] = classes_list
-            
+            if _base_m in MTL_MODEL_KEYS and reg_preds_per_fold:
+                res_entry[f'y_reg_preds_{_base_m}_'] = reg_preds_per_fold
+                res_entry[f'y_reg_trues_{_base_m}_'] = reg_trues_per_fold
+
             results_dict[f] = res_entry
             if checkpoint_fn is not None:
                 checkpoint_fn(results_dict)

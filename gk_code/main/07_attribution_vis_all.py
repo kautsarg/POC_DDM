@@ -22,6 +22,7 @@ sys.path.insert(0, "utils/model_training")
 import config
 from model_utils import set_global_determinism
 import model_utils_gated  # noqa: F401 — registers _SumPool1D/_OneMinus for .keras deserialization
+import model_utils_mtl    # noqa: F401 — registers MTLModel for .keras deserialization
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
 WELL_CMAP = config.WELL_CMAP
@@ -299,16 +300,41 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             x_tf_curve = x_tf_curve_scaled
         else:
             x_tf_curve = x_tf_curve_raw
+        is_mtl = 'mtl' in _base_name
         is_lf = _base_name.endswith('_lf')
-        is_dual = _base_name.endswith('_dual')
-        
+        is_dual = _base_name.endswith('_dual') and not is_mtl
+
         recurrent_layer = find_bidirectional_recurrent_layer(model)
         transformer_layer = find_transformer_block_output(model)
         flatten_layer = find_flatten_layer(model)
-        
+
+        # --------------------------------------------------------
+        # MTL MODELS — dual output: cls_out (softmax), reg_out (linear)
+        if is_mtl:
+            try:
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, reg_out = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                    target_reg = reg_out[:, 0]
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                grad_reg = tape.gradient(target_reg, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                reg_sal = np.mean(np.abs(grad_reg.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] MTL gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {
+                "is_type": "mtl",
+                "master_saliency": cls_sal,
+                "cls_saliency": cls_sal,
+                "reg_saliency": reg_sal,
+            }
+
         # --------------------------------------------------------
         # LATE FUSION MODELS
-        if is_lf:
+        elif is_lf:
             concat_layer = next(l for l in model.layers if isinstance(l, tf.keras.layers.Concatenate))
             
             if recurrent_layer: extractor_curve = tf.keras.Model(inputs=model.input[0], outputs=recurrent_layer.output)
@@ -620,6 +646,62 @@ def plot_latent_saliency_heatmap(artifacts, model_name, timestamps, top_10_featu
     fig.suptitle(f"{dataset_name} | {model_name.upper()} Causal Saliency", fontsize=14, fontweight='bold', y=0.99)
     fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
+
+
+# ====================================================================
+# MTL DUAL-TASK SALIENCY COMPARISON
+# ====================================================================
+
+def plot_mtl_saliency_comparison(artifacts, model_names, timestamps, mean_curve, std_curve, dataset_name, save_path):
+    """Row-per-model figure: classification saliency (blue) vs regression saliency (red).
+
+    Each model gets two overlaid line plots so peaks driving classification can be
+    visually compared against peaks driving concentration prediction. Scales are
+    normalised per-model independently (the two gradient magnitudes live on different
+    scales since CE and MSE gradients differ).
+    """
+    mtl_names = [n for n in model_names if artifacts.get(n, {}).get("is_type") == "mtl"]
+    if not mtl_names:
+        return
+
+    t = timestamps if len(timestamps) == len(mean_curve) else np.arange(len(mean_curve))
+    n = len(mtl_names)
+    fig, axes = plt.subplots(n, 1, figsize=(12, 3 * n), squeeze=False)
+
+    for ax_row, mname in zip(axes, mtl_names):
+        ax = ax_row[0]
+        art = artifacts[mname]
+        cls_s = art["cls_saliency"]
+        reg_s = art["reg_saliency"]
+
+        # Normalise to [0, 1] independently
+        cls_s = (cls_s - cls_s.min()) / (cls_s.ptp() + 1e-12)
+        reg_s = (reg_s - reg_s.min()) / (reg_s.ptp() + 1e-12)
+
+        ax2 = ax.twinx()
+        ax.plot(t, mean_curve, color="black", lw=1.0, alpha=0.5, label="Mean curve")
+        ax.fill_between(t, mean_curve - std_curve, mean_curve + std_curve, color="gray", alpha=0.15)
+        ax2.fill_between(t, 0, cls_s, color="#2980b9", alpha=0.35, label="Cls saliency")
+        ax2.fill_between(t, 0, reg_s, color="#e74c3c", alpha=0.35, label="Reg saliency")
+        ax2.plot(t, cls_s, color="#1a5276", lw=0.9)
+        ax2.plot(t, reg_s, color="#922b21", lw=0.9)
+        ax2.set_ylim(0, 2)
+        ax2.set_yticks([])
+        ax.set_ylabel(mname.upper(), fontsize=8, rotation=0, labelpad=60, va="center")
+        ax.set_yticks([])
+        ax.grid(alpha=0.2)
+        # Custom legend combining both axes
+        from matplotlib.patches import Patch
+        legend_els = [Patch(facecolor="#2980b9", alpha=0.7, label="Classification"),
+                      Patch(facecolor="#e74c3c", alpha=0.7, label="Regression")]
+        ax.legend(handles=legend_els, fontsize=7, loc="upper right")
+
+    fig.suptitle(f"{dataset_name} — MTL Dual-Task Saliency (cls vs reg)", fontsize=11, fontweight="bold")
+    axes[-1][0].set_xlabel("Time", fontsize=9)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"     [✓] Saved MTL saliency comparison: {save_path}")
 
 
 # ====================================================================
@@ -1472,20 +1554,23 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
         # 1. Latent space t-SNE (dataset-level, all models in one figure)
         plot_latent_tsne(models, data_dict["X_full"], data_dict["X_man_full"], data_dict["y_full"], data_dict["dataset_name"], tsne_path)
 
-        # 2. Saliency heatmaps (raw + row-normalized side by side, per model)
-        for model_name in models.keys():
+        # 2. Saliency heatmaps — standard models; MTL gets a dedicated dual-saliency plot.
+        mtl_model_names = [n for n in models if artifacts.get(n, {}).get("is_type") == "mtl"]
+        non_mtl_names   = [n for n in models if n not in mtl_model_names]
+        for model_name in non_mtl_names:
             plot_latent_saliency_heatmap(artifacts, model_name, data_dict["timestamps"], data_dict["top_10_features"], mean_curve, std_curve, X_batch, y_batch, exp_path.name, saliency_paths[model_name])
+        if mtl_model_names:
+            mtl_sal_path = dataset_vis_dir / f"02_SALIENCY_mtl_{name_suffix}.png"
+            plot_mtl_saliency_comparison(artifacts, mtl_model_names, data_dict["timestamps"],
+                                          mean_curve, std_curve, exp_path.name, mtl_sal_path)
 
-        # 3. Latent → Feature mapping, per model
-        # compute_kinetic_feature_cache runs extract_kinetic_parameters_original on
-        # every sample and builds the finite-diff sensitivity profiles.  It is
-        # dataset-level (independent of the model) so we compute it once and reuse.
+        # 3. Latent → Feature mapping — skip MTL models (no latent-space decomposition stored).
         print(f"  -> Computing kinetic feature cache for {exp_path.name} ...")
         feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(
             X_batch, data_dict["timestamps"]
         )
         score_dfs, profile_dfs = [], []
-        for model_name in models.keys():
+        for model_name in non_mtl_names:
             result = plot_latent_feature_mapping(
                 artifacts, model_name,
                 X_batch, data_dict["timestamps"],

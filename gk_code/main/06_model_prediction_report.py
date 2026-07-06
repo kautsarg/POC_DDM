@@ -20,10 +20,13 @@ from sklearn.metrics import (
 )
 
 import config
+from scipy import stats as _scipy_stats
 
 # Moved to config.py (shared with 08_statistical_comparison.py).
 MODEL_KEY_MAP = config.MODEL_KEY_MAP
 MODEL_PRINT_MAP = config.MODEL_PRINT_MAP
+
+_MTL_REG_SENTINEL = -1.0  # matches model_utils_mtl.REG_SENTINEL
 
 
 def get_exp_paths(exp_folder):
@@ -373,6 +376,111 @@ def build_class_metrics_html(result):
 
 
 # ============================================================
+# MTL REGRESSION HELPERS
+# ============================================================
+
+def _mtl_regression_metrics(reg_preds_list, reg_trues_list):
+    """Compute per-fold and aggregated regression metrics; mask out sentinel values."""
+    fold_rows = []
+    for fold_i, (preds, trues) in enumerate(zip(reg_preds_list, reg_trues_list)):
+        preds = np.asarray(preds, dtype=float)
+        trues = np.asarray(trues, dtype=float)
+        valid = trues != _MTL_REG_SENTINEL
+        n_valid = int(valid.sum())
+        if n_valid < 2:
+            fold_rows.append({"fold": fold_i, "n_valid": n_valid,
+                               "mae": np.nan, "rmse": np.nan, "r2": np.nan, "pearson_r": np.nan})
+            continue
+        p, t = preds[valid], trues[valid]
+        mae  = float(np.mean(np.abs(p - t)))
+        rmse = float(np.sqrt(np.mean((p - t) ** 2)))
+        ss_res = np.sum((t - p) ** 2)
+        ss_tot = np.sum((t - t.mean()) ** 2)
+        r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
+        pr, _ = _scipy_stats.pearsonr(t, p)
+        fold_rows.append({"fold": fold_i, "n_valid": n_valid,
+                          "mae": mae, "rmse": rmse, "r2": r2, "pearson_r": float(pr)})
+    metrics_by_fold = fold_rows
+    valid_rows = [r for r in fold_rows if np.isfinite(r["mae"])]
+    agg = {}
+    for k in ("mae", "rmse", "r2", "pearson_r"):
+        vals = [r[k] for r in valid_rows]
+        agg[k + "_mean"] = float(np.mean(vals)) if vals else float("nan")
+        agg[k + "_std"]  = float(np.std(vals))  if vals else float("nan")
+    return metrics_by_fold, agg
+
+
+def render_mtl_scatter(mtl_reg_list, class_names):
+    """Predicted vs actual scatter (all folds concatenated), colored by class."""
+    if not mtl_reg_list:
+        return None
+    n_models = len(mtl_reg_list)
+    fig, axes = plt.subplots(1, n_models, figsize=(5 * n_models, 4.5), squeeze=False)
+    cmap = plt.cm.tab10
+
+    for ax, rd in zip(axes[0], mtl_reg_list):
+        all_preds, all_trues, all_cls = [], [], []
+        for fold_i, (preds, trues) in enumerate(zip(rd["reg_preds"], rd["reg_trues"])):
+            preds = np.asarray(preds, dtype=float)
+            trues = np.asarray(trues, dtype=float)
+            valid = trues != _MTL_REG_SENTINEL
+            if valid.sum() == 0:
+                continue
+            all_preds.append(preds[valid])
+            all_trues.append(trues[valid])
+            cls_fold = np.asarray(rd.get("y_trues_folds", [[]] * (fold_i + 1))[fold_i])
+            all_cls.append(cls_fold[valid] if len(cls_fold) == len(preds) else np.zeros(valid.sum(), dtype=int))
+        if not all_preds:
+            ax.set_visible(False)
+            continue
+        P = np.concatenate(all_preds)
+        T = np.concatenate(all_trues)
+        C = np.concatenate(all_cls)
+
+        for ci in np.unique(C):
+            mask = C == ci
+            label = class_names[int(ci)] if int(ci) < len(class_names) else str(ci)
+            ax.scatter(T[mask], P[mask], c=[cmap(int(ci) / max(len(class_names), 1))],
+                       alpha=0.5, s=20, label=label)
+        lo, hi = min(T.min(), P.min()), max(T.max(), P.max())
+        ax.plot([lo, hi], [lo, hi], "k--", lw=1)
+        _, agg = _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])
+        ax.set_title(f"{rd['name']}\nR²={agg['r2_mean']:.3f}  MAE={agg['mae_mean']:.3f}", fontsize=9)
+        ax.set_xlabel("True concentration", fontsize=8)
+        ax.set_ylabel("Predicted concentration", fontsize=8)
+        ax.legend(fontsize=7, ncol=2)
+        ax.grid(alpha=0.3)
+
+    plt.tight_layout()
+    return _fig_to_buf(fig)
+
+
+def render_mtl_metrics_table(mtl_reg_list):
+    """HTML table: per-model regression metrics (mean ± std across folds)."""
+    cell = "padding:6px 12px;border:1px solid #ddd;text-align:center;"
+    th_s = f"background:#2c3e50;color:white;{cell}"
+    header = "".join(f"<th style='{th_s}'>{c}</th>"
+                     for c in ["Model", "Folds", "n valid (mean)", "MAE", "RMSE", "R²", "Pearson r"])
+    rows_html = ""
+    for i, rd in enumerate(mtl_reg_list):
+        _, agg = _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])
+        n_valid_mean = np.mean([r["n_valid"] for r in _mtl_regression_metrics(rd["reg_preds"], rd["reg_trues"])[0]])
+        bg = "#f2f3f4" if i % 2 == 0 else "white"
+        def _fmt(m, s): return f"{m:.3f} ± {s:.3f}" if np.isfinite(m) else "—"
+        cells = [
+            rd["name"], len(rd["reg_preds"]), f"{n_valid_mean:.0f}",
+            _fmt(agg["mae_mean"], agg["mae_std"]),
+            _fmt(agg["rmse_mean"], agg["rmse_std"]),
+            _fmt(agg["r2_mean"], agg["r2_std"]),
+            _fmt(agg["pearson_r_mean"], agg["pearson_r_std"]),
+        ]
+        rows_html += "<tr>" + "".join(f"<td style='{cell}background:{bg};'>{c}</td>" for c in cells) + "</tr>"
+    return (f'<table style="border-collapse:collapse;font-size:13px;">'
+            f'<thead><tr>{header}</tr></thead>'
+            f'<tbody>{rows_html}</tbody></table>')
+
+
+# ============================================================
 # TABBED HTML BUILDER
 # ============================================================
 
@@ -650,6 +758,28 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
                                   _buf_to_img_html(buf, style="height:auto;max-width:700px;"))
     if roc_content:
         tabs.append(("roc", "ROC / PR", f'<div class="panel-row">{roc_content}</div>'))
+
+    # Tab 7: Regression — MTL concentration prediction (auto-detected by key presence)
+    mtl_reg_list = []
+    for r in model_results:
+        mk = r["key"]
+        reg_preds_key = f'y_reg_preds_{mk}_'
+        reg_trues_key = f'y_reg_trues_{mk}_'
+        if reg_preds_key in res_entry:
+            entry = {
+                "name": r["name"], "key": mk,
+                "reg_preds": res_entry[reg_preds_key],
+                "reg_trues": res_entry[reg_trues_key],
+                "y_trues_folds": res_entry.get("y_trues_", []),
+            }
+            mtl_reg_list.append(entry)
+    if mtl_reg_list:
+        reg_content = render_mtl_metrics_table(mtl_reg_list)
+        buf = render_mtl_scatter(mtl_reg_list, class_names)
+        if buf:
+            reg_content += _panel("Predicted vs Actual Concentration",
+                                   _buf_to_img_html(buf, style="height:auto;max-width:100%;"))
+        tabs.append(("regression", "Regression (MTL)", reg_content))
 
     # ---- Write output ----
     os.makedirs(out_dir, exist_ok=True)

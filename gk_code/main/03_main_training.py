@@ -10,6 +10,7 @@ sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
+from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
 import pandas as pd
@@ -78,6 +79,10 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
+    parser.add_argument("--mtl", action="store_true",
+                        help="Train MTL models only (classification + concentration regression heads). "
+                             "Results are merged into the same classification_performances*.joblib "
+                             "so standard models do not need to be re-run.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -104,6 +109,21 @@ if __name__ == "__main__":
     dataset = training_data["dataset"]
     kinetic_features = training_data["kinetic_features"]
     Y_well = training_data["Y_well"]
+
+    # Load concentration for MTL regression head (sentinel-encoded for missing values).
+    y_concentration = None
+    if args.mtl:
+        raw_conc = training_data.get("concentration", None)
+        if raw_conc is not None:
+            y_concentration = np.array([
+                float(v) if (v is not None and not (isinstance(v, float) and np.isnan(v)))
+                else _MTL_REG_SENTINEL
+                for v in np.asarray(raw_conc, dtype=object)
+            ], dtype=float)
+        else:
+            y_concentration = np.full(len(Y_well), _MTL_REG_SENTINEL, dtype=float)
+        print(f"  [MTL] Concentration loaded: {int((y_concentration != _MTL_REG_SENTINEL).sum())} "
+              f"/ {len(y_concentration)} samples have non-sentinel concentration.")
 
     # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
     # model_utils.build_neighbor_curve_stack). Soft-optional: unlike 03b_gnn_spatial_training.py
@@ -234,6 +254,11 @@ if __name__ == "__main__":
             # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]
 
+        # --mtl: replace models list with MTL-only keys so existing standard results
+        # are preserved in the joblib without redundant retraining.
+        if args.mtl:
+            models = list(MTL_MODEL_KEYS)
+
         model_interp_dir = exp_path / "model_interpretation"
 
         # --- REFERENCE TRAINING (this dataset's outlier filters, trained on the original curves) ---
@@ -269,6 +294,8 @@ if __name__ == "__main__":
                 coords=coords_full,
                 well_ids=well_ids_full,
                 k_neighbors=args.k_neighbors,
+                multitask=args.mtl,
+                y_concentration=y_concentration,
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -317,6 +344,8 @@ if __name__ == "__main__":
                     coords=coords_full,
                     well_ids=well_ids_full,
                     k_neighbors=args.k_neighbors,
+                    multitask=args.mtl,
+                    y_concentration=y_concentration,
                 )
 
             all_ml_results[clean_title]["Native"] = res_native
