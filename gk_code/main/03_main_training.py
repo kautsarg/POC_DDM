@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
             # Spatial-reconstruction variants inspired GNN:
             # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
-            # "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
 
             # # From pretained outlier unsupervised training encoder
             # "lstm_ae_clf",

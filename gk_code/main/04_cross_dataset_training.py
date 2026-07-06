@@ -176,8 +176,8 @@ if __name__ == "__main__":
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
     # for curve_type in args.curve_type:
-    # for curve_type in reversed(args.curve_type):
-    for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
+    for curve_type in reversed(args.curve_type):
+    # for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
         combined = combine_group(exp_paths, group_name, curve_type=curve_type)
@@ -260,7 +260,8 @@ if __name__ == "__main__":
                 dataset_name=group_name,
                 mode_name=fold_label,
                 cached_results=cached_fold,
-                models=reversed(models),
+                # models=reversed(models),
+                models=models,
                 checkpoint_fn=checkpoint,
                 KFS=top_10_features,
                 rerun_models=config.RERUN_MODELS,
