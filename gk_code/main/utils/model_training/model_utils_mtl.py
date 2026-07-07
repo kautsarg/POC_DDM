@@ -122,9 +122,19 @@ def _inverse_normalize_concentration(scaled_array, scaler, sentinel=REG_SENTINEL
 # final Dense softmax, then attaches two heads and wraps in MTLModel.
 
 def _mtl_wrap(inputs, embedding, n_classes):
-    """Attach dual heads to a shared embedding and wrap in MTLModel."""
+    """Attach dual heads to a shared embedding and wrap in MTLModel.
+
+    Classification head: Direct Dense(n_classes, softmax) — consistent with
+    single-task backbones that end at the same embedding dimension.
+
+    Regression head: Dense(16, relu) → Dense(1, linear) — one task-specific
+    hidden layer so the regression branch can learn its own projection from the
+    shared embedding rather than reading log-concentration directly from features
+    shaped by cross-entropy alone.
+    """
     cls_out = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(embedding)
-    reg_out = tf.keras.layers.Dense(1, activation='linear', name='reg_out')(embedding)
+    reg_h   = tf.keras.layers.Dense(16, activation='relu',   name='reg_hidden')(embedding)
+    reg_out = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
     return MTLModel(inputs=inputs, outputs=[cls_out, reg_out])
 
 
@@ -187,8 +197,8 @@ def create_transformer_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim
         ffn = tf.keras.layers.Dense(head_size)(ffn)
         x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn)
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
-    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
-    embedding = tf.keras.layers.Dropout(0.2)(embedding)
+    embedding = tf.keras.layers.Dense(16, activation='relu')(x)   # matches single-task Dense(16)
+    embedding = tf.keras.layers.Dropout(dropout)(embedding)
     return _mtl_wrap(inputs, embedding, n_classes)
 
 
