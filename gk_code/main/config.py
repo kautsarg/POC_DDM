@@ -278,6 +278,7 @@ MODEL_KEY_MAP = {
     "gru_lf":       ("y_preds_AC_gru_lf_",      "y_probs_AC_gru_lf_",     "classes_AC_gru_lf_"),
     "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_","y_probs_AC_cnn_gru_dual_","classes_AC_cnn_gru_dual_"),
     "cnn_trans_dual":("y_preds_AC_cnn_trans_dual_","y_probs_AC_cnn_trans_dual_","classes_AC_cnn_trans_dual_"),
+    "cnn_lstm_dual":("y_preds_AC_cnn_lstm_dual_","y_probs_AC_cnn_lstm_dual_","classes_AC_cnn_lstm_dual_"),
     "lstm_ae_clf":  ("y_preds_AC_lstm_ae_clf_",  "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
     "cnn_gru_gate":        ("y_preds_AC_cnn_gru_gate_",        "y_probs_AC_cnn_gru_gate_",        "classes_AC_cnn_gru_gate_"),
     "cnn_gru_hadamard":    ("y_preds_AC_cnn_gru_hadamard_",    "y_probs_AC_cnn_gru_hadamard_",    "classes_AC_cnn_gru_hadamard_"),
@@ -308,6 +309,19 @@ MODEL_KEY_MAP = {
     "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
     "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
     "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
+    "cnn_lf_mtl":                    ("y_preds_AC_cnn_lf_mtl_",                     "y_probs_AC_cnn_lf_mtl_",                     "classes_AC_cnn_lf_mtl_"),
+    "gru_lf_mtl":                    ("y_preds_AC_gru_lf_mtl_",                     "y_probs_AC_gru_lf_mtl_",                     "classes_AC_gru_lf_mtl_"),
+    "trans_lf_mtl":                  ("y_preds_AC_trans_lf_mtl_",                   "y_probs_AC_trans_lf_mtl_",                   "classes_AC_trans_lf_mtl_"),
+    "lstm_lf_mtl":                   ("y_preds_AC_lstm_lf_mtl_",                    "y_probs_AC_lstm_lf_mtl_",                    "classes_AC_lstm_lf_mtl_"),
+    "cnn_lstm_dual_mtl":             ("y_preds_AC_cnn_lstm_dual_mtl_",              "y_probs_AC_cnn_lstm_dual_mtl_",              "classes_AC_cnn_lstm_dual_mtl_"),
+    "cnn_gru_gate_mtl":              ("y_preds_AC_cnn_gru_gate_mtl_",               "y_probs_AC_cnn_gru_gate_mtl_",               "classes_AC_cnn_gru_gate_mtl_"),
+    "cnn_gru_hadamard_mtl":          ("y_preds_AC_cnn_gru_hadamard_mtl_",           "y_probs_AC_cnn_gru_hadamard_mtl_",           "classes_AC_cnn_gru_hadamard_mtl_"),
+    "cnn_gru_crossattn_mtl":         ("y_preds_AC_cnn_gru_crossattn_mtl_",          "y_probs_AC_cnn_gru_crossattn_mtl_",          "classes_AC_cnn_gru_crossattn_mtl_"),
+    "cnn_gru_film_mtl":              ("y_preds_AC_cnn_gru_film_mtl_",               "y_probs_AC_cnn_gru_film_mtl_",               "classes_AC_cnn_gru_film_mtl_"),
+    "cnn_trans_gate_mtl":            ("y_preds_AC_cnn_trans_gate_mtl_",             "y_probs_AC_cnn_trans_gate_mtl_",             "classes_AC_cnn_trans_gate_mtl_"),
+    "cnn_trans_hadamard_mtl":        ("y_preds_AC_cnn_trans_hadamard_mtl_",         "y_probs_AC_cnn_trans_hadamard_mtl_",         "classes_AC_cnn_trans_hadamard_mtl_"),
+    "cnn_trans_crossattn_mtl":       ("y_preds_AC_cnn_trans_crossattn_mtl_",        "y_probs_AC_cnn_trans_crossattn_mtl_",        "classes_AC_cnn_trans_crossattn_mtl_"),
+    "cnn_trans_film_mtl":            ("y_preds_AC_cnn_trans_film_mtl_",             "y_probs_AC_cnn_trans_film_mtl_",             "classes_AC_cnn_trans_film_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -315,8 +329,11 @@ MODEL_KEY_MAP = {
 # use inception smoothing.
 _MTL_MODEL_KEYS = {
     "cnn_mtl", "lstm_mtl", "gru_mtl", "rnn_mtl", "transformer_mtl",
-    "cnn_gru_dual_mtl", "cnn_trans_dual_mtl",
+    "cnn_gru_dual_mtl", "cnn_trans_dual_mtl", "cnn_lstm_dual_mtl",
     "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+    "cnn_lf_mtl", "gru_lf_mtl", "trans_lf_mtl", "lstm_lf_mtl",
+    "cnn_gru_gate_mtl", "cnn_gru_hadamard_mtl", "cnn_gru_crossattn_mtl", "cnn_gru_film_mtl",
+    "cnn_trans_gate_mtl", "cnn_trans_hadamard_mtl", "cnn_trans_crossattn_mtl", "cnn_trans_film_mtl",
 }
 _NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS
 MODEL_KEY_MAP.update({
@@ -329,7 +346,7 @@ MODEL_PRINT_MAP = {
     "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
     "knn": "KNN (ACA)", "ffi": "LR (FFI)",
     "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
-    "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
+    "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual", "cnn_lstm_dual": "CNN+LSTM Dual",
     "lstm_ae_clf": "LSTM-AE Clf",
     "cnn_gru_gate": "CNN+GRU Gate", "cnn_gru_hadamard": "CNN+GRU Hadamard",
     "cnn_gru_crossattn": "CNN+GRU CoAttn", "cnn_gru_film": "CNN+GRU FiLM",
@@ -341,8 +358,15 @@ MODEL_PRINT_MAP = {
     "cnn_mtl": "CNN MTL", "lstm_mtl": "LSTM MTL", "gru_mtl": "GRU MTL",
     "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
     "cnn_gru_dual_mtl": "CNN+GRU Dual MTL", "cnn_trans_dual_mtl": "CNN+Tr Dual MTL",
+    "cnn_lstm_dual_mtl": "CNN+LSTM Dual MTL",
     "cnn_gru_dual_cosine_recon_mtl": "CNN+GRU CosRecon MTL",
     "cnn_gru_dual_attn_recon_mtl": "CNN+GRU AttnRecon MTL",
+    "cnn_lf_mtl": "CNN LF MTL", "gru_lf_mtl": "GRU LF MTL",
+    "trans_lf_mtl": "Trans LF MTL", "lstm_lf_mtl": "LSTM LF MTL",
+    "cnn_gru_gate_mtl": "CNN+GRU Gate MTL", "cnn_gru_hadamard_mtl": "CNN+GRU Hadamard MTL",
+    "cnn_gru_crossattn_mtl": "CNN+GRU CoAttn MTL", "cnn_gru_film_mtl": "CNN+GRU FiLM MTL",
+    "cnn_trans_gate_mtl": "CNN+Tr Gate MTL", "cnn_trans_hadamard_mtl": "CNN+Tr Hadamard MTL",
+    "cnn_trans_crossattn_mtl": "CNN+Tr CoAttn MTL", "cnn_trans_film_mtl": "CNN+Tr FiLM MTL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

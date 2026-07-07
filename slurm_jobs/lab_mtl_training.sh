@@ -32,16 +32,19 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
-    --mtl
+    --mtl \
+    --force_rerun
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
     --task_id $REAL_TASK_ID \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
-    --n_splits 5
+    --n_splits 5 \
+    --force_rerun
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py \
     --task_id $REAL_TASK_ID \
-    --exp_folder "$TRAIN_FOLDER"
+    --exp_folder "$TRAIN_FOLDER" \
+    --force_rerun
 
 deactivate

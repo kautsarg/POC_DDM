@@ -4,6 +4,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import numpy as np
 import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
+import model_utils_gated
 
 REG_SENTINEL = -1.0
 
@@ -11,6 +12,10 @@ MTL_MODEL_KEYS = [
     'cnn_mtl', 'lstm_mtl', 'gru_mtl', 'rnn_mtl', 'transformer_mtl',
     'cnn_gru_dual_mtl', 'cnn_trans_dual_mtl',
     'cnn_gru_dual_cosine_recon_mtl', 'cnn_gru_dual_attn_recon_mtl',
+    'cnn_lf_mtl', 'gru_lf_mtl', 'trans_lf_mtl', 'lstm_lf_mtl',
+    'cnn_lstm_dual_mtl',
+    'cnn_gru_gate_mtl', 'cnn_gru_hadamard_mtl', 'cnn_gru_crossattn_mtl', 'cnn_gru_film_mtl',
+    'cnn_trans_gate_mtl', 'cnn_trans_hadamard_mtl', 'cnn_trans_crossattn_mtl', 'cnn_trans_film_mtl',
 ]
 
 
@@ -31,9 +36,9 @@ class MTLModel(tf.keras.Model):
         super().__init__(*args, **kwargs)
         self.reg_sentinel = reg_sentinel
         self.log_var_cls = self.add_weight(
-            'log_var_cls', shape=(), initializer='zeros', trainable=True)
+            name='log_var_cls', shape=(), initializer='zeros', trainable=True)
         self.log_var_reg = self.add_weight(
-            'log_var_reg', shape=(), initializer='zeros', trainable=True)
+            name='log_var_reg', shape=(), initializer='zeros', trainable=True)
 
     def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
         ce = tf.reduce_mean(
@@ -84,25 +89,29 @@ class MTLModel(tf.keras.Model):
 # ====================================================================
 
 def _normalize_concentration(conc_array):
-    """Fit StandardScaler on non-sentinel values; transform full array.
-    Sentinel entries are preserved as REG_SENTINEL (not scaled).
+    """Log10-transform then StandardScaler on non-sentinel values.
+
+    Pipeline: raw → log10 → z-score.  Sentinel entries are preserved unchanged.
+    Concentrations of 0 must already be encoded as REG_SENTINEL by the caller
+    (log10(0) is undefined; they are negative controls and masked from regression loss).
     Returns (scaled_array, fitted_scaler).
     """
     arr = conc_array.astype(float).copy()
     valid_mask = arr != REG_SENTINEL
     scaler = StandardScaler()
     if valid_mask.sum() > 0:
-        arr[valid_mask] = scaler.fit_transform(arr[valid_mask].reshape(-1, 1)).ravel()
+        log_vals = np.log10(arr[valid_mask])   # safe: caller sentinels 0s
+        arr[valid_mask] = scaler.fit_transform(log_vals.reshape(-1, 1)).ravel()
     return arr, scaler
 
 
 def _inverse_normalize_concentration(scaled_array, scaler, sentinel=REG_SENTINEL):
-    """Inverse-transform non-sentinel values using a previously fitted scaler."""
+    """Inverse of _normalize_concentration: inverse z-score then 10^x → original scale."""
     arr = scaled_array.astype(float).copy()
     valid_mask = arr != sentinel
     if valid_mask.sum() > 0 and hasattr(scaler, 'mean_'):
-        arr[valid_mask] = scaler.inverse_transform(
-            arr[valid_mask].reshape(-1, 1)).ravel()
+        log_back = scaler.inverse_transform(arr[valid_mask].reshape(-1, 1)).ravel()
+        arr[valid_mask] = np.power(10.0, log_back)
     return arr
 
 
@@ -268,3 +277,220 @@ def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16
 
     embedding = _build_cnn_gru_dual_branches_mtl(reconstructed)
     return _mtl_wrap(stack_input, embedding, n_classes)
+
+
+# ====================================================================
+# LATE FUSION MTL MODEL FACTORIES
+# ====================================================================
+# Each mirrors its non-MTL LF counterpart exactly up to the final softmax,
+# then attaches dual heads via _mtl_wrap([curve_in, feat_in], embedding, n_classes).
+
+# --- 9. CNN Late Fusion MTL ---
+def create_cnn_lf_mtl_model(T, n_features, n_classes):
+    input_curve = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    x = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    x = tf.keras.layers.Conv1D(8, 3, activation='relu')(x)
+    x = tf.keras.layers.Flatten()(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+
+    input_features = tf.keras.layers.Input(shape=(n_features,), name='features_input')
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    embedding = tf.keras.layers.Dropout(0.2)(z)
+    return _mtl_wrap([input_curve, input_features], embedding, n_classes)
+
+
+# --- 10. GRU Late Fusion MTL ---
+def create_gru_lf_mtl_model(T, n_features, n_classes):
+    input_curve = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(input_curve)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+
+    input_features = tf.keras.layers.Input(shape=(n_features,), name='features_input')
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    embedding = tf.keras.layers.Dropout(0.2)(z)
+    return _mtl_wrap([input_curve, input_features], embedding, n_classes)
+
+
+# --- 11. Transformer Late Fusion MTL ---
+def create_transformer_lf_mtl_model(T, n_features, n_classes, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    input_curve = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding='same', activation='relu')(input_curve)
+    x = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same')(x)
+    new_seq_len = x.shape[1]
+    positions = tf.range(start=0, limit=new_seq_len, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    x = x + pos_embedding
+    for _ in range(num_blocks):
+        attn = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
+        attn = tf.keras.layers.Dropout(dropout)(attn)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn)
+        ffn = tf.keras.layers.Dense(ff_dim, activation='relu')(x)
+        ffn = tf.keras.layers.Dropout(dropout)(ffn)
+        ffn = tf.keras.layers.Dense(head_size)(ffn)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn)
+    x = tf.keras.layers.GlobalAveragePooling1D()(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+
+    input_features = tf.keras.layers.Input(shape=(n_features,), name='features_input')
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+
+    merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    embedding = tf.keras.layers.Dropout(0.2)(z)
+    return _mtl_wrap([input_curve, input_features], embedding, n_classes)
+
+
+# --- 12. LSTM Late Fusion MTL ---
+def create_lstm_lf_mtl_model(T, n_features, n_classes):
+    input_curve = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(input_curve)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    curve_emb = tf.keras.layers.Dense(32, activation='relu')(x)
+
+    input_features = tf.keras.layers.Input(shape=(n_features,), name='features_input')
+    feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
+
+    merged_lf = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
+    z = tf.keras.layers.Dense(32, activation='relu')(merged_lf)
+    embedding = tf.keras.layers.Dropout(0.2)(z)
+    return _mtl_wrap([input_curve, input_features], embedding, n_classes)
+
+
+# ====================================================================
+# CNN+LSTM DUAL MTL
+# ====================================================================
+
+def _build_cnn_lstm_dual_branches_mtl(input_tensor):
+    """Dual-branch CNN + BiLSTM, self-contained twin of model_utils._build_cnn_lstm_dual_branches."""
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_tensor)
+    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
+    c = tf.keras.layers.Flatten()(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
+
+    l = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(input_tensor)
+    l = tf.keras.layers.LayerNormalization()(l)
+    l = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(l)
+    l = tf.keras.layers.Dropout(0.2)(l)
+    lstm_emb = tf.keras.layers.Dense(32, activation='relu')(l)
+
+    merged_dual = tf.keras.layers.Concatenate()([cnn_emb, lstm_emb])
+    z = tf.keras.layers.Dense(64, activation='relu')(merged_dual)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    return z
+
+
+def create_cnn_lstm_dual_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    embedding = _build_cnn_lstm_dual_branches_mtl(inputs)
+    return _mtl_wrap(inputs, embedding, n_classes)
+
+
+# ====================================================================
+# GATED FUSION MTL FACTORIES  (mirror model_utils_gated._ALL_FACTORIES)
+# ====================================================================
+# Each reuses the shared branch/fusion helpers from model_utils_gated but
+# replaces _head(merged, output_size) with Dense(64,relu)+Dropout → _mtl_wrap.
+
+def _gated_mtl_head(inp, merged, n_classes):
+    """Dense(64,relu) → Dropout → dual heads → MTLModel (replaces _head for MTL)."""
+    z = tf.keras.layers.Dense(64, activation='relu', name='head_d1')(merged)
+    z = tf.keras.layers.Dropout(0.2, name='head_drop')(z)
+    return _mtl_wrap(inp, z, n_classes)
+
+
+def create_cnn_gru_gate_mtl_model(T, n_classes):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    gru_emb    = model_utils_gated._gru_branch(inp, pfx='gru')
+    merged     = model_utils_gated._fuse_gate(cnn_emb, gru_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_gru_hadamard_mtl_model(T, n_classes):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    gru_emb    = model_utils_gated._gru_branch(inp, pfx='gru')
+    merged     = model_utils_gated._fuse_hadamard(cnn_emb, gru_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_gru_crossattn_mtl_model(T, n_classes, num_heads=2):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_seq, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    gru_seq, gru_emb = model_utils_gated._gru_branch(inp, return_seq=True, pfx='gru')
+    merged = model_utils_gated._fuse_coattn(cnn_seq, cnn_emb, gru_seq, gru_emb,
+                                            num_heads=num_heads, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_gru_film_mtl_model(T, n_classes):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    gru_emb    = model_utils_gated._gru_branch(inp, pfx='gru')
+    merged     = model_utils_gated._fuse_film(cnn_emb, gru_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_trans_gate_mtl_model(T, n_classes,
+                                    head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    trans_emb  = model_utils_gated._trans_branch(inp, head_size, num_heads, ff_dim,
+                                                 num_blocks, dropout, pfx='trans')
+    merged     = model_utils_gated._fuse_gate(cnn_emb, trans_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_trans_hadamard_mtl_model(T, n_classes,
+                                        head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    trans_emb  = model_utils_gated._trans_branch(inp, head_size, num_heads, ff_dim,
+                                                 num_blocks, dropout, pfx='trans')
+    merged     = model_utils_gated._fuse_hadamard(cnn_emb, trans_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_trans_crossattn_mtl_model(T, n_classes,
+                                         head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_seq, cnn_emb     = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    trans_seq, trans_emb = model_utils_gated._trans_branch(inp, head_size, num_heads, ff_dim,
+                                                           num_blocks, dropout,
+                                                           return_seq=True, pfx='trans')
+    merged = model_utils_gated._fuse_coattn(cnn_seq, cnn_emb, trans_seq, trans_emb,
+                                            num_heads=num_heads, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+def create_cnn_trans_film_mtl_model(T, n_classes,
+                                    head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    inp = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    _, cnn_emb = model_utils_gated._cnn_branch(inp, pfx='cnn')
+    trans_emb  = model_utils_gated._trans_branch(inp, head_size, num_heads, ff_dim,
+                                                 num_blocks, dropout, pfx='trans')
+    merged     = model_utils_gated._fuse_film(cnn_emb, trans_emb, pfx='fuse')
+    return _gated_mtl_head(inp, merged, n_classes)
+
+
+_ALL_GATED_MTL_FACTORIES = {
+    'cnn_gru_gate_mtl':        create_cnn_gru_gate_mtl_model,
+    'cnn_gru_hadamard_mtl':    create_cnn_gru_hadamard_mtl_model,
+    'cnn_gru_crossattn_mtl':   create_cnn_gru_crossattn_mtl_model,
+    'cnn_gru_film_mtl':        create_cnn_gru_film_mtl_model,
+    'cnn_trans_gate_mtl':      create_cnn_trans_gate_mtl_model,
+    'cnn_trans_hadamard_mtl':  create_cnn_trans_hadamard_mtl_model,
+    'cnn_trans_crossattn_mtl': create_cnn_trans_crossattn_mtl_model,
+    'cnn_trans_film_mtl':      create_cnn_trans_film_mtl_model,
+}

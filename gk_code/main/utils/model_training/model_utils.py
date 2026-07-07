@@ -34,6 +34,9 @@ from model_utils_mtl import (
     create_rnn_mtl_model, create_transformer_mtl_model,
     create_cnn_gru_dual_mtl_model, create_cnn_trans_dual_mtl_model,
     create_cnn_gru_dual_attn_recon_mtl_model,
+    create_cnn_lf_mtl_model, create_gru_lf_mtl_model, create_transformer_lf_mtl_model,
+    create_lstm_lf_mtl_model, create_cnn_lstm_dual_mtl_model,
+    _ALL_GATED_MTL_FACTORIES,
     _normalize_concentration, _inverse_normalize_concentration,
     MTL_MODEL_KEYS, REG_SENTINEL,
 )
@@ -151,6 +154,37 @@ def create_cnn_gru_dual_model(input_size_curve, output_size, inception_smoothing
     outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
 
     # Compile
+    model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+
+def _build_cnn_lstm_dual_branches(input_curve):
+    """Dual-branch CNN (Local) + BiLSTM (Global) feature extractor. Mirror of _build_cnn_gru_dual_branches."""
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
+    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
+    c = tf.keras.layers.Flatten()(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
+
+    l = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(input_curve)
+    l = tf.keras.layers.LayerNormalization()(l)
+    l = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(l)
+    l = tf.keras.layers.Dropout(0.2)(l)
+    lstm_emb = tf.keras.layers.Dense(32, activation='relu')(l)
+
+    merged = tf.keras.layers.Concatenate()([cnn_emb, lstm_emb])
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
+    z = tf.keras.layers.Dropout(0.2)(z)
+    return z
+
+
+def create_cnn_lstm_dual_model(input_size_curve, output_size, inception_smoothing=False):
+    """Dual-branch CNN (Local) + BiLSTM (Global) model."""
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    x = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+    z = _build_cnn_lstm_dual_branches(x)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
     model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
@@ -620,6 +654,7 @@ _XAI_SAVE_NAME = {
     'trans_lf': 'transformer_lf',
     'cnn_gru_dual': 'cnn_gru_dual',
     'cnn_trans_dual': 'cnn_trans_dual',
+    'cnn_lstm_dual': 'cnn_lstm_dual',
     'lstm_ae_clf': 'lstm_ae_clf',
     **{name: name for name in model_utils_gated._ALL_FACTORIES},
 }
@@ -687,6 +722,7 @@ def evaluate_outlier_filters(
         "gru_lf": ("y_preds_AC_gru_lf_", "y_probs_AC_gru_lf_", "classes_AC_gru_lf_"),
         "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
         "cnn_trans_dual": ("y_preds_AC_cnn_trans_dual_", "y_probs_AC_cnn_trans_dual_", "classes_AC_cnn_trans_dual_"),
+        "cnn_lstm_dual": ("y_preds_AC_cnn_lstm_dual_", "y_probs_AC_cnn_lstm_dual_", "classes_AC_cnn_lstm_dual_"),
         "lstm_ae_clf": ("y_preds_AC_lstm_ae_clf_", "y_probs_AC_lstm_ae_clf_", "classes_AC_lstm_ae_clf_"),
         "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
         "cnn_gru_dual_attn_recon": ("y_preds_AC_cnn_gru_dual_attn_recon_", "y_probs_AC_cnn_gru_dual_attn_recon_", "classes_AC_cnn_gru_dual_attn_recon_"),
@@ -703,6 +739,13 @@ def evaluate_outlier_filters(
         "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
         "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
         "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
+        "cnn_lf_mtl":                    ("y_preds_AC_cnn_lf_mtl_",                     "y_probs_AC_cnn_lf_mtl_",                     "classes_AC_cnn_lf_mtl_"),
+        "gru_lf_mtl":                    ("y_preds_AC_gru_lf_mtl_",                     "y_probs_AC_gru_lf_mtl_",                     "classes_AC_gru_lf_mtl_"),
+        "trans_lf_mtl":                  ("y_preds_AC_trans_lf_mtl_",                   "y_probs_AC_trans_lf_mtl_",                   "classes_AC_trans_lf_mtl_"),
+        "lstm_lf_mtl":                   ("y_preds_AC_lstm_lf_mtl_",                    "y_probs_AC_lstm_lf_mtl_",                    "classes_AC_lstm_lf_mtl_"),
+        "cnn_lstm_dual_mtl":             ("y_preds_AC_cnn_lstm_dual_mtl_",              "y_probs_AC_cnn_lstm_dual_mtl_",              "classes_AC_cnn_lstm_dual_mtl_"),
+        **{f"{name}": (f"y_preds_AC_{name}_", f"y_probs_AC_{name}_", f"classes_AC_{name}_")
+           for name in _ALL_GATED_MTL_FACTORIES},
     }
 
     model_print_map = {
@@ -710,7 +753,7 @@ def evaluate_outlier_filters(
         "rnn": "RNN (ACA)", "transformer": "Trans (ACA)", "rf": "RF (ACA)",
         "knn": "KNN (ACA)", "ffi": "LR (FFI)",
         "cnn_lf": "CNN LF", "lstm_lf": "LSTM LF", "trans_lf": "Trans LF", "gru_lf": "GRU LF",
-        "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual",
+        "cnn_gru_dual": "CNN+GRU Dual", "cnn_trans_dual": "CNN+Tr Dual", "cnn_lstm_dual": "CNN+LSTM Dual",
         "lstm_ae_clf": "LSTM-AE Clf",
         "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
         "cnn_gru_gate": "CNN+GRU Gate", "cnn_gru_hadamard": "CNN+GRU Hadamard",
@@ -721,8 +764,15 @@ def evaluate_outlier_filters(
         "cnn_mtl": "CNN MTL", "lstm_mtl": "LSTM MTL", "gru_mtl": "GRU MTL",
         "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
         "cnn_gru_dual_mtl": "CNN+GRU Dual MTL", "cnn_trans_dual_mtl": "CNN+Tr Dual MTL",
+        "cnn_lstm_dual_mtl": "CNN+LSTM Dual MTL",
         "cnn_gru_dual_cosine_recon_mtl": "CNN+GRU CosRecon MTL",
         "cnn_gru_dual_attn_recon_mtl": "CNN+GRU AttnRecon MTL",
+        "cnn_lf_mtl": "CNN LF MTL", "gru_lf_mtl": "GRU LF MTL",
+        "trans_lf_mtl": "Trans LF MTL", "lstm_lf_mtl": "LSTM LF MTL",
+        "cnn_gru_gate_mtl": "CNN+GRU Gate MTL", "cnn_gru_hadamard_mtl": "CNN+GRU Hadamard MTL",
+        "cnn_gru_crossattn_mtl": "CNN+GRU CoAttn MTL", "cnn_gru_film_mtl": "CNN+GRU FiLM MTL",
+        "cnn_trans_gate_mtl": "CNN+Tr Gate MTL", "cnn_trans_hadamard_mtl": "CNN+Tr Hadamard MTL",
+        "cnn_trans_crossattn_mtl": "CNN+Tr CoAttn MTL", "cnn_trans_film_mtl": "CNN+Tr FiLM MTL",
     }
 
     # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
@@ -888,7 +938,15 @@ def evaluate_outlier_filters(
                 std = np.std(fold_accs) * 100
 
                 print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: Cached")
+                _reg_suffix = ""
+                _rk = f'y_reg_preds_{_base_m}_'
+                _tk = f'y_reg_trues_{_base_m}_'
+                if _rk in res_entry and _tk in res_entry:
+                    _rp = np.concatenate(res_entry[_rk]); _rt = np.concatenate(res_entry[_tk])
+                    _vm = _rt != REG_SENTINEL
+                    if _vm.sum() >= 2:
+                        _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
+                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: Cached")
                 if m in _recon_models_left:
                     _recon_models_left.discard(m)
                     if not _recon_models_left:
@@ -1008,7 +1066,7 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
-                elif _base_m in ["cnn_gru_dual", "cnn_trans_dual", "cnn_gru_dual_cosine_recon"]:
+                elif _base_m in ["cnn_gru_dual", "cnn_trans_dual", "cnn_lstm_dual", "cnn_gru_dual_cosine_recon"]:
                     tf.keras.backend.clear_session()
 
                     if _base_m == "cnn_gru_dual":
@@ -1016,6 +1074,9 @@ def evaluate_outlier_filters(
                         epochs = 500
                     elif _base_m == "cnn_trans_dual":
                         model = create_cnn_transformer_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
+                        epochs = 500
+                    elif _base_m == "cnn_lstm_dual":
+                        model = create_cnn_lstm_dual_model(X_train_curve.shape[1], n_classes, inception_smoothing=_model_inc)
                         epochs = 500
                     elif _base_m == "cnn_gru_dual_cosine_recon":
                         # Same architecture as cnn_gru_dual -- only the input curve differs
@@ -1097,7 +1158,20 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_attn_recon_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
                         epochs = 500
+                    elif _base_m == 'cnn_lf_mtl':
+                        model = create_cnn_lf_mtl_model(T, X_train_man.shape[1], n_classes); epochs = 1000
+                    elif _base_m == 'gru_lf_mtl':
+                        model = create_gru_lf_mtl_model(T, X_train_man.shape[1], n_classes); epochs = 500
+                    elif _base_m == 'trans_lf_mtl':
+                        model = create_transformer_lf_mtl_model(T, X_train_man.shape[1], n_classes); epochs = 500
+                    elif _base_m == 'lstm_lf_mtl':
+                        model = create_lstm_lf_mtl_model(T, X_train_man.shape[1], n_classes); epochs = 500
+                    elif _base_m == 'cnn_lstm_dual_mtl':
+                        model = create_cnn_lstm_dual_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m in _ALL_GATED_MTL_FACTORIES:
+                        model = _ALL_GATED_MTL_FACTORIES[_base_m](T, n_classes); epochs = 500
                     model.compile(optimizer=tf.keras.optimizers.Adam(), metrics=['accuracy'])
+                    _is_lf_mtl = 'lf' in _base_m
 
                     # Fold-level concentration: normalize on train non-sentinels; apply to val/test.
                     conc_train_raw = (y_conc_filtered[train_idx]
@@ -1114,19 +1188,24 @@ def evaluate_outlier_filters(
                         conc_test_scaled[_valid_test] = _conc_scaler.transform(
                             conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
 
+                    _x_tr_fit = [X_train_curve_fit, X_train_man_fit] if _is_lf_mtl else X_train_curve_fit
+                    _x_val_in = [X_val_curve, X_val_man]             if _is_lf_mtl else X_val_curve
+                    _x_tr     = [X_train_curve, X_train_man]         if _is_lf_mtl else X_train_curve
+                    _x_te     = [X_test_curve, X_test_man]           if _is_lf_mtl else X_test_curve
+
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
                         model.fit(
-                            X_train_curve_fit,
+                            _x_tr_fit,
                             {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
-                            validation_data=(X_val_curve,
+                            validation_data=(_x_val_in,
                                              {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                             callbacks=_fit_callbacks)
                     else:
                         model.fit(
-                            X_train_curve,
+                            _x_tr,
                             {'cls_out': y_train, 'reg_out': conc_train_scaled},
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0)
 
@@ -1135,7 +1214,7 @@ def evaluate_outlier_filters(
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
-                    cls_prob, reg_pred_scaled = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = model.predict(_x_te, verbose=0)
                     pred = np.argmax(cls_prob, axis=1)
                     cls = np.unique(y_encoded)
                     reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
@@ -1288,7 +1367,13 @@ def evaluate_outlier_filters(
             acc = np.mean(fold_accs) * 100
             std = np.std(fold_accs) * 100
 
-            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}% | Duration: {formatted_time}")
+            _reg_suffix = ""
+            if _base_m in MTL_MODEL_KEYS and reg_preds_per_fold:
+                _rp = np.concatenate(reg_preds_per_fold); _rt = np.concatenate(reg_trues_per_fold)
+                _vm = _rt != REG_SENTINEL
+                if _vm.sum() >= 2:
+                    _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
+            print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: {formatted_time}")
 
             if m in _recon_models_left:
                 _recon_models_left.discard(m)
@@ -1367,6 +1452,14 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             method_info.append(('CNN+GRU Dual (Cosine Recon)', 'y_preds_AC_cnn_gru_dual_cosine_recon_'))
         if 'y_preds_AC_cnn_gru_dual_attn_recon_' in sample_res:
             method_info.append(('CNN+GRU Dual (Attn Recon)', 'y_preds_AC_cnn_gru_dual_attn_recon_'))
+        # Catch any remaining models registered in config.MODEL_KEY_MAP (e.g. MTL, cnn_lstm_dual,
+        # future additions) that are present in results but not yet in method_info.
+        _already_added = {_key for _, _key in method_info}
+        for _mname, (_pk, _, _) in config.MODEL_KEY_MAP.items():
+            if _pk in sample_res and _pk not in _already_added:
+                _label = config.MODEL_PRINT_MAP.get(_mname, _mname)
+                method_info.append((_label, _pk))
+                _already_added.add(_pk)
         # Dynamically add _inc variants for any inception-smoothed models present in results.
         for _name, _key in list(method_info):
             _inc_key = _key.rstrip("_") + "_inc_"
@@ -1427,11 +1520,77 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
 
     fig_acc.suptitle(f"Model Accuracies | {mode_name}: {dataset_name}", fontsize=18, fontweight='bold', y=0.98)
     plt.tight_layout()
-    
+
     if save_prefix:
         acc_path = f"{save_prefix}_accuracies.png"
         fig_acc.savefig(acc_path, bbox_inches='tight', dpi=300, facecolor='white')
     plt.close(fig_acc)
+
+    # --- 1b. PLOT MTL REGRESSION METRICS ---
+    def _reg_metrics(preds_list, trues_list):
+        """RMSE, MAE, R² across fold lists, sentinel-masked. Returns None if < 2 valid samples."""
+        rp = np.concatenate(preds_list); rt = np.concatenate(trues_list)
+        vm = rt != REG_SENTINEL
+        if vm.sum() < 2:
+            return None
+        p, t = rp[vm], rt[vm]
+        rmse = float(np.sqrt(np.mean((p - t) ** 2)))
+        mae  = float(np.mean(np.abs(p - t)))
+        ss_tot = float(np.sum((t - t.mean()) ** 2))
+        r2 = 1.0 - float(np.sum((t - p) ** 2)) / ss_tot if ss_tot > 0 else 0.0
+        return rmse, mae, r2
+
+    # Collect MTL models that have regression results in at least one filter.
+    mtl_reg_info = []
+    for title, m_key in method_info:
+        reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1)
+        if any(reg_key in results_dict.get(f, {}) for f in outlier_filters):
+            mtl_reg_info.append((title, m_key))
+
+    if mtl_reg_info:
+        fig_reg, axes_reg = plt.subplots(
+            len(mtl_reg_info), 2,
+            figsize=(14, 4 * len(mtl_reg_info)),
+            squeeze=False,
+        )
+        for row, (title, m_key) in enumerate(mtl_reg_info):
+            reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1)
+            tru_key = m_key.replace('y_preds_AC_', 'y_reg_trues_', 1)
+            rmse_vals, mae_vals, r2_vals, f_labels, f_colors = [], [], [], [], []
+            for fi, f in enumerate(outlier_filters):
+                res = results_dict.get(f, {})
+                if reg_key not in res or tru_key not in res:
+                    continue
+                m = _reg_metrics(res[reg_key], res[tru_key])
+                if m is None:
+                    continue
+                rmse_vals.append(m[0]); mae_vals.append(m[1]); r2_vals.append(m[2])
+                f_labels.append(str(f) if f is not None else "No Filter")
+                f_colors.append(colors[fi] if fi < len(colors) else '#888888')
+
+            ax_r = axes_reg[row, 0]
+            bars = ax_r.bar(f_labels, rmse_vals, color=f_colors, edgecolor='black', alpha=0.8)
+            ax_r.bar_label(bars, labels=[f'{v:,.2f}' for v in rmse_vals], padding=4, fontsize=9, fontweight='bold')
+            for j, r2 in enumerate(r2_vals):
+                ax_r.text(j, 0, f'R²={r2:.3f}', ha='center', va='bottom', fontsize=8, color='navy', fontweight='bold')
+            ax_r.set_title(f'{title}\nRMSE', fontsize=11, fontweight='bold')
+            ax_r.set_ylabel('RMSE'); ax_r.grid(axis='y', linestyle='--', alpha=0.3)
+            ax_r.set_xticks(range(len(f_labels))); ax_r.set_xticklabels(f_labels, rotation=15, ha='right')
+
+            ax_m = axes_reg[row, 1]
+            bars = ax_m.bar(f_labels, mae_vals, color=f_colors, edgecolor='black', alpha=0.8)
+            ax_m.bar_label(bars, labels=[f'{v:,.2f}' for v in mae_vals], padding=4, fontsize=9, fontweight='bold')
+            for j, r2 in enumerate(r2_vals):
+                ax_m.text(j, 0, f'R²={r2:.3f}', ha='center', va='bottom', fontsize=8, color='navy', fontweight='bold')
+            ax_m.set_title(f'{title}\nMAE', fontsize=11, fontweight='bold')
+            ax_m.set_ylabel('MAE'); ax_m.grid(axis='y', linestyle='--', alpha=0.3)
+            ax_m.set_xticks(range(len(f_labels))); ax_m.set_xticklabels(f_labels, rotation=15, ha='right')
+
+        fig_reg.suptitle(f'MTL Regression Metrics | {mode_name}: {dataset_name}', fontsize=16, fontweight='bold')
+        plt.tight_layout()
+        if save_prefix:
+            fig_reg.savefig(f'{save_prefix}_regression.png', bbox_inches='tight', dpi=300, facecolor='white')
+        plt.close(fig_reg)
 
     # --- 2. PLOT DATA COMPOSITION ---
     n_normals = [results_dict[f]['mask_count'] for f in outlier_filters if f in results_dict]
@@ -1459,28 +1618,42 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
     plt.close(fig_comp)
     
    # --- 3. CONSOLE LEADERBOARD PRINT ---
-    print(f"\n  🏆 Top Combinations for {mode_name}: {dataset_name}")
-    print("  " + "-"*105)
-    
     all_results = []
     for title, m_key in method_info:
         for f in outlier_filters:
             if f not in results_dict: continue
             res = results_dict[f]
             if m_key not in res: continue
-            
+
             fold_accs = [accuracy_score(yt, yp) * 100 for yt, yp in zip(res['y_trues_'], res[m_key])]
-    
-            if len(fold_accs) > 0:
-                mean_acc = np.mean(fold_accs)
-                std_acc = np.std(fold_accs)
-                filt_name = str(f) if f is not None else "Baseline (None)"
-                all_results.append((mean_acc, std_acc, dataset_name, mode_name, title, filt_name))
-            
+            if not fold_accs:
+                continue
+            mean_acc = np.mean(fold_accs)
+            std_acc  = np.std(fold_accs)
+            filt_name = str(f) if f is not None else "Baseline (None)"
+            rmse_str = mae_str = r2_str = ""
+            reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1)
+            tru_key = m_key.replace('y_preds_AC_', 'y_reg_trues_', 1)
+            if reg_key in res and tru_key in res:
+                _rm = _reg_metrics(res[reg_key], res[tru_key])
+                if _rm is not None:
+                    rmse_str = f"{_rm[0]:,.4f}"
+                    mae_str  = f"{_rm[1]:,.4f}"
+                    r2_str   = f"{_rm[2]:.4f}"
+            all_results.append((mean_acc, std_acc, dataset_name, mode_name, title, filt_name,
+                                 rmse_str, mae_str, r2_str))
+
     all_results.sort(key=lambda x: x[0], reverse=True)
-    
-    for i, (acc, std_acc, d_name, m_name, method, filt) in enumerate(all_results):
-        print(f"  {i+1:2d}. {acc:6.2f}% ± {std_acc:5.2f}% | Data: {d_name[:15]:<15} | Model: {method[:20]:<20} | Filter: {filt[:30]}")
-    print("  " + "-"*105 + "\n")
+
+    has_reg = any(r[6] for r in all_results)
+    hdr_width = 133 if has_reg else 105
+    print(f"\n  🏆 Top Combinations for {mode_name}: {dataset_name}")
+    print("  " + "-" * hdr_width)
+    for i, (acc, std_acc, d_name, m_name, method, filt, rmse_str, mae_str, r2_str) in enumerate(all_results):
+        reg_cols = (f" | RMSE: {rmse_str:<12} | MAE: {mae_str:<12} | R²: {r2_str:<6}"
+                    if rmse_str else " " * 46)
+        print(f"  {i+1:2d}. {acc:6.2f}% ± {std_acc:5.2f}%{reg_cols}"
+              f"| Data: {d_name[:15]:<15} | Model: {method[:20]:<20} | Filter: {filt[:30]}")
+    print("  " + "-" * hdr_width + "\n")
     
     return all_results

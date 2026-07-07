@@ -117,11 +117,16 @@ if __name__ == "__main__":
         if raw_conc is not None:
             _arr = np.asarray(raw_conc, dtype=object)
             _float_arr = np.array([float(v) if v is not None else np.nan for v in _arr], dtype=float)
-            y_concentration = np.where(np.isnan(_float_arr), _MTL_REG_SENTINEL, _float_arr)
+            # Mask None (→ nan) AND zero (negative controls, log10 undefined) as sentinel.
+            y_concentration = np.where(np.isnan(_float_arr) | (_float_arr == 0.0),
+                                        _MTL_REG_SENTINEL, _float_arr)
         else:
             y_concentration = np.full(len(Y_well), _MTL_REG_SENTINEL, dtype=float)
-        print(f"  [MTL] Concentration loaded: {int((y_concentration != _MTL_REG_SENTINEL).sum())} "
-              f"/ {len(y_concentration)} samples have non-sentinel concentration.")
+        _n_valid = int((y_concentration != _MTL_REG_SENTINEL).sum())
+        _n_zero  = int((_float_arr == 0.0).sum()) if raw_conc is not None else 0
+        print(f"  [MTL] Concentration loaded: {_n_valid} / {len(y_concentration)} samples "
+              f"have non-sentinel concentration"
+              + (f" ({_n_zero} zero/negative-control masked)." if _n_zero else "."))
 
     # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
     # model_utils.build_neighbor_curve_stack). Soft-optional: unlike 03b_gnn_spatial_training.py
@@ -252,15 +257,23 @@ if __name__ == "__main__":
             # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
         ]
 
-        # --mtl: replace models list with MTL-only keys so existing standard results
-        # are preserved in the joblib without redundant retraining.
+        # MULTI TASK LEARNING (MTL) MODELS: classification + concentration regression heads
         if args.mtl:
-            models = list(MTL_MODEL_KEYS)
+            # models = list(MTL_MODEL_KEYS)
 
             models = {
-                "cnn_mtl", "lstm_mtl", "gru_mtl", "rnn_mtl", "transformer_mtl",
-                "cnn_gru_dual_mtl", "cnn_trans_dual_mtl",
-                "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+                "cnn_mtl", 
+                "cnn_lf_mtl",
+                
+                "gru_mtl", "cnn_gru_dual_mtl",
+                "gru_lf_mtl"
+
+                "transformer_mtl", "cnn_trans_dual_mtl",
+                "trans_lf_mtl",
+
+                # "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+
+                # "rnn_mtl",  "lstm_mtl",
             }
 
         model_interp_dir = exp_path / "model_interpretation"
