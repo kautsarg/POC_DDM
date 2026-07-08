@@ -192,6 +192,8 @@ if __name__ == "__main__":
                 if not isinstance(_res, dict):
                     continue
                 for _rk in list(_res.keys()):
+                    if not isinstance(_rk, str):
+                        continue
                     _is_mtl = _rk in _mtl_result_keys
                     _is_model_key = any(_rk.startswith(p) for p in
                                         ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
@@ -285,7 +287,7 @@ if __name__ == "__main__":
                 "cnn_lf_mtl",
                 
                 "gru_mtl", "cnn_gru_dual_mtl",
-                "gru_lf_mtl"
+                "gru_lf_mtl",
 
                 "transformer_mtl", "cnn_trans_dual_mtl",
                 "trans_lf_mtl",

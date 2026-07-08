@@ -27,27 +27,58 @@ MTL_MODEL_KEYS = [
 class MTLModel(tf.keras.Model):
     """Shared-backbone model with classification + regression heads.
 
-    Loss = exp(-s_cls)*CE + s_cls + exp(-s_reg)*MSE_masked + s_reg
-    where s_cls, s_reg are learnable log-variance scalars (Kendall 2018).
-    Regression targets encoded as REG_SENTINEL are masked out of the MSE.
+    Active loss — Kendall (2018) uncertainty weighting (2 learnable scalars):
+        L = exp(-s_cls)*CE + s_cls + exp(-s_reg)*MSE_masked + s_reg
+
+    UW-SO alternative (commented out below) — single trainable temperature T:
+        Analytical weights w_i ∝ 1/L_i (stop_gradient); only global scale T is learned.
+        L = exp(-log_T) * (w_cls*CE + w_reg*MSE_masked) + log_T
+        Ref: "Investigating Uncertainty Weighting for MTL: Insights and Analytical Alternative"
+        To switch: comment out the Kendall blocks and uncomment the UW-SO blocks.
     """
 
     def __init__(self, *args, reg_sentinel=REG_SENTINEL, **kwargs):
         super().__init__(*args, **kwargs)
         self.reg_sentinel = reg_sentinel
+        # ── Kendall (2018): 2 learnable log-variance scalars ─────────────────
         self.log_var_cls = self.add_weight(
             name='log_var_cls', shape=(), initializer='zeros', trainable=True)
         self.log_var_reg = self.add_weight(
             name='log_var_reg', shape=(), initializer='zeros', trainable=True)
+        # ── UW-SO: single temperature scalar (replace the two above) ─────────
+        # self.log_T = self.add_weight(
+        #     name='log_T', shape=(), initializer='zeros', trainable=True)
 
     def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
+        n_valid = tf.reduce_sum(mask)
         mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
-               / (tf.reduce_sum(mask) + 1e-8))
+               / (n_valid + 1e-8))
+
+        # ── Kendall (2018) ────────────────────────────────────────────────────
         loss = (tf.exp(-self.log_var_cls) * ce + self.log_var_cls
                 + tf.exp(-self.log_var_reg) * mse + self.log_var_reg)
+
+        # ── UW-SO (comment out Kendall block above and uncomment this) ────────
+        # # Analytical inverse-loss weights (stop_gradient: no backprop through ratio)
+        # eps = 1e-8
+        # ce_sg  = tf.stop_gradient(ce)
+        # mse_sg = tf.stop_gradient(mse)
+        # inv_ce  = 1.0 / (ce_sg + eps)
+        # # Zero regression weight when all targets are sentinels (nothing to regress)
+        # inv_mse = tf.cond(n_valid > 0,
+        #                   lambda: 1.0 / (mse_sg + eps),
+        #                   lambda: tf.constant(0.0))
+        # Z      = inv_ce + inv_mse + eps
+        # w_cls  = inv_ce  / Z   # in [0,1], sums to 1 with w_reg
+        # w_reg  = inv_mse / Z
+        # # Single-param scaled loss; log_T regularises the overall scale
+        # weighted = w_cls * ce + w_reg * mse
+        # loss = tf.exp(-self.log_T) * weighted + self.log_T
+        # # ∂L/∂log_T = 0  →  log_T* = log(weighted_loss)  — T tracks loss magnitude
+
         return loss, ce, mse
 
     def train_step(self, data):
@@ -61,6 +92,7 @@ class MTLModel(tf.keras.Model):
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
                 | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse})
+        # UW-SO: add 'log_T': self.log_T to the return dict above for monitoring
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
