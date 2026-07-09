@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -N multi_03_train_subset
+#PBS -l walltime=48:00:00
+#PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
+#PBS -J 0-3
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_03_train_subset/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_03_train_subset/
+#PBS -k eo
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/multi_03_train_subset
+
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+VALID_IDS=(5 7 9 11)
+PBS_TASK_ID=${VALID_IDS[$PBS_ARRAY_INDEX]}
+
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $PBS_TASK_ID --exp_folder /rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_multi --n_splits 1
+
+deactivate
