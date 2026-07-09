@@ -12,6 +12,8 @@ sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism, CurveResampler
+from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
+from model_utils_supcon import SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS
 
 import config
 
@@ -74,6 +76,7 @@ def load_curve_data(exp_path, curve_type):
         "dataset_id": exp_path.name,
         "coords": coords,
         "well_ids": well_ids,
+        "concentration_raw": data.get("concentration", None),
     }
 
 
@@ -120,6 +123,12 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
                   f"group '{group_name}' (all-or-nothing across the group's folders).")
         coords_combined, well_ids_combined = None, None
 
+    conc_parts = []
+    for p in parts:
+        raw = p.get("concentration_raw")
+        conc_parts.append(np.asarray(raw, dtype=object) if raw is not None
+                          else np.full(len(p["Y_mapped"]), None, dtype=object))
+
     return {
         "curves": np.concatenate([p["curves"] for p in parts], axis=0),
         "features_df": pd.concat([p["features_df"] for p in parts], axis=0, ignore_index=True),
@@ -129,6 +138,7 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
         "resampler": resampler,
         "coords": coords_combined,
         "well_ids": well_ids_combined,
+        "concentration_raw": np.concatenate(conc_parts, axis=0),
     }
 
 
@@ -159,6 +169,13 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
+    parser.add_argument("--mtl", action="store_true",
+                        help="Train MTL models only (classification + concentration regression heads). "
+                             "Results are merged into the same results joblib so standard models "
+                             "do not need to be re-run.")
+    parser.add_argument("--supcon", action="store_true",
+                        help="Train SupCon models only (CE + supervised contrastive loss). "
+                             "Results are merged into the same results joblib.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -175,8 +192,8 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    for curve_type in args.curve_type:
-    # for curve_type in reversed(args.curve_type):
+    # for curve_type in args.curve_type:
+    for curve_type in reversed(args.curve_type):
     # for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
@@ -206,33 +223,99 @@ if __name__ == "__main__":
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
-        outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
-        # outlier_filters = [None]
-        models = [
-            "knn", "cnn",  "cnn_inc", 
-            # "cnn_lf", 
-            "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
-            #  "gru_lf", 
-            "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
-            #  "trans_lf", 
+        # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
+        outlier_filters = [None]
 
-            # Spatial-reconstruction variants inspired GNN:
-            # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
-            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
-
-            # # From pretained outlier unsupervised training encoder
-            # "lstm_ae_clf",
-
-            # # New gated dual-branch fusion models
-            # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
-            # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
-        ]
-
-        if args.force_rerun:
-            print(f"  -> [FORCE RERUN] Ignoring presaved results at {results_file_path}. Recomputing everything...")
-            lofo_results = {}
+        if args.mtl:
+            if args.supcon:
+                models = list(SUPCON_MTL_MODEL_KEYS)
+            else:
+                models = {
+                    "cnn_mtl",
+                    "gru_mtl", "cnn_gru_dual_mtl",
+                    "transformer_mtl", "cnn_trans_dual_mtl",
+                    "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+                }
         else:
-            lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
+            if args.supcon:
+                models = list(SUPCON_MODEL_KEYS)
+            else:
+                models = [
+                    "knn", "cnn", "cnn_inc",
+                    # "cnn_lf",
+                    "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
+                    # "gru_lf",
+                    "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
+                    # "trans_lf",
+                    "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+                    # "lstm_ae_clf",
+                    # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
+                    # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
+                ]
+
+        # Concentration for MTL regression head (sentinel-encoded; combined across all group folders).
+        y_concentration = None
+        if args.mtl:
+            raw_conc = combined.get("concentration_raw")
+            if raw_conc is not None:
+                _float_arr = np.array([float(v) if v is not None else np.nan for v in raw_conc], dtype=float)
+                y_concentration = np.where(np.isnan(_float_arr) | (_float_arr == 0.0),
+                                            _MTL_REG_SENTINEL, _float_arr)
+            else:
+                y_concentration = np.full(len(y_full), _MTL_REG_SENTINEL, dtype=float)
+            _n_valid = int((y_concentration != _MTL_REG_SENTINEL).sum())
+            print(f"  [MTL] Concentration loaded: {_n_valid} / {len(y_concentration)} samples "
+                  f"have non-sentinel concentration.")
+
+        lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
+        if args.force_rerun:
+            _mtl_result_keys = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in config._MTL_MODEL_KEYS:
+                    _mtl_result_keys.update([_pk, _probk, _clsk,
+                                             f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            _supcon_st_result_keys = set()
+            _supcon_mtl_result_keys = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in config._SUPCON_MODEL_KEYS:
+                    if 'mtl' in _k:
+                        _supcon_mtl_result_keys.update([_pk, _probk, _clsk,
+                                                        f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+                    else:
+                        _supcon_st_result_keys.update([_pk, _probk, _clsk])
+            if args.supcon and args.mtl:
+                _which = 'SupCon MTL'
+            elif args.supcon:
+                _which = 'SupCon ST'
+            elif args.mtl:
+                _which = 'MTL'
+            else:
+                _which = 'standard'
+            print(f"  -> [FORCE RERUN] Clearing {_which} cached results; preserving the rest.")
+            for _fold_res in lofo_results.values():
+                if not isinstance(_fold_res, dict):
+                    continue
+                for _filter_res in _fold_res.values():
+                    if not isinstance(_filter_res, dict):
+                        continue
+                    for _rk in list(_filter_res.keys()):
+                        if not isinstance(_rk, str):
+                            continue
+                        _is_mtl        = _rk in _mtl_result_keys
+                        _is_supcon_st  = _rk in _supcon_st_result_keys
+                        _is_supcon_mtl = _rk in _supcon_mtl_result_keys
+                        _is_model_key  = any(_rk.startswith(p) for p in
+                                             ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
+                                              'y_reg_preds_', 'y_reg_trues_'))
+                        _is_standard   = _is_model_key and not _is_mtl and not _is_supcon_st and not _is_supcon_mtl
+                        if args.supcon and args.mtl and _is_supcon_mtl:
+                            del _filter_res[_rk]
+                        elif args.supcon and not args.mtl and _is_supcon_st:
+                            del _filter_res[_rk]
+                        elif args.mtl and not args.supcon and _is_mtl:
+                            del _filter_res[_rk]
+                        elif not args.supcon and not args.mtl and _is_standard:
+                            del _filter_res[_rk]
 
         lofo_splits = build_lofo_splits(combined["dataset_id"])
         total_folds = len(lofo_splits)
@@ -271,6 +354,8 @@ if __name__ == "__main__":
                 coords=combined["coords"],
                 well_ids=combined["well_ids"],
                 k_neighbors=args.k_neighbors,
+                multitask=args.mtl,
+                y_concentration=y_concentration,
             )
 
             lofo_results[fold_label] = res

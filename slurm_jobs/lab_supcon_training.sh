@@ -35,8 +35,7 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
-    --supcon \
-    --force_rerun
+    --supcon
 
 # ── SupCon MTL (UW-SO + supervised contrastive; classification + regression) ─
 # Trains: cnn_supcon_mtl, gru_supcon_mtl, transformer_supcon_mtl,
@@ -46,8 +45,7 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
-    --supcon --mtl \
-    --force_rerun
+    --supcon --mtl --force_rerun
 
 # # ── Active command (uncomment one block above, or run both sequentially) ─────
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \

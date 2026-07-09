@@ -307,8 +307,12 @@ MODEL_KEY_MAP = {
     "transformer_mtl":               ("y_preds_AC_trans_mtl_",                      "y_probs_AC_trans_mtl_",                      "classes_AC_trans_mtl_"),
     "cnn_gru_dual_mtl":              ("y_preds_AC_cnn_gru_dual_mtl_",               "y_probs_AC_cnn_gru_dual_mtl_",               "classes_AC_cnn_gru_dual_mtl_"),
     "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
-    "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
-    "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
+    "cnn_gru_dual_cosine_recon_mtl":     ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",      "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",      "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
+    "cnn_gru_dual_attn_recon_mtl":       ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",        "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",        "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
+    "cnn_gru_dual_cosine_recon_supcon":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon_"),
+    "cnn_gru_dual_attn_recon_supcon":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon_",       "classes_AC_cnn_gru_dual_attn_recon_supcon_"),
+    "cnn_gru_dual_cosine_recon_supcon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon_mtl_"),
+    "cnn_gru_dual_attn_recon_supcon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon_mtl_"),
     "cnn_lf_mtl":                    ("y_preds_AC_cnn_lf_mtl_",                     "y_probs_AC_cnn_lf_mtl_",                     "classes_AC_cnn_lf_mtl_"),
     "gru_lf_mtl":                    ("y_preds_AC_gru_lf_mtl_",                     "y_probs_AC_gru_lf_mtl_",                     "classes_AC_gru_lf_mtl_"),
     "trans_lf_mtl":                  ("y_preds_AC_trans_lf_mtl_",                   "y_probs_AC_trans_lf_mtl_",                   "classes_AC_trans_lf_mtl_"),
@@ -350,8 +354,10 @@ _MTL_MODEL_KEYS = {
 _SUPCON_MODEL_KEYS = {
     "cnn_supcon", "gru_supcon", "transformer_supcon",
     "cnn_gru_dual_supcon", "cnn_trans_dual_supcon",
+    "cnn_gru_dual_cosine_recon_supcon", "cnn_gru_dual_attn_recon_supcon",
     "cnn_supcon_mtl", "gru_supcon_mtl", "transformer_supcon_mtl",
     "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
+    "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
 }
 _NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS
 MODEL_KEY_MAP.update({

@@ -11,7 +11,7 @@ from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
-from model_utils_supcon import SUPCON_MODEL_KEYS, ALL_SUPCON_KEYS
+from model_utils_supcon import SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
 import pandas as pd
@@ -188,14 +188,19 @@ if __name__ == "__main__":
             if _k in config._MTL_MODEL_KEYS:
                 _mtl_result_keys.update([_pk, _probk, _clsk,
                                          f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-        _supcon_result_keys = set()
+        _supcon_st_result_keys = set()
+        _supcon_mtl_result_keys = set()
         for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
             if _k in config._SUPCON_MODEL_KEYS:
-                _supcon_result_keys.update([_pk, _probk, _clsk])
                 if 'mtl' in _k:
-                    _supcon_result_keys.update([f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-        if args.supcon:
-            _which = 'SupCon'
+                    _supcon_mtl_result_keys.update([_pk, _probk, _clsk,
+                                                    f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+                else:
+                    _supcon_st_result_keys.update([_pk, _probk, _clsk])
+        if args.supcon and args.mtl:
+            _which = 'SupCon MTL'
+        elif args.supcon:
+            _which = 'SupCon ST'
         elif args.mtl:
             _which = 'MTL'
         else:
@@ -212,13 +217,16 @@ if __name__ == "__main__":
                     for _rk in list(_filter_res.keys()):
                         if not isinstance(_rk, str):
                             continue
-                        _is_mtl    = _rk in _mtl_result_keys
-                        _is_supcon = _rk in _supcon_result_keys
-                        _is_model_key = any(_rk.startswith(p) for p in
-                                            ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
-                                             'y_reg_preds_', 'y_reg_trues_'))
-                        _is_standard = _is_model_key and not _is_mtl and not _is_supcon
-                        if args.supcon and _is_supcon:
+                        _is_mtl         = _rk in _mtl_result_keys
+                        _is_supcon_st   = _rk in _supcon_st_result_keys
+                        _is_supcon_mtl  = _rk in _supcon_mtl_result_keys
+                        _is_model_key   = any(_rk.startswith(p) for p in
+                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
+                                               'y_reg_preds_', 'y_reg_trues_'))
+                        _is_standard    = _is_model_key and not _is_mtl and not _is_supcon_st and not _is_supcon_mtl
+                        if args.supcon and args.mtl and _is_supcon_mtl:
+                            del _filter_res[_rk]
+                        elif args.supcon and not args.mtl and _is_supcon_st:
                             del _filter_res[_rk]
                         elif args.mtl and not args.supcon and _is_mtl:
                             del _filter_res[_rk]
@@ -279,49 +287,27 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        # models = ["knn", "cnn", "gru", "transformer", "cnn_lf", "gru_lf", "trans_lf", "cnn_gru_dual", "cnn_trans_dual"]
-        models = [
-            "knn", "cnn",  # "cnn_inc", 
-            "cnn_lf", 
-            "gru", "cnn_gru_dual", # "cnn_gru_dual_inc",
-             "gru_lf", 
-            "transformer", "cnn_trans_dual", # "cnn_trans_dual_inc",
-             "trans_lf", 
-
-            # Spatial-reconstruction variants inspired GNN:
-            # pixel_row_idx/pixel_col_idx -- see coords_full/well_ids_full above.
-            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
-
-            # # From pretained outlier unsupervised training encoder
-            # "lstm_ae_clf",
-
-            # # New gated dual-branch fusion models
-            # "cnn_gru_gate", "cnn_gru_hadamard", "cnn_gru_crossattn", "cnn_gru_film",
-            # "cnn_trans_gate", "cnn_trans_hadamard", "cnn_trans_crossattn", "cnn_trans_film",
-        ]
-
-        # MULTI TASK LEARNING (MTL) MODELS: classification + concentration regression heads
         if args.mtl:
-            # models = list(MTL_MODEL_KEYS)
-
-            models = {
-                "cnn_mtl",
-                "cnn_lf_mtl",
-
-                "gru_mtl", "cnn_gru_dual_mtl",
-                "gru_lf_mtl",
-
-                "transformer_mtl", "cnn_trans_dual_mtl",
-                "trans_lf_mtl",
-
-                # "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
-
-                # "rnn_mtl",  "lstm_mtl",
-            }
-
-        # SUPERVISED CONTRASTIVE (SupCon) MODELS: CE + contrastive loss on projection head
-        if args.supcon:
-            models = list(ALL_SUPCON_KEYS)
+            if args.supcon:
+                models = list(SUPCON_MTL_MODEL_KEYS)
+            else:
+                # models = list(MTL_MODEL_KEYS)
+                models = {
+                    "cnn_mtl",
+                    "gru_mtl", "cnn_gru_dual_mtl",
+                    "transformer_mtl", "cnn_trans_dual_mtl",
+                    "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+                }
+        else:
+            if args.supcon:
+                models = list(SUPCON_MODEL_KEYS)
+            else:
+                models = [
+                    "knn", "cnn",
+                    "gru", "cnn_gru_dual",
+                    "transformer", "cnn_trans_dual",
+                    "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+                ]
 
         model_interp_dir = exp_path / "model_interpretation"
 

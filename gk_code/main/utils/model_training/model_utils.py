@@ -36,6 +36,8 @@ from model_utils_supcon import (
     create_cnn_supcon_mtl_model, create_gru_supcon_mtl_model,
     create_transformer_supcon_mtl_model, create_cnn_gru_dual_supcon_mtl_model,
     create_cnn_trans_dual_supcon_mtl_model,
+    create_cnn_gru_dual_cosine_recon_supcon_model, create_cnn_gru_dual_attn_recon_supcon_model,
+    create_cnn_gru_dual_cosine_recon_supcon_mtl_model, create_cnn_gru_dual_attn_recon_supcon_mtl_model,
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
 )
 from model_utils_mtl import (
@@ -748,6 +750,10 @@ def evaluate_outlier_filters(
         "cnn_trans_dual_mtl":            ("y_preds_AC_cnn_trans_dual_mtl_",             "y_probs_AC_cnn_trans_dual_mtl_",             "classes_AC_cnn_trans_dual_mtl_"),
         "cnn_gru_dual_cosine_recon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_mtl_",  "y_probs_AC_cnn_gru_dual_cosine_recon_mtl_",  "classes_AC_cnn_gru_dual_cosine_recon_mtl_"),
         "cnn_gru_dual_attn_recon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",    "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",    "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
+        "cnn_gru_dual_cosine_recon_supcon":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon_"),
+        "cnn_gru_dual_attn_recon_supcon":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon_",       "classes_AC_cnn_gru_dual_attn_recon_supcon_"),
+        "cnn_gru_dual_cosine_recon_supcon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon_mtl_"),
+        "cnn_gru_dual_attn_recon_supcon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon_mtl_"),
         "cnn_lf_mtl":                    ("y_preds_AC_cnn_lf_mtl_",                     "y_probs_AC_cnn_lf_mtl_",                     "classes_AC_cnn_lf_mtl_"),
         "gru_lf_mtl":                    ("y_preds_AC_gru_lf_mtl_",                     "y_probs_AC_gru_lf_mtl_",                     "classes_AC_gru_lf_mtl_"),
         "trans_lf_mtl":                  ("y_preds_AC_trans_lf_mtl_",                   "y_probs_AC_trans_lf_mtl_",                   "classes_AC_trans_lf_mtl_"),
@@ -786,8 +792,12 @@ def evaluate_outlier_filters(
         "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
         "cnn_gru_dual_mtl": "CNN+GRU Dual MTL", "cnn_trans_dual_mtl": "CNN+Tr Dual MTL",
         "cnn_lstm_dual_mtl": "CNN+LSTM Dual MTL",
-        "cnn_gru_dual_cosine_recon_mtl": "CNN+GRU CosRecon MTL",
-        "cnn_gru_dual_attn_recon_mtl": "CNN+GRU AttnRecon MTL",
+        "cnn_gru_dual_cosine_recon_mtl":     "CNN+GRU CosRecon MTL",
+        "cnn_gru_dual_attn_recon_mtl":       "CNN+GRU AttnRecon MTL",
+        "cnn_gru_dual_cosine_recon_supcon":     "CNN+GRU CosRecon SupCon",
+        "cnn_gru_dual_attn_recon_supcon":       "CNN+GRU AttnRecon SupCon",
+        "cnn_gru_dual_cosine_recon_supcon_mtl": "CNN+GRU CosRecon SupCon MTL",
+        "cnn_gru_dual_attn_recon_supcon_mtl":   "CNN+GRU AttnRecon SupCon MTL",
         "cnn_lf_mtl": "CNN LF MTL", "gru_lf_mtl": "GRU LF MTL",
         "trans_lf_mtl": "Trans LF MTL", "lstm_lf_mtl": "LSTM LF MTL",
         "cnn_gru_gate_mtl": "CNN+GRU Gate MTL", "cnn_gru_hadamard_mtl": "CNN+GRU Hadamard MTL",
@@ -808,7 +818,9 @@ def evaluate_outlier_filters(
     # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
     # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape; MTL models never
     # use inception smoothing.
-    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"} | set(MTL_MODEL_KEYS) | set(ALL_SUPCON_KEYS)
+    _NO_INC_INCEPTION = ({"rf", "knn", "ffi", "cnn_gru_dual_attn_recon",
+                           "cnn_gru_dual_attn_recon_supcon", "cnn_gru_dual_attn_recon_supcon_mtl"}
+                          | set(MTL_MODEL_KEYS) | set(ALL_SUPCON_KEYS))
     for _m in list(model_key_map.keys()):
         if _m not in _NO_INC_INCEPTION:
             _pk, _prk, _ck = model_key_map[_m]
@@ -817,8 +829,10 @@ def evaluate_outlier_filters(
                 model_print_map[f"{_m}_inc"] = f"{model_print_map[_m]} (Inc)"
 
     _SPATIAL_RECON_MODELS = (
-        "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
-        "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+        "cnn_gru_dual_cosine_recon",         "cnn_gru_dual_attn_recon",
+        "cnn_gru_dual_cosine_recon_mtl",     "cnn_gru_dual_attn_recon_mtl",
+        "cnn_gru_dual_cosine_recon_supcon",     "cnn_gru_dual_attn_recon_supcon",
+        "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -1005,9 +1019,11 @@ def evaluate_outlier_filters(
             for fold_idx, (train_idx, test_idx) in enumerate(splits):
                 if _base_m == 'ffi':
                     X_train_curve, X_test_curve = X_FFI[train_idx], X_FFI[test_idx]
-                elif _base_m in ('cnn_gru_dual_cosine_recon', 'cnn_gru_dual_cosine_recon_mtl'):
+                elif _base_m in ('cnn_gru_dual_cosine_recon', 'cnn_gru_dual_cosine_recon_mtl',
+                                  'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_cosine_recon_supcon_mtl'):
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
-                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl'):
+                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
+                                  'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl'):
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -1271,6 +1287,11 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_supcon_mtl_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_trans_dual_supcon_mtl':
                         model = create_cnn_trans_dual_supcon_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon_mtl':
+                        model = create_cnn_gru_dual_cosine_recon_supcon_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon_mtl':
+                        model = create_cnn_gru_dual_attn_recon_supcon_mtl_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
                                   metrics=['accuracy'])
 
@@ -1335,6 +1356,11 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_supcon_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_trans_dual_supcon':
                         model = create_cnn_trans_dual_supcon_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon':
+                        model = create_cnn_gru_dual_cosine_recon_supcon_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon':
+                        model = create_cnn_gru_dual_attn_recon_supcon_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
                                   metrics=['accuracy'])
 
@@ -1491,20 +1517,20 @@ def evaluate_outlier_filters(
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
             res_entry[classes_key] = classes_list
-            if _base_m in MTL_MODEL_KEYS and reg_preds_per_fold:
+            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS) and reg_preds_per_fold:
                 res_entry[f'y_reg_preds_{_base_m}_'] = reg_preds_per_fold
                 res_entry[f'y_reg_trues_{_base_m}_'] = reg_trues_per_fold
 
             results_dict[f] = res_entry
             if checkpoint_fn is not None:
                 checkpoint_fn(results_dict)
-                
+
             fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], preds)]
             acc = np.mean(fold_accs) * 100
             std = np.std(fold_accs) * 100
 
             _reg_suffix = ""
-            if _base_m in MTL_MODEL_KEYS and reg_preds_per_fold:
+            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS) and reg_preds_per_fold:
                 _rp = np.concatenate(reg_preds_per_fold); _rt = np.concatenate(reg_trues_per_fold)
                 _vm = _rt != REG_SENTINEL
                 if _vm.sum() >= 2:

@@ -311,10 +311,10 @@ def create_cnn_trans_dual_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_
 
 
 # --- 8. CNN+GRU Attn-Recon MTL ---
-def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
-    """Same as create_cnn_gru_dual_attn_recon_model but with dual heads."""
-    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
-
+def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16):
+    """Shared attention-weighted reconstruction → CNN+GRU embedding.
+    stack_input: Keras tensor (N, k+1, T). Returns 96-dim embedding for _mtl_wrap/_supcon_wrap.
+    """
     per_curve_encoder = tf.keras.Sequential([
         tf.keras.layers.Reshape((T, 1)),
         tf.keras.layers.Conv1D(16, 5, activation='relu', padding='same'),
@@ -331,12 +331,17 @@ def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16
     attn_weights = tf.keras.layers.Softmax(axis=-1, name='attn_weights')(scores)  # (N, 1, k+1)
 
     reconstructed = tf.keras.layers.Lambda(
-        lambda t: tf.matmul(t[0], t[1])                                           # (N,1,T)
+        lambda t: tf.matmul(t[0], t[1])                                           # (N, 1, T)
     )([attn_weights, stack_input])
     reconstructed = tf.keras.layers.Reshape((T, 1))(reconstructed)               # (N, T, 1)
+    return _build_cnn_gru_dual_branches_mtl(reconstructed)
 
-    embedding = _build_cnn_gru_dual_branches_mtl(reconstructed)
-    return _mtl_wrap(stack_input, embedding, n_classes)
+
+def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    return _mtl_wrap(stack_input,
+                     _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim),
+                     n_classes)
 
 
 # ====================================================================
