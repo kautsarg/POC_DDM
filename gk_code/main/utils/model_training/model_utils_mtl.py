@@ -41,13 +41,13 @@ class MTLModel(tf.keras.Model):
         super().__init__(*args, **kwargs)
         self.reg_sentinel = reg_sentinel
         # ── Kendall (2018): 2 learnable log-variance scalars ─────────────────
-        self.log_var_cls = self.add_weight(
-            name='log_var_cls', shape=(), initializer='zeros', trainable=True)
-        self.log_var_reg = self.add_weight(
-            name='log_var_reg', shape=(), initializer='zeros', trainable=True)
+        # self.log_var_cls = self.add_weight(
+        #     name='log_var_cls', shape=(), initializer='zeros', trainable=True)
+        # self.log_var_reg = self.add_weight(
+        #     name='log_var_reg', shape=(), initializer='zeros', trainable=True)
         # ── UW-SO: single temperature scalar (replace the two above) ─────────
-        # self.log_T = self.add_weight(
-        #     name='log_T', shape=(), initializer='zeros', trainable=True)
+        self.log_T = self.add_weight(
+            name='log_T', shape=(), initializer='zeros', trainable=True)
 
     def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
         ce = tf.reduce_mean(
@@ -58,26 +58,22 @@ class MTLModel(tf.keras.Model):
                / (n_valid + 1e-8))
 
         # ── Kendall (2018) ────────────────────────────────────────────────────
-        loss = (tf.exp(-self.log_var_cls) * ce + self.log_var_cls
-                + tf.exp(-self.log_var_reg) * mse + self.log_var_reg)
+        # loss = (tf.exp(-self.log_var_cls) * ce + self.log_var_cls
+        #         + tf.exp(-self.log_var_reg) * mse + self.log_var_reg)
 
-        # ── UW-SO (comment out Kendall block above and uncomment this) ────────
-        # # Analytical inverse-loss weights (stop_gradient: no backprop through ratio)
-        # eps = 1e-8
-        # ce_sg  = tf.stop_gradient(ce)
-        # mse_sg = tf.stop_gradient(mse)
-        # inv_ce  = 1.0 / (ce_sg + eps)
-        # # Zero regression weight when all targets are sentinels (nothing to regress)
-        # inv_mse = tf.cond(n_valid > 0,
-        #                   lambda: 1.0 / (mse_sg + eps),
-        #                   lambda: tf.constant(0.0))
-        # Z      = inv_ce + inv_mse + eps
-        # w_cls  = inv_ce  / Z   # in [0,1], sums to 1 with w_reg
-        # w_reg  = inv_mse / Z
-        # # Single-param scaled loss; log_T regularises the overall scale
-        # weighted = w_cls * ce + w_reg * mse
-        # loss = tf.exp(-self.log_T) * weighted + self.log_T
-        # # ∂L/∂log_T = 0  →  log_T* = log(weighted_loss)  — T tracks loss magnitude
+        # ── UW-SO: analytical inverse-loss weights, single temperature scalar ──
+        eps = 1e-8
+        ce_sg  = tf.stop_gradient(ce)
+        mse_sg = tf.stop_gradient(mse)
+        inv_ce  = 1.0 / (ce_sg + eps)
+        inv_mse = tf.cond(n_valid > 0,
+                          lambda: 1.0 / (mse_sg + eps),
+                          lambda: tf.constant(0.0))
+        Z      = inv_ce + inv_mse + eps
+        w_cls  = inv_ce  / Z
+        w_reg  = inv_mse / Z
+        weighted = w_cls * ce + w_reg * mse
+        loss = tf.exp(-self.log_T) * weighted + self.log_T
 
         return loss, ce, mse
 
@@ -91,8 +87,7 @@ class MTLModel(tf.keras.Model):
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse})
-        # UW-SO: add 'log_T': self.log_T to the return dict above for monitoring
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'log_T': self.log_T})
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -101,7 +96,7 @@ class MTLModel(tf.keras.Model):
             y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'log_T': self.log_T})
 
     def get_config(self):
         config = super().get_config()
@@ -156,17 +151,14 @@ def _inverse_normalize_concentration(scaled_array, scaler, sentinel=REG_SENTINEL
 def _mtl_wrap(inputs, embedding, n_classes):
     """Attach dual heads to a shared embedding and wrap in MTLModel.
 
-    Classification head: Direct Dense(n_classes, softmax) — consistent with
-    single-task backbones that end at the same embedding dimension.
-
-    Regression head: Dense(16, relu) → Dense(1, linear) — one task-specific
-    hidden layer so the regression branch can learn its own projection from the
-    shared embedding rather than reading log-concentration directly from features
-    shaped by cross-entropy alone.
+    Proportional Dense(16) towers (embedding_dim // 4 for 64-dim backbones) give
+    gradient isolation without the overfitting caused by the previous Dense(32) towers.
     """
-    cls_out = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(embedding)
-    reg_h   = tf.keras.layers.Dense(16, activation='relu',   name='reg_hidden')(embedding)
-    reg_out = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
+    cls_feat = tf.keras.layers.Dense(16, activation='relu',    name='cls_feat')(embedding)
+    cls_out  = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    reg_feat = tf.keras.layers.Dense(16, activation='relu',    name='reg_feat')(embedding)
+    reg_h    = tf.keras.layers.Dense(8,  activation='relu',    name='reg_hidden')(reg_feat)
+    reg_out  = tf.keras.layers.Dense(1,  activation='linear',  name='reg_out')(reg_h)
     return MTLModel(inputs=inputs, outputs=[cls_out, reg_out])
 
 
@@ -187,7 +179,8 @@ def create_lstm_mtl_model(T, n_classes):
     x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32, return_sequences=True))(inputs)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(x)
-    embedding = tf.keras.layers.Dropout(0.2)(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
     return _mtl_wrap(inputs, embedding, n_classes)
 
 
@@ -197,7 +190,8 @@ def create_gru_mtl_model(T, n_classes):
     x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inputs)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
-    embedding = tf.keras.layers.Dropout(0.2)(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
     return _mtl_wrap(inputs, embedding, n_classes)
 
 
@@ -207,7 +201,8 @@ def create_rnn_mtl_model(T, n_classes):
     x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(32, return_sequences=True))(inputs)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Bidirectional(tf.keras.layers.SimpleRNN(16))(x)
-    embedding = tf.keras.layers.Dropout(0.2)(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
     return _mtl_wrap(inputs, embedding, n_classes)
 
 
@@ -229,7 +224,7 @@ def create_transformer_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim
         ffn = tf.keras.layers.Dense(head_size)(ffn)
         x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn)
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
-    embedding = tf.keras.layers.Dense(16, activation='relu')(x)   # matches single-task Dense(16)
+    embedding = tf.keras.layers.Dense(64, activation='relu')(x)   # wider than ST Dense(16) for dual-task
     embedding = tf.keras.layers.Dropout(dropout)(embedding)
     return _mtl_wrap(inputs, embedding, n_classes)
 
@@ -246,10 +241,10 @@ def _build_cnn_gru_dual_branches_mtl(input_tensor):
     g = tf.keras.layers.LayerNormalization()(g)
     g = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(g)
     g = tf.keras.layers.Dropout(0.2)(g)
-    gru_emb = tf.keras.layers.Dense(32, activation='relu')(g)
+    gru_emb = tf.keras.layers.Dense(64, activation='relu')(g)
 
     merged = tf.keras.layers.Concatenate()([cnn_emb, gru_emb])
-    z = tf.keras.layers.Dense(64, activation='relu')(merged)
+    z = tf.keras.layers.Dense(96, activation='relu')(merged)
     z = tf.keras.layers.Dropout(0.2)(z)
     return z
 
@@ -284,10 +279,10 @@ def create_cnn_trans_dual_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_
         ffn = tf.keras.layers.Dense(head_size)(ffn)
         t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + ffn)
     t = tf.keras.layers.GlobalAveragePooling1D()(t)
-    trans_emb = tf.keras.layers.Dense(32, activation='relu')(t)
+    trans_emb = tf.keras.layers.Dense(64, activation='relu')(t)
 
     merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
-    embedding = tf.keras.layers.Dense(64, activation='relu')(merged)
+    embedding = tf.keras.layers.Dense(96, activation='relu')(merged)
     embedding = tf.keras.layers.Dropout(0.2)(embedding)
     return _mtl_wrap(inputs, embedding, n_classes)
 
@@ -339,7 +334,7 @@ def create_cnn_lf_mtl_model(T, n_features, n_classes):
     feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
 
     merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
-    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
     embedding = tf.keras.layers.Dropout(0.2)(z)
     return _mtl_wrap([input_curve, input_features], embedding, n_classes)
 
@@ -357,7 +352,7 @@ def create_gru_lf_mtl_model(T, n_features, n_classes):
     feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
 
     merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
-    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
     embedding = tf.keras.layers.Dropout(0.2)(z)
     return _mtl_wrap([input_curve, input_features], embedding, n_classes)
 
@@ -386,7 +381,7 @@ def create_transformer_lf_mtl_model(T, n_features, n_classes, head_size=32, num_
     feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
 
     merged = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
-    z = tf.keras.layers.Dense(32, activation='relu')(merged)
+    z = tf.keras.layers.Dense(64, activation='relu')(merged)
     embedding = tf.keras.layers.Dropout(0.2)(z)
     return _mtl_wrap([input_curve, input_features], embedding, n_classes)
 
@@ -404,7 +399,7 @@ def create_lstm_lf_mtl_model(T, n_features, n_classes):
     feat_emb = tf.keras.layers.Dense(32, activation='relu')(input_features)
 
     merged_lf = tf.keras.layers.Concatenate()([curve_emb, feat_emb])
-    z = tf.keras.layers.Dense(32, activation='relu')(merged_lf)
+    z = tf.keras.layers.Dense(64, activation='relu')(merged_lf)
     embedding = tf.keras.layers.Dropout(0.2)(z)
     return _mtl_wrap([input_curve, input_features], embedding, n_classes)
 
@@ -424,10 +419,10 @@ def _build_cnn_lstm_dual_branches_mtl(input_tensor):
     l = tf.keras.layers.LayerNormalization()(l)
     l = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(16))(l)
     l = tf.keras.layers.Dropout(0.2)(l)
-    lstm_emb = tf.keras.layers.Dense(32, activation='relu')(l)
+    lstm_emb = tf.keras.layers.Dense(64, activation='relu')(l)
 
     merged_dual = tf.keras.layers.Concatenate()([cnn_emb, lstm_emb])
-    z = tf.keras.layers.Dense(64, activation='relu')(merged_dual)
+    z = tf.keras.layers.Dense(96, activation='relu')(merged_dual)
     z = tf.keras.layers.Dropout(0.2)(z)
     return z
 

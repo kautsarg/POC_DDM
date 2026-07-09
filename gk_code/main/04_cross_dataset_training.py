@@ -175,8 +175,8 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    # for curve_type in args.curve_type:
-    for curve_type in reversed(args.curve_type):
+    for curve_type in args.curve_type:
+    # for curve_type in reversed(args.curve_type):
     # for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 

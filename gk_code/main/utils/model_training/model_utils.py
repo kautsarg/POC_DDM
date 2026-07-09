@@ -1170,7 +1170,7 @@ def evaluate_outlier_filters(
                         model = create_cnn_lstm_dual_mtl_model(T, n_classes); epochs = 500
                     elif _base_m in _ALL_GATED_MTL_FACTORIES:
                         model = _ALL_GATED_MTL_FACTORIES[_base_m](T, n_classes); epochs = 500
-                    model.compile(optimizer=tf.keras.optimizers.Adam(), metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0), metrics=['accuracy'])
                     _is_lf_mtl = 'lf' in _base_m
 
                     # Fold-level concentration: normalize on train non-sentinels; apply to val/test.

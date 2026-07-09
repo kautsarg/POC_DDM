@@ -188,20 +188,23 @@ if __name__ == "__main__":
         print(f"  -> [FORCE RERUN] Clearing {_which} cached results; preserving the rest.")
         for _td in all_ml_results.values():
             for _mode_key in ("Native", "Reference"):
-                _res = _td.get(_mode_key)
-                if not isinstance(_res, dict):
+                _mode = _td.get(_mode_key)
+                if not isinstance(_mode, dict):
                     continue
-                for _rk in list(_res.keys()):
-                    if not isinstance(_rk, str):
+                for _filter_res in _mode.values():   # one more level: filter → pred keys
+                    if not isinstance(_filter_res, dict):
                         continue
-                    _is_mtl = _rk in _mtl_result_keys
-                    _is_model_key = any(_rk.startswith(p) for p in
-                                        ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
-                                         'y_reg_preds_', 'y_reg_trues_'))
-                    if args.mtl and _is_mtl:
-                        del _res[_rk]
-                    elif not args.mtl and _is_model_key and not _is_mtl:
-                        del _res[_rk]
+                    for _rk in list(_filter_res.keys()):
+                        if not isinstance(_rk, str):
+                            continue
+                        _is_mtl = _rk in _mtl_result_keys
+                        _is_model_key = any(_rk.startswith(p) for p in
+                                            ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
+                                             'y_reg_preds_', 'y_reg_trues_'))
+                        if args.mtl and _is_mtl:
+                            del _filter_res[_rk]
+                        elif not args.mtl and _is_model_key and not _is_mtl:
+                            del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
     total_samples = len(y_full)
