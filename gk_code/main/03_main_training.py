@@ -11,6 +11,7 @@ from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
+from model_utils_supcon import SUPCON_MODEL_KEYS, ALL_SUPCON_KEYS
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
 import pandas as pd
@@ -83,6 +84,9 @@ if __name__ == "__main__":
                         help="Train MTL models only (classification + concentration regression heads). "
                              "Results are merged into the same classification_performances*.joblib "
                              "so standard models do not need to be re-run.")
+    parser.add_argument("--supcon", action="store_true",
+                        help="Train SupCon models only (CE + supervised contrastive loss). "
+                             "Results are merged into the same classification_performances*.joblib.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -178,32 +182,47 @@ if __name__ == "__main__":
 
     all_ml_results = load_or_init_results(results_file_path)
     if args.force_rerun:
-        # Build the exact result-dict keys belonging to MTL models
+        # Build result-dict key sets per training mode so each flag only clears its own results.
         _mtl_result_keys = set()
         for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
             if _k in config._MTL_MODEL_KEYS:
                 _mtl_result_keys.update([_pk, _probk, _clsk,
                                          f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-        _which = 'MTL' if args.mtl else 'non-MTL'
+        _supcon_result_keys = set()
+        for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k in config._SUPCON_MODEL_KEYS:
+                _supcon_result_keys.update([_pk, _probk, _clsk])
+                if 'mtl' in _k:
+                    _supcon_result_keys.update([f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+        if args.supcon:
+            _which = 'SupCon'
+        elif args.mtl:
+            _which = 'MTL'
+        else:
+            _which = 'standard'
         print(f"  -> [FORCE RERUN] Clearing {_which} cached results; preserving the rest.")
         for _td in all_ml_results.values():
             for _mode_key in ("Native", "Reference"):
                 _mode = _td.get(_mode_key)
                 if not isinstance(_mode, dict):
                     continue
-                for _filter_res in _mode.values():   # one more level: filter → pred keys
+                for _filter_res in _mode.values():
                     if not isinstance(_filter_res, dict):
                         continue
                     for _rk in list(_filter_res.keys()):
                         if not isinstance(_rk, str):
                             continue
-                        _is_mtl = _rk in _mtl_result_keys
+                        _is_mtl    = _rk in _mtl_result_keys
+                        _is_supcon = _rk in _supcon_result_keys
                         _is_model_key = any(_rk.startswith(p) for p in
                                             ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                              'y_reg_preds_', 'y_reg_trues_'))
-                        if args.mtl and _is_mtl:
+                        _is_standard = _is_model_key and not _is_mtl and not _is_supcon
+                        if args.supcon and _is_supcon:
                             del _filter_res[_rk]
-                        elif not args.mtl and _is_model_key and not _is_mtl:
+                        elif args.mtl and not args.supcon and _is_mtl:
+                            del _filter_res[_rk]
+                        elif not args.supcon and not args.mtl and _is_standard:
                             del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
@@ -286,9 +305,9 @@ if __name__ == "__main__":
             # models = list(MTL_MODEL_KEYS)
 
             models = {
-                "cnn_mtl", 
+                "cnn_mtl",
                 "cnn_lf_mtl",
-                
+
                 "gru_mtl", "cnn_gru_dual_mtl",
                 "gru_lf_mtl",
 
@@ -299,6 +318,10 @@ if __name__ == "__main__":
 
                 # "rnn_mtl",  "lstm_mtl",
             }
+
+        # SUPERVISED CONTRASTIVE (SupCon) MODELS: CE + contrastive loss on projection head
+        if args.supcon:
+            models = list(ALL_SUPCON_KEYS)
 
         model_interp_dir = exp_path / "model_interpretation"
 

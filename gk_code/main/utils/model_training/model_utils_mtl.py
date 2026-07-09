@@ -162,15 +162,86 @@ def _mtl_wrap(inputs, embedding, n_classes):
     return MTLModel(inputs=inputs, outputs=[cls_out, reg_out])
 
 
-# --- 1. CNN MTL ---
-def create_cnn_mtl_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
+# ======================================================================
+# BACKBONE BUILDERS (reused by MTL factories and model_utils_supcon.py)
+# ======================================================================
+
+def _build_cnn_backbone_mtl(inputs):
+    """Conv1D stack + Dense(64) embedding. Shared by CNN MTL and CNN SupCon."""
     x = tf.keras.layers.Conv1D(16, 5, activation='relu')(inputs)
     x = tf.keras.layers.Conv1D(8, 3, activation='relu')(x)
     x = tf.keras.layers.Flatten()(x)
-    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
-    embedding = tf.keras.layers.Dropout(0.2)(embedding)
-    return _mtl_wrap(inputs, embedding, n_classes)
+    x = tf.keras.layers.Dense(64, activation='relu')(x)
+    return tf.keras.layers.Dropout(0.2)(x)
+
+
+def _build_gru_backbone_mtl(inputs):
+    """BiGRU stack + Dense(64) embedding. Shared by GRU MTL and GRU SupCon."""
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inputs)
+    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    return tf.keras.layers.Dense(64, activation='relu')(x)
+
+
+def _build_transformer_backbone_mtl(inputs, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    """Transformer blocks + Dense(64) embedding. Shared by Transformer MTL and SupCon."""
+    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2,
+                                padding='same', activation='relu')(inputs)
+    x = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same')(x)
+    new_seq_len = x.shape[1]
+    positions = tf.range(start=0, limit=new_seq_len, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    x = x + pos_embedding
+    for _ in range(num_blocks):
+        attn = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
+        attn = tf.keras.layers.Dropout(dropout)(attn)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn)
+        ffn = tf.keras.layers.Dense(ff_dim, activation='relu')(x)
+        ffn = tf.keras.layers.Dropout(dropout)(ffn)
+        ffn = tf.keras.layers.Dense(head_size)(ffn)
+        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn)
+    x = tf.keras.layers.GlobalAveragePooling1D()(x)
+    x = tf.keras.layers.Dense(64, activation='relu')(x)
+    return tf.keras.layers.Dropout(dropout)(x)
+
+
+def _build_cnn_trans_dual_branches_mtl(inputs, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    """CNN+Transformer dual backbone (96-dim). Shared by CNN+Trans MTL and SupCon."""
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(inputs)
+    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
+    c = tf.keras.layers.Flatten()(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
+    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2,
+                                padding='same', activation='relu')(inputs)
+    t = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same')(t)
+    new_seq_len = t.shape[1]
+    positions = tf.range(start=0, limit=new_seq_len, delta=1)
+    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
+    t = t + pos_embedding
+    for _ in range(num_blocks):
+        attn = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(t, t)
+        attn = tf.keras.layers.Dropout(dropout)(attn)
+        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + attn)
+        ffn = tf.keras.layers.Dense(ff_dim, activation='relu')(t)
+        ffn = tf.keras.layers.Dropout(dropout)(ffn)
+        ffn = tf.keras.layers.Dense(head_size)(ffn)
+        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + ffn)
+    t = tf.keras.layers.GlobalAveragePooling1D()(t)
+    trans_emb = tf.keras.layers.Dense(64, activation='relu')(t)
+    merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
+    x = tf.keras.layers.Dense(96, activation='relu')(merged)
+    return tf.keras.layers.Dropout(0.2)(x)
+
+
+# ======================================================================
+# FACTORY FUNCTIONS
+# ======================================================================
+
+# --- 1. CNN MTL ---
+def create_cnn_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1))
+    return _mtl_wrap(inputs, _build_cnn_backbone_mtl(inputs), n_classes)
 
 
 # --- 2. LSTM MTL ---
@@ -187,12 +258,7 @@ def create_lstm_mtl_model(T, n_classes):
 # --- 3. GRU MTL ---
 def create_gru_mtl_model(T, n_classes):
     inputs = tf.keras.layers.Input(shape=(T, 1))
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, return_sequences=True))(inputs)
-    x = tf.keras.layers.LayerNormalization()(x)
-    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(16))(x)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    embedding = tf.keras.layers.Dense(64, activation='relu')(x)
-    return _mtl_wrap(inputs, embedding, n_classes)
+    return _mtl_wrap(inputs, _build_gru_backbone_mtl(inputs), n_classes)
 
 
 # --- 4. RNN MTL ---
@@ -209,24 +275,7 @@ def create_rnn_mtl_model(T, n_classes):
 # --- 5. Transformer MTL ---
 def create_transformer_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
     inputs = tf.keras.layers.Input(shape=(T, 1))
-    x = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding='same', activation='relu')(inputs)
-    x = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same')(x)
-    new_seq_len = x.shape[1]
-    positions = tf.range(start=0, limit=new_seq_len, delta=1)
-    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
-    x = x + pos_embedding
-    for _ in range(num_blocks):
-        attn = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
-        attn = tf.keras.layers.Dropout(dropout)(attn)
-        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + attn)
-        ffn = tf.keras.layers.Dense(ff_dim, activation='relu')(x)
-        ffn = tf.keras.layers.Dropout(dropout)(ffn)
-        ffn = tf.keras.layers.Dense(head_size)(ffn)
-        x = tf.keras.layers.LayerNormalization(epsilon=1e-6)(x + ffn)
-    x = tf.keras.layers.GlobalAveragePooling1D()(x)
-    embedding = tf.keras.layers.Dense(64, activation='relu')(x)   # wider than ST Dense(16) for dual-task
-    embedding = tf.keras.layers.Dropout(dropout)(embedding)
-    return _mtl_wrap(inputs, embedding, n_classes)
+    return _mtl_wrap(inputs, _build_transformer_backbone_mtl(inputs, head_size, num_heads, ff_dim, num_blocks, dropout), n_classes)
 
 
 # --- 6. CNN+GRU Dual MTL (also reused for cnn_gru_dual_cosine_recon_mtl) ---
@@ -258,33 +307,7 @@ def create_cnn_gru_dual_mtl_model(T, n_classes):
 # --- 7. CNN+Transformer Dual MTL ---
 def create_cnn_trans_dual_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
     inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
-
-    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(inputs)
-    c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
-    c = tf.keras.layers.Flatten()(c)
-    cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
-
-    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding='same', activation='relu')(inputs)
-    t = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same')(t)
-    new_seq_len = t.shape[1]
-    positions = tf.range(start=0, limit=new_seq_len, delta=1)
-    pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
-    t = t + pos_embedding
-    for _ in range(num_blocks):
-        attn = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(t, t)
-        attn = tf.keras.layers.Dropout(dropout)(attn)
-        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + attn)
-        ffn = tf.keras.layers.Dense(ff_dim, activation='relu')(t)
-        ffn = tf.keras.layers.Dropout(dropout)(ffn)
-        ffn = tf.keras.layers.Dense(head_size)(ffn)
-        t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + ffn)
-    t = tf.keras.layers.GlobalAveragePooling1D()(t)
-    trans_emb = tf.keras.layers.Dense(64, activation='relu')(t)
-
-    merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
-    embedding = tf.keras.layers.Dense(96, activation='relu')(merged)
-    embedding = tf.keras.layers.Dropout(0.2)(embedding)
-    return _mtl_wrap(inputs, embedding, n_classes)
+    return _mtl_wrap(inputs, _build_cnn_trans_dual_branches_mtl(inputs, head_size, num_heads, ff_dim, num_blocks, dropout), n_classes)
 
 
 # --- 8. CNN+GRU Attn-Recon MTL ---

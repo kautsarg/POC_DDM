@@ -305,17 +305,59 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             x_tf_curve = x_tf_curve_scaled
         else:
             x_tf_curve = x_tf_curve_raw
-        is_mtl = 'mtl' in _base_name
-        is_lf = '_lf' in _base_name and not is_mtl
-        is_dual = _base_name.endswith('_dual') and not is_mtl
+        is_supcon_mtl = 'supcon_mtl' in _base_name
+        is_supcon     = 'supcon' in _base_name and not is_supcon_mtl
+        is_mtl  = 'mtl' in _base_name and not is_supcon_mtl
+        is_lf   = '_lf' in _base_name and not is_mtl and not is_supcon_mtl
+        is_dual = _base_name.endswith('_dual') and not is_mtl and not is_supcon_mtl
 
         recurrent_layer = find_bidirectional_recurrent_layer(model)
         transformer_layer = find_transformer_block_output(model)
         flatten_layer = find_flatten_layer(model)
 
         # --------------------------------------------------------
+        # SUPCON MTL MODELS — 3 outputs: cls_out, reg_out, proj_norm
+        if is_supcon_mtl:
+            try:
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, reg_out, _proj = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                    target_reg = reg_out[:, 0]
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                grad_reg = tape.gradient(target_reg, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                reg_sal = np.mean(np.abs(grad_reg.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] SupConMTL gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {
+                "is_type": "mtl",
+                "master_saliency": cls_sal,
+                "cls_saliency": cls_sal,
+                "reg_saliency": reg_sal,
+            }
+
+        # --------------------------------------------------------
+        # SUPCON ST MODELS — 2 outputs: cls_out, proj_norm
+        elif is_supcon:
+            try:
+                with tf.GradientTape() as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, _proj = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] SupCon gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
+
+        # --------------------------------------------------------
         # MTL MODELS — dual output: cls_out (softmax), reg_out (linear)
-        if is_mtl:
+        elif is_mtl:
             is_mtl_lf = '_lf' in _base_name  # cnn_lf_mtl, gru_lf_mtl, trans_lf_mtl need 2 inputs
             x_in = [x_tf_curve, x_tf_man] if is_mtl_lf else x_tf_curve
             try:
@@ -799,23 +841,27 @@ def plot_gradcam_per_label(models, X_full, X_man_full, y_full,
 
     for model_name, model in models.items():
         save_path = save_dir / f"05_GRADCAM_{model_name}_{name_suffix}.png"
-        _base  = model_name.removesuffix('_inc')
-        is_mtl = 'mtl' in _base
-        is_lf  = '_lf' in _base and not is_mtl
+        _base         = model_name.removesuffix('_inc')
+        is_supcon_mtl = 'supcon_mtl' in _base
+        is_supcon     = 'supcon' in _base and not is_supcon_mtl
+        is_mtl = 'mtl' in _base and not is_supcon_mtl
+        is_lf  = '_lf' in _base and not is_mtl and not is_supcon_mtl
 
         # ── Full-dataset predictions to find best-confidence samples ──────
         try:
             x_in_full = [X_full, X_man_full] if is_lf else X_full
             raw_preds  = model.predict(x_in_full, verbose=0, batch_size=256)
-            probs = raw_preds[0] if is_mtl else raw_preds
+            # MTL/SupCon models return list; cls_out is always first element
+            probs = raw_preds[0] if (is_mtl or is_supcon or is_supcon_mtl) else raw_preds
             if probs.ndim == 1:
                 probs = np.stack([1 - probs, probs], axis=1)
         except Exception as e:
             print(f"     [!] GradCAM predict failed for {model_name}: {e}")
             continue
 
-        n_cols     = 2 if is_mtl else 1
-        col_titles = ["Classification Gradient", "Regression Gradient"] if is_mtl else ["Input Gradient"]
+        n_cols     = 2 if (is_mtl or is_supcon_mtl) else 1
+        col_titles = (["Classification Gradient", "Regression Gradient"]
+                      if (is_mtl or is_supcon_mtl) else ["Input Gradient"])
         fig, axes  = plt.subplots(n_cls, n_cols,
                                    figsize=(9 * n_cols, 3.2 * n_cls),
                                    squeeze=False)
@@ -838,7 +884,24 @@ def plot_gradcam_per_label(models, X_full, X_man_full, y_full,
             x_in     = [x_tf, x_man_tf] if is_lf else x_tf
 
             try:
-                if is_mtl:
+                if is_supcon_mtl:
+                    with tf.GradientTape(persistent=True) as tape:
+                        tape.watch(x_tf)
+                        cls_out, reg_out, _proj = model(x_in, training=False)
+                        cls_score = cls_out[0, label]
+                        reg_score = reg_out[0, 0]
+                    cls_grad = np.abs(tape.gradient(cls_score, x_tf).numpy()[0, :, 0])
+                    reg_grad = np.abs(tape.gradient(reg_score, x_tf).numpy()[0, :, 0])
+                    del tape
+                    grads = [cls_grad, reg_grad]
+                elif is_supcon:
+                    with tf.GradientTape() as tape:
+                        tape.watch(x_tf)
+                        cls_out, _proj = model(x_in, training=False)
+                        score = cls_out[0, label]
+                    grad = np.abs(tape.gradient(score, x_tf).numpy()[0, :, 0])
+                    grads = [grad]
+                elif is_mtl:
                     with tf.GradientTape(persistent=True) as tape:
                         tape.watch(x_tf)
                         cls_out, reg_out = model(x_in, training=False)

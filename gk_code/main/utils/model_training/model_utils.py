@@ -29,6 +29,15 @@ tf.get_logger().setLevel('ERROR')
 from scikeras.wrappers import KerasClassifier
 
 import model_utils_gated
+from model_utils_supcon import (
+    create_cnn_supcon_model, create_gru_supcon_model,
+    create_transformer_supcon_model, create_cnn_gru_dual_supcon_model,
+    create_cnn_trans_dual_supcon_model,
+    create_cnn_supcon_mtl_model, create_gru_supcon_mtl_model,
+    create_transformer_supcon_mtl_model, create_cnn_gru_dual_supcon_mtl_model,
+    create_cnn_trans_dual_supcon_mtl_model,
+    SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
+)
 from model_utils_mtl import (
     create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
     create_rnn_mtl_model, create_transformer_mtl_model,
@@ -746,6 +755,18 @@ def evaluate_outlier_filters(
         "cnn_lstm_dual_mtl":             ("y_preds_AC_cnn_lstm_dual_mtl_",              "y_probs_AC_cnn_lstm_dual_mtl_",              "classes_AC_cnn_lstm_dual_mtl_"),
         **{f"{name}": (f"y_preds_AC_{name}_", f"y_probs_AC_{name}_", f"classes_AC_{name}_")
            for name in _ALL_GATED_MTL_FACTORIES},
+        # SupCon ST models (classification + contrastive; projection head discarded at inference)
+        "cnn_supcon":               ("y_preds_AC_cnn_supcon_",               "y_probs_AC_cnn_supcon_",               "classes_AC_cnn_supcon_"),
+        "gru_supcon":               ("y_preds_AC_gru_supcon_",               "y_probs_AC_gru_supcon_",               "classes_AC_gru_supcon_"),
+        "transformer_supcon":       ("y_preds_AC_trans_supcon_",             "y_probs_AC_trans_supcon_",             "classes_AC_trans_supcon_"),
+        "cnn_gru_dual_supcon":      ("y_preds_AC_cnn_gru_dual_supcon_",      "y_probs_AC_cnn_gru_dual_supcon_",      "classes_AC_cnn_gru_dual_supcon_"),
+        "cnn_trans_dual_supcon":    ("y_preds_AC_cnn_trans_dual_supcon_",    "y_probs_AC_cnn_trans_dual_supcon_",    "classes_AC_cnn_trans_dual_supcon_"),
+        # SupCon MTL models (classification + regression + contrastive)
+        "cnn_supcon_mtl":           ("y_preds_AC_cnn_supcon_mtl_",           "y_probs_AC_cnn_supcon_mtl_",           "classes_AC_cnn_supcon_mtl_"),
+        "gru_supcon_mtl":           ("y_preds_AC_gru_supcon_mtl_",           "y_probs_AC_gru_supcon_mtl_",           "classes_AC_gru_supcon_mtl_"),
+        "transformer_supcon_mtl":   ("y_preds_AC_trans_supcon_mtl_",         "y_probs_AC_trans_supcon_mtl_",         "classes_AC_trans_supcon_mtl_"),
+        "cnn_gru_dual_supcon_mtl":  ("y_preds_AC_cnn_gru_dual_supcon_mtl_",  "y_probs_AC_cnn_gru_dual_supcon_mtl_",  "classes_AC_cnn_gru_dual_supcon_mtl_"),
+        "cnn_trans_dual_supcon_mtl":("y_preds_AC_cnn_trans_dual_supcon_mtl_","y_probs_AC_cnn_trans_dual_supcon_mtl_","classes_AC_cnn_trans_dual_supcon_mtl_"),
     }
 
     model_print_map = {
@@ -773,12 +794,21 @@ def evaluate_outlier_filters(
         "cnn_gru_crossattn_mtl": "CNN+GRU CoAttn MTL", "cnn_gru_film_mtl": "CNN+GRU FiLM MTL",
         "cnn_trans_gate_mtl": "CNN+Tr Gate MTL", "cnn_trans_hadamard_mtl": "CNN+Tr Hadamard MTL",
         "cnn_trans_crossattn_mtl": "CNN+Tr CoAttn MTL", "cnn_trans_film_mtl": "CNN+Tr FiLM MTL",
+        # SupCon ST
+        "cnn_supcon": "CNN SupCon", "gru_supcon": "GRU SupCon",
+        "transformer_supcon": "Trans SupCon",
+        "cnn_gru_dual_supcon": "CNN+GRU Dual SupCon", "cnn_trans_dual_supcon": "CNN+Tr Dual SupCon",
+        # SupCon MTL
+        "cnn_supcon_mtl": "CNN SupCon MTL", "gru_supcon_mtl": "GRU SupCon MTL",
+        "transformer_supcon_mtl": "Trans SupCon MTL",
+        "cnn_gru_dual_supcon_mtl": "CNN+GRU Dual SupCon MTL",
+        "cnn_trans_dual_supcon_mtl": "CNN+Tr Dual SupCon MTL",
     }
 
     # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
     # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape; MTL models never
     # use inception smoothing.
-    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"} | set(MTL_MODEL_KEYS)
+    _NO_INC_INCEPTION = {"rf", "knn", "ffi", "cnn_gru_dual_attn_recon"} | set(MTL_MODEL_KEYS) | set(ALL_SUPCON_KEYS)
     for _m in list(model_key_map.keys()):
         if _m not in _NO_INC_INCEPTION:
             _pk, _prk, _ck = model_key_map[_m]
@@ -1225,6 +1255,112 @@ def evaluate_outlier_filters(
                     reg_preds_per_fold.append(reg_pred_orig)
                     reg_trues_per_fold.append(conc_test_raw)
 
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in SUPCON_MTL_MODEL_KEYS:
+                    # SupCon MTL: UW-SO(CE+MSE) + supervised contrastive; 3 outputs at train time.
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_supcon_mtl':
+                        model = create_cnn_supcon_mtl_model(T, n_classes); epochs = 1000
+                    elif _base_m == 'gru_supcon_mtl':
+                        model = create_gru_supcon_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'transformer_supcon_mtl':
+                        model = create_transformer_supcon_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_supcon_mtl':
+                        model = create_cnn_gru_dual_supcon_mtl_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_trans_dual_supcon_mtl':
+                        model = create_cnn_trans_dual_supcon_mtl_model(T, n_classes); epochs = 500
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        model.fit(
+                            X_train_curve_fit,
+                            {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                            validation_data=(X_val_curve,
+                                             {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                            epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                            callbacks=_fit_callbacks)
+                    else:
+                        model.fit(
+                            X_train_curve,
+                            {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                            epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    cls_prob, reg_pred_scaled, _proj = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in SUPCON_MODEL_KEYS:
+                    # SupCon ST: CE + supervised contrastive; projection head discarded at predict().
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_supcon':
+                        model = create_cnn_supcon_model(T, n_classes); epochs = 1000
+                    elif _base_m == 'gru_supcon':
+                        model = create_gru_supcon_model(T, n_classes); epochs = 500
+                    elif _base_m == 'transformer_supcon':
+                        model = create_transformer_supcon_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_gru_dual_supcon':
+                        model = create_cnn_gru_dual_supcon_model(T, n_classes); epochs = 500
+                    elif _base_m == 'cnn_trans_dual_supcon':
+                        model = create_cnn_trans_dual_supcon_model(T, n_classes); epochs = 500
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+
+                    if _val_split_ok:
+                        model.fit(
+                            X_train_curve_fit,
+                            {'cls_out': y_train_fit},
+                            validation_data=(X_val_curve, {'cls_out': y_val}),
+                            epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                            callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    cls_prob, _proj = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
                 elif _base_m in model_utils_gated._ALL_FACTORIES:

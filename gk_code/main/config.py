@@ -322,10 +322,22 @@ MODEL_KEY_MAP = {
     "cnn_trans_hadamard_mtl":        ("y_preds_AC_cnn_trans_hadamard_mtl_",         "y_probs_AC_cnn_trans_hadamard_mtl_",         "classes_AC_cnn_trans_hadamard_mtl_"),
     "cnn_trans_crossattn_mtl":       ("y_preds_AC_cnn_trans_crossattn_mtl_",        "y_probs_AC_cnn_trans_crossattn_mtl_",        "classes_AC_cnn_trans_crossattn_mtl_"),
     "cnn_trans_film_mtl":            ("y_preds_AC_cnn_trans_film_mtl_",             "y_probs_AC_cnn_trans_film_mtl_",             "classes_AC_cnn_trans_film_mtl_"),
+    # SupCon ST models
+    "cnn_supcon":               ("y_preds_AC_cnn_supcon_",               "y_probs_AC_cnn_supcon_",               "classes_AC_cnn_supcon_"),
+    "gru_supcon":               ("y_preds_AC_gru_supcon_",               "y_probs_AC_gru_supcon_",               "classes_AC_gru_supcon_"),
+    "transformer_supcon":       ("y_preds_AC_trans_supcon_",             "y_probs_AC_trans_supcon_",             "classes_AC_trans_supcon_"),
+    "cnn_gru_dual_supcon":      ("y_preds_AC_cnn_gru_dual_supcon_",      "y_probs_AC_cnn_gru_dual_supcon_",      "classes_AC_cnn_gru_dual_supcon_"),
+    "cnn_trans_dual_supcon":    ("y_preds_AC_cnn_trans_dual_supcon_",    "y_probs_AC_cnn_trans_dual_supcon_",    "classes_AC_cnn_trans_dual_supcon_"),
+    # SupCon MTL models
+    "cnn_supcon_mtl":           ("y_preds_AC_cnn_supcon_mtl_",           "y_probs_AC_cnn_supcon_mtl_",           "classes_AC_cnn_supcon_mtl_"),
+    "gru_supcon_mtl":           ("y_preds_AC_gru_supcon_mtl_",           "y_probs_AC_gru_supcon_mtl_",           "classes_AC_gru_supcon_mtl_"),
+    "transformer_supcon_mtl":   ("y_preds_AC_trans_supcon_mtl_",         "y_probs_AC_trans_supcon_mtl_",         "classes_AC_trans_supcon_mtl_"),
+    "cnn_gru_dual_supcon_mtl":  ("y_preds_AC_cnn_gru_dual_supcon_mtl_",  "y_probs_AC_cnn_gru_dual_supcon_mtl_",  "classes_AC_cnn_gru_dual_supcon_mtl_"),
+    "cnn_trans_dual_supcon_mtl":("y_preds_AC_cnn_trans_dual_supcon_mtl_","y_probs_AC_cnn_trans_dual_supcon_mtl_","classes_AC_cnn_trans_dual_supcon_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
-# rf/knn/ffi/gnn_* are non-Keras; attn_recon has incompatible input shape; MTL models never
+# rf/knn/ffi/gnn_* are non-Keras; attn_recon has incompatible input shape; MTL/SupCon models never
 # use inception smoothing.
 _MTL_MODEL_KEYS = {
     "cnn_mtl", "lstm_mtl", "gru_mtl", "rnn_mtl", "transformer_mtl",
@@ -335,7 +347,13 @@ _MTL_MODEL_KEYS = {
     "cnn_gru_gate_mtl", "cnn_gru_hadamard_mtl", "cnn_gru_crossattn_mtl", "cnn_gru_film_mtl",
     "cnn_trans_gate_mtl", "cnn_trans_hadamard_mtl", "cnn_trans_crossattn_mtl", "cnn_trans_film_mtl",
 }
-_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS
+_SUPCON_MODEL_KEYS = {
+    "cnn_supcon", "gru_supcon", "transformer_supcon",
+    "cnn_gru_dual_supcon", "cnn_trans_dual_supcon",
+    "cnn_supcon_mtl", "gru_supcon_mtl", "transformer_supcon_mtl",
+    "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
+}
+_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -367,6 +385,15 @@ MODEL_PRINT_MAP = {
     "cnn_gru_crossattn_mtl": "CNN+GRU CoAttn MTL", "cnn_gru_film_mtl": "CNN+GRU FiLM MTL",
     "cnn_trans_gate_mtl": "CNN+Tr Gate MTL", "cnn_trans_hadamard_mtl": "CNN+Tr Hadamard MTL",
     "cnn_trans_crossattn_mtl": "CNN+Tr CoAttn MTL", "cnn_trans_film_mtl": "CNN+Tr FiLM MTL",
+    # SupCon ST
+    "cnn_supcon": "CNN SupCon", "gru_supcon": "GRU SupCon",
+    "transformer_supcon": "Trans SupCon",
+    "cnn_gru_dual_supcon": "CNN+GRU Dual SupCon", "cnn_trans_dual_supcon": "CNN+Tr Dual SupCon",
+    # SupCon MTL
+    "cnn_supcon_mtl": "CNN SupCon MTL", "gru_supcon_mtl": "GRU SupCon MTL",
+    "transformer_supcon_mtl": "Trans SupCon MTL",
+    "cnn_gru_dual_supcon_mtl": "CNN+GRU Dual SupCon MTL",
+    "cnn_trans_dual_supcon_mtl": "CNN+Tr Dual SupCon MTL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({
