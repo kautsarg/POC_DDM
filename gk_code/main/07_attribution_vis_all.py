@@ -116,17 +116,27 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
     models = {}
     if model_names is None:
         model_names = [
-            'cnn', 'bigru', 'transformer', 'lstm_ae_clf',
-            'cnn_lf', 'bigru_lf', 'transformer_lf',
-            'cnn_gru_dual', 'cnn_trans_dual', 'cnn_transformer_dual',
-            # 'cnn_gru_gate', 'cnn_gru_hadamard', 'cnn_gru_crossattn', 'cnn_gru_film',
-            # 'cnn_trans_gate', 'cnn_trans_hadamard', 'cnn_trans_crossattn', 'cnn_trans_film',
-            # 'cnn_gru_dual_inc', 'cnn_trans_dual_inc', ...  add _inc variants here to load inception models
+            # Standard ST models
+            'cnn', 'bigru', 'transformer',
+            # 'cnn_lf', 'bigru_lf', 'transformer_lf',
+            'cnn_gru_dual', 'cnn_trans_dual',
+            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
 
-            # MTL variants
+            # Standard MTL models
             'cnn_mtl', 'gru_mtl', 'transformer_mtl',
-            'cnn_lf_mtl', 'gru_lf_mtl', 'trans_lf_mtl',
+            # 'cnn_lf_mtl', 'gru_lf_mtl', 'trans_lf_mtl',
             'cnn_gru_dual_mtl', 'cnn_trans_dual_mtl',
+            "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+
+            # SupCon ST models
+            "cnn_supcon", "gru_supcon", "transformer_supcon",
+            "cnn_gru_dual_supcon", "cnn_trans_dual_supcon",
+            "cnn_gru_dual_cosine_recon_supcon", "cnn_gru_dual_attn_recon_supcon",
+
+            # SupCon MTL models
+            "cnn_supcon_mtl", "gru_supcon_mtl", "transformer_supcon_mtl",
+            "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
+            "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
         ]
 
     for name in model_names:
@@ -159,7 +169,7 @@ def plot_latent_tsne(models, X, X_man, y, dataset_name, save_path, max_samples=2
         X_batch, X_man_batch, y_batch = X, X_man, y
 
     num_models = len(models)
-    cols = min(3, num_models)
+    cols = min(5, num_models)
     rows = math.ceil(num_models / cols)
 
     fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))

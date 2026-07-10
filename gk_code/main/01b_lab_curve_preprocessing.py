@@ -23,20 +23,24 @@ import sigmoid_fitting as sp
 # of a CSV -- one row per sample, no spatial structure at all. Each entry here
 # is a subfolder of config.LAB_EXP_FOLDER.
 FILE_MAPPING = {
-    'ACA_qdPCR':   'dPCR_Dataset_Pure.csv',
-    'AMCA_qdPCR':  'dPCR_Amplification_Curves.csv',
-    'AMCA_qdLAMP': '5Plex_dLAMP_oldData.csv',
-    'Z_area': 'area_strategy.csv',
-    'Z_range': 'range_strategy.xlsx',
-    'Z_range_filtered': 'range_strategy_filtered.xlsx',
+    '01_ACA_qdPCR':   'dPCR_Dataset_Pure.csv',
+    '02_AMCA_qdLAMP': '5Plex_dLAMP_oldData.csv',
+    '03_AMCA_qdPCR':  'dPCR_Amplification_Curves.csv',
+    '04_Z_area': 'area_strategy.csv',
+    '05_Z_range': 'range_strategy.xlsx',
+    '06_Z_range_filtered': 'range_strategy_filtered.xlsx',
+    '07_ACA_qdPCR_conc_filtered':   'dPCR_Dataset_Pure.csv',
+    '08_AMCA_qdPCR_conc_filtered':  'dPCR_Amplification_Curves.csv',
 }
 FILE_CONC = {
-    'ACA_qdPCR': 'Conc',
-    'AMCA_qdPCR':  'Conc',
-    'AMCA_qdLAMP': 'Conc',
-    'Z_area': None,
-    'Z_range': None,
-    'Z_range_filtered': None
+    '01_ACA_qdPCR': 'Conc',
+    '03_AMCA_qdPCR':  'Conc',
+    '02_AMCA_qdLAMP': 'Conc',
+    '04_Z_area': None,
+    '05_Z_range': None,
+    '06_Z_range_filtered': None,
+    '07_ACA_qdPCR_conc_filtered': 'Conc',
+    '08_AMCA_qdPCR_conc_filtered': 'Conc',
 }
 
 FILE_MAPPING_ONE_TO_ONE = {
@@ -45,12 +49,14 @@ FILE_MAPPING_ONE_TO_ONE = {
     '3_range_filtered': 'range_strategy_filtered.xlsx',
 }
 FILE_TARGET = {
-    'ACA_qdPCR':   'LoadedPanels',
-    'AMCA_qdPCR':  'Target',
-    'AMCA_qdLAMP': 'Target',
-    'Z_area':   'Target',
-    'Z_range':  'Target',
-    'Z_range_filtered': 'Target',
+    '01_ACA_qdPCR':   'LoadedPanels',
+    '03_AMCA_qdPCR':  'Target',
+    '02_AMCA_qdLAMP': 'Target',
+    '04_Z_area':   'Target',
+    '05_Z_range':  'Target',
+    '06_Z_range_filtered': 'Target',
+    '07_ACA_qdPCR_conc_filtered': 'LoadedPanels',
+    '08_AMCA_qdPCR_conc_filtered': 'Target',
 }
 
 FILE_TARGET_ONE_TO_ONE = {
