@@ -33,10 +33,21 @@ python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/02_outlier_detection
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode
 # ── MTL ───────────────────────────────────────────────────────────────────────
 # python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --mtl
-# ── SupCon ST ────────────────────────────────────────────────────────────────
-python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon
-# ── SupCon MTL ───────────────────────────────────────────────────────────────
-# python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon --mtl
+
+# ── SupCon 1 ST ──────────────────────────────────────────────────────────────
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 1
+# ── SupCon 1 MTL ──────────────────────────────────────────────────────────────
+# python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 1 --mtl
+
+# ── SupCon 2 ST ──────────────────────────────────────────────────────────────
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 2
+# ── SupCon 2 MTL ──────────────────────────────────────────────────────────────
+# python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 2 --mtl
+
+# ── SupCon 3 ST ──────────────────────────────────────────────────────────────
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 3
+# ── SupCon 3 MTL ──────────────────────────────────────────────────────────────
+# python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 3 --mtl
 
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
