@@ -36,16 +36,16 @@ from model_utils_supcon import (
     create_cnn_supcon_mtl_model, create_gru_supcon_mtl_model,
     create_transformer_supcon_mtl_model, create_cnn_gru_dual_supcon_mtl_model,
     create_cnn_trans_dual_supcon_mtl_model,
-    create_cnn_gru_dual_cosine_recon_supcon_model, create_cnn_gru_dual_attn_recon_supcon_model,
-    create_cnn_gru_dual_cosine_recon_supcon_mtl_model, create_cnn_gru_dual_attn_recon_supcon_mtl_model,
+    create_cnn_gru_dual_attn_recon_supcon_model,
+    create_cnn_gru_dual_attn_recon_supcon_mtl_model,
     create_cnn_gru_dual_supcon2_model, create_cnn_trans_dual_supcon2_model,
     create_cnn_gru_dual_supcon2_mtl_model, create_cnn_trans_dual_supcon2_mtl_model,
     create_cnn_gru_dual_supcon3_model, create_cnn_trans_dual_supcon3_model,
     create_cnn_gru_dual_supcon3_mtl_model, create_cnn_trans_dual_supcon3_mtl_model,
-    create_cnn_gru_dual_cosine_recon_supcon2_model, create_cnn_gru_dual_attn_recon_supcon2_model,
-    create_cnn_gru_dual_cosine_recon_supcon2_mtl_model, create_cnn_gru_dual_attn_recon_supcon2_mtl_model,
-    create_cnn_gru_dual_cosine_recon_supcon3_model, create_cnn_gru_dual_attn_recon_supcon3_model,
-    create_cnn_gru_dual_cosine_recon_supcon3_mtl_model, create_cnn_gru_dual_attn_recon_supcon3_mtl_model,
+    create_cnn_gru_dual_attn_recon_supcon2_model,
+    create_cnn_gru_dual_attn_recon_supcon2_mtl_model,
+    create_cnn_gru_dual_attn_recon_supcon3_model,
+    create_cnn_gru_dual_attn_recon_supcon3_mtl_model,
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
     BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
     BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
@@ -818,13 +818,6 @@ def evaluate_outlier_filters(
                 _conc_m = _conc_m[valid_class_mask]
             y_conc_filtered = _conc_m.astype(float)
 
-        # # THISSS ############################################################
-        # # Curve Normalisations
-        # curve_mins = np.min(X_AC, axis=1, keepdims=True)
-        # curve_maxs = np.max(X_AC, axis=1, keepdims=True)
-        # X_AC = (X_AC - curve_mins) / (curve_maxs - curve_mins + 1e-8)
-        ######################################################################
-
         if n_classes < 2 or len(y_true) < 2 * n_classes:
             print(f"     [Warning] Insufficient classes or samples. Skipping.")
             continue
@@ -1227,7 +1220,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon_mtl':
                         model = create_cnn_trans_dual_supcon_mtl_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon_mtl':
-                        model = create_cnn_gru_dual_cosine_recon_supcon_mtl_model(T, n_classes); epochs = 500
+                        model = create_cnn_gru_dual_supcon_mtl_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
@@ -1296,7 +1289,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon':
                         model = create_cnn_trans_dual_supcon_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon':
-                        model = create_cnn_gru_dual_cosine_recon_supcon_model(T, n_classes); epochs = 500
+                        model = create_cnn_gru_dual_supcon_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon':
                         model = create_cnn_gru_dual_attn_recon_supcon_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
@@ -1337,7 +1330,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon2':
                         model = create_cnn_trans_dual_supcon2_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon2':
-                        model = create_cnn_gru_dual_cosine_recon_supcon2_model(T, n_classes)
+                        model = create_cnn_gru_dual_supcon2_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon2':
                         model = create_cnn_gru_dual_attn_recon_supcon2_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
@@ -1372,7 +1365,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon2_mtl':
                         model = create_cnn_trans_dual_supcon2_mtl_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon2_mtl':
-                        model = create_cnn_gru_dual_cosine_recon_supcon2_mtl_model(T, n_classes)
+                        model = create_cnn_gru_dual_supcon2_mtl_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon2_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon2_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
@@ -1427,7 +1420,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon3':
                         model = create_cnn_trans_dual_supcon3_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon3':
-                        model = create_cnn_gru_dual_cosine_recon_supcon3_model(T, n_classes)
+                        model = create_cnn_gru_dual_supcon3_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon3':
                         model = create_cnn_gru_dual_attn_recon_supcon3_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
@@ -1462,7 +1455,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_supcon3_mtl':
                         model = create_cnn_trans_dual_supcon3_mtl_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_cosine_recon_supcon3_mtl':
-                        model = create_cnn_gru_dual_cosine_recon_supcon3_mtl_model(T, n_classes)
+                        model = create_cnn_gru_dual_supcon3_mtl_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon3_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon3_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)

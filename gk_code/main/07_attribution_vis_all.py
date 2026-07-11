@@ -1868,7 +1868,7 @@ def run_interpretation_pipeline(exp_folder_path=config.DEFAULT_EXP_FOLDER, filte
     global_vis_dir = config.get_viz_dir(exp_folder, "model_interpretation")
     global_vis_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in ['.DS_Store', 'model_interpretation']])
+    exp_paths = sorted([p for p in exp_folder.iterdir() if p.is_dir() and p.name not in config.EXCLUDED_FOLDERS])
 
     if task_id is not None:
         if task_id >= len(exp_paths):

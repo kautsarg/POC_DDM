@@ -29,7 +29,6 @@ sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/02_outlier_detection')
 sys.path.insert(0, 'utils/model_training')
-import chip_utilities as utils
 import sigmoid_fitting as sp
 from msc_outlier import run_msc_pipeline
 from amf_outlier import run_amf_pipeline
@@ -38,10 +37,8 @@ from knn_fingerprint_filter import run_knnfilter_pipeline
 from autoencoder_outlier import run_autoencoder_pipeline
 from lstm_autoencoder_outlier import run_lstm_autoencoder_pipeline
 from cnn_autoencoder_outlier import run_cnn_autoencoder_pipeline
-from autoencoder_outlier_per_well import run_autoencoder_per_well_pipeline
-from lstm_autoencoder_outlier_per_well import run_lstm_autoencoder_per_well_pipeline
-from cnn_autoencoder_outlier_per_well import run_cnn_autoencoder_per_well_pipeline
 from spatial_consistency_outlier import run_spatial_consistency_knn_pipeline, run_spatial_consistency_grid_pipeline
+from pipeline_utils import get_exp_paths, check_task_id
 
 from model_utils import set_global_determinism
 
@@ -593,13 +590,14 @@ def _generate_tsne_3d(dataset_name, important_feature_combinations, kinetic_feat
                      tsne_buffers)
 
 
-ALL_FILTERS = frozenset({"lstm_ae", "spatial_knn", "spatial_grid"})
+ALL_FILTERS = frozenset({"cnn_ae", "knn", "lstm_ae", "msc", "amf", "mean_std", "spatial_knn", "spatial_grid"})
+_DEFAULT_FILTERS = frozenset({"lstm_ae", "spatial_knn", "spatial_grid"})
 
 
 def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
                             linear_feature_combinations, important_feature_combinations,
                             ae_configs, knn_filter_config, spatial_knn_configs, spatial_grid_configs,
-                            downsample_factor, save_plot_flag, filters=ALL_FILTERS):
+                            downsample_factor, save_plot_flag, filters=_DEFAULT_FILTERS):
     """Run all outlier detection sub-pipelines, skipping columns already computed."""
     print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
 
@@ -650,18 +648,21 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
         """Return configs whose label column is absent from dataset[0]'s features."""
         return [pct for pct in knn_filter_config if label_fn(pct) not in kinetic_features[0].columns]
 
-    # --- CNN AutoEncoder (Global) --- [DISABLED]
-    # missing_cnn_glb = _missing_ae(lambda p: f"cnn_ae_glb_ds{downsample_factor}_label_{p}")
-    # if missing_cnn_glb:
-    #     extracted_dfs = run_cnn_autoencoder_pipeline(
-    #         ae_names, ae_dataset, Y_well, ref_curves,
-    #         str(exp_path / "ae_outlier"), missing_cnn_glb,
-    #         save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
-    #     for i, name in enumerate(ae_names):
-    #         features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
-    #     flush()
-    # else:
-    #     print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
+    # --- CNN AutoEncoder (Global) ---
+    if "cnn_ae" not in filters:
+        print("  -> [DISABLED] CNN AutoEncoder (Global): not in --filters.")
+    else:
+        missing_cnn_glb = _missing_ae(lambda p: f"cnn_ae_glb_ds{downsample_factor}_label_{p}")
+        if missing_cnn_glb:
+            extracted_dfs = run_cnn_autoencoder_pipeline(
+                ae_names, ae_dataset, Y_well, ref_curves,
+                str(exp_path / "ae_outlier"), missing_cnn_glb,
+                save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False)
+            for i, name in enumerate(ae_names):
+                features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
+            flush()
+        else:
+            print("  -> [SKIP] CNN AutoEncoder (Global): Already calculated.")
 
     # --- LSTM AutoEncoder (Global) ---
     if "lstm_ae" not in filters:
@@ -683,18 +684,21 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
         else:
             print("  -> [SKIP] LSTM AutoEncoder (Global): Already calculated.")
 
-    # --- KNN Filter --- [DISABLED]
-    # missing_knn = [pct for pct in knn_filter_config
-    #                if f"knn_top_{pct}" not in kinetic_features[0].columns]
-    # if missing_knn:
-    #     extracted_dfs = run_knnfilter_pipeline(
-    #         dataset_name, dataset, Y_well, ref_curves,
-    #         str(exp_path / "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
-    #     for i in range(len(dataset_name)):
-    #         features_to_concat[i].append(extracted_dfs[i])
-    #     flush()
-    # else:
-    #     print("  -> [SKIP] KNN Filter: Already calculated.")
+    # --- KNN Filter ---
+    if "knn" not in filters:
+        print("  -> [DISABLED] KNN Filter: not in --filters.")
+    else:
+        missing_knn = [pct for pct in knn_filter_config
+                       if f"knn_top_{pct}" not in kinetic_features[0].columns]
+        if missing_knn:
+            extracted_dfs = run_knnfilter_pipeline(
+                dataset_name, dataset, Y_well, ref_curves,
+                str(exp_path / "knnfilter_outlier"), missing_knn, save_plot=save_plot_flag)
+            for i in range(len(dataset_name)):
+                features_to_concat[i].append(extracted_dfs[i])
+            flush()
+        else:
+            print("  -> [SKIP] KNN Filter: Already calculated.")
 
     # --- Spatial Consistency Filter (KNN neighbors) ---
     if "spatial_knn" not in filters:
@@ -734,53 +738,62 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
         else:
             print("  -> [SKIP] Spatial Consistency Filter (Grid): Already calculated.")
 
-    # --- MSC Filter --- [DISABLED]
-    # msc_to_run, msc_skip = [], []
-    # for exp_label, p_val, feats in msc_configs:
-    #     (msc_to_run if f"msc_label_{exp_label}" not in kinetic_features[0].columns
-    #      else msc_skip).append((exp_label, p_val, feats))
-    # for exp_label, _, __ in msc_skip:
-    #     print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
-    # if msc_to_run:
-    #     for exp_label, p_val, feats in msc_to_run:
-    #         extracted_dfs = run_msc_pipeline(
-    #             exp_label, p_val, ref_curves, str(exp_path / "msc_outlier"),
-    #             dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
-    #         for i in range(len(dataset_name)):
-    #             features_to_concat[i].append(extracted_dfs[i])
-    #     flush()
+    # --- MSC Filter ---
+    if "msc" not in filters:
+        print("  -> [DISABLED] MSC Filter: not in --filters.")
+    else:
+        msc_to_run, msc_skip = [], []
+        for exp_label, p_val, feats in msc_configs:
+            (msc_to_run if f"msc_label_{exp_label}" not in kinetic_features[0].columns
+             else msc_skip).append((exp_label, p_val, feats))
+        for exp_label, _, __ in msc_skip:
+            print(f"  -> [SKIP] MSC [{exp_label}]: Already calculated.")
+        if msc_to_run:
+            for exp_label, p_val, feats in msc_to_run:
+                extracted_dfs = run_msc_pipeline(
+                    exp_label, p_val, ref_curves, str(exp_path / "msc_outlier"),
+                    dataset_name, kinetic_features, dataset, Y_well, feats, save_plot=False)
+                for i in range(len(dataset_name)):
+                    features_to_concat[i].append(extracted_dfs[i])
+            flush()
 
-    # --- AMF Filter --- [DISABLED]
-    # amf_to_run, amf_skip = [], []
-    # for exp_label, feats in amf_configs:
-    #     (amf_to_run if f"amf_label_{exp_label}" not in kinetic_features[0].columns
-    #      else amf_skip).append((exp_label, feats))
-    # for exp_label, _ in amf_skip:
-    #     print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
-    # if amf_to_run:
-    #     for exp_label, feats in amf_to_run:
-    #         extracted_dfs = run_amf_pipeline(
-    #             exp_label, feats, ref_curves, str(exp_path / "amf_outlier"),
-    #             dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
-    #         for i in range(len(dataset_name)):
-    #             features_to_concat[i].append(extracted_dfs[i])
-    #     flush()
+    # --- AMF Filter ---
+    if "amf" not in filters:
+        print("  -> [DISABLED] AMF Filter: not in --filters.")
+    else:
+        amf_to_run, amf_skip = [], []
+        for exp_label, feats in amf_configs:
+            (amf_to_run if f"amf_label_{exp_label}" not in kinetic_features[0].columns
+             else amf_skip).append((exp_label, feats))
+        for exp_label, _ in amf_skip:
+            print(f"  -> [SKIP] AMF [{exp_label}]: Already calculated.")
+        if amf_to_run:
+            for exp_label, feats in amf_to_run:
+                extracted_dfs = run_amf_pipeline(
+                    exp_label, feats, ref_curves, str(exp_path / "amf_outlier"),
+                    dataset_name, kinetic_features, dataset, Y_well, save_plot=False)
+                for i in range(len(dataset_name)):
+                    features_to_concat[i].append(extracted_dfs[i])
+            flush()
 
-    # --- Mean/Std Filter --- [DISABLED]
-    # mean_std_to_run, mean_std_skip = [], []
-    # for exp_label, num_std in mean_std_configs:
-    #     (mean_std_to_run if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns
-    #      else mean_std_skip).append((exp_label, num_std))
-    # for exp_label, _ in mean_std_skip:
-    #     print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
-    # if mean_std_to_run:
-    #     for exp_label, num_std in mean_std_to_run:
-    #         extracted_dfs = run_meanstd_pipeline(
-    #             exp_label, num_std, ref_curves, str(exp_path / "meanstd_outlier"),
-    #             dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
-    #         for i in range(len(dataset_name)):
-    #             features_to_concat[i].append(extracted_dfs[i])
-    #     flush()
+    # --- Mean/Std Filter ---
+    if "mean_std" not in filters:
+        print("  -> [DISABLED] Mean/Std Filter: not in --filters.")
+    else:
+        mean_std_to_run, mean_std_skip = [], []
+        for exp_label, num_std in mean_std_configs:
+            (mean_std_to_run if f"mean_std_label_{exp_label}" not in kinetic_features[0].columns
+             else mean_std_skip).append((exp_label, num_std))
+        for exp_label, _ in mean_std_skip:
+            print(f"  -> [SKIP] Mean/Std [{exp_label}]: Already calculated.")
+        if mean_std_to_run:
+            for exp_label, num_std in mean_std_to_run:
+                extracted_dfs = run_meanstd_pipeline(
+                    exp_label, num_std, ref_curves, str(exp_path / "meanstd_outlier"),
+                    dataset_name, dataset, Y_well, kinetic_features[0].index, save_plot=False)
+                for i in range(len(dataset_name)):
+                    features_to_concat[i].append(extracted_dfs[i])
+            flush()
 
     # Safety flush for anything not yet checkpointed.
     flush()
@@ -790,7 +803,7 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
 # MASTER PIPELINE
 # ====================================================================
 
-def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=ALL_FILTERS):
+def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=_DEFAULT_FILTERS):
     """End-to-end outlier detection pipeline for a single experiment folder."""
     exp_path = Path(exp_path)
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
@@ -863,25 +876,18 @@ if __name__ == "__main__":
                              "won't be bit-exact. Only affects this script.")
     parser.add_argument("--filters", nargs="*",
                         choices=sorted(ALL_FILTERS),
-                        default=sorted(ALL_FILTERS),
-                        help="Which outlier filters to run. Default: all "
-                             f"({', '.join(sorted(ALL_FILTERS))}). "
+                        default=sorted(_DEFAULT_FILTERS),
+                        help="Which outlier filters to run. Default: "
+                             f"{', '.join(sorted(_DEFAULT_FILTERS))}. "
+                             f"Available: {', '.join(sorted(ALL_FILTERS))}. "
                              "Pass specific names to run only those, or bare --filters for none.")
 
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
-    
-    exp_paths = sorted([
-        Path(args.exp_folder, name)
-        for name in os.listdir(args.exp_folder)
-        if os.path.isdir(os.path.join(args.exp_folder, name))
-        and name not in config.EXCLUDED_FOLDERS
-    ])
 
-    if args.task_id >= len(exp_paths):
-        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
-        sys.exit(0)
+    exp_paths = get_exp_paths(args.exp_folder)
+    check_task_id(args.task_id, exp_paths)
 
     exp_path = exp_paths[args.task_id]
 

@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.signal import find_peaks, savgol_filter
 from scipy.optimize import minimize, least_squares
-from scipy.interpolate import interp1d
 import warnings
 
 # ============================================================================

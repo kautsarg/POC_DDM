@@ -4,8 +4,10 @@ import sys
 import argparse
 from pathlib import Path
 sys.path.insert(0, 'utils')
+sys.path.insert(0, 'utils/model_training')
 from html_utils import _fig_to_buf, _buf_to_img_html, _panel, build_tabbed_html
 from pipeline_utils import get_exp_paths, check_task_id
+from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 
 import numpy as np
 import joblib
@@ -27,7 +29,7 @@ from scipy import stats as _scipy_stats
 MODEL_KEY_MAP = config.MODEL_KEY_MAP
 MODEL_PRINT_MAP = config.MODEL_PRINT_MAP
 
-_MTL_REG_SENTINEL = -1.0  # matches model_utils_mtl.REG_SENTINEL
+
 
 
 def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits):
@@ -693,9 +695,8 @@ if __name__ == "__main__":
                         help="Regenerate the HTML reports even if they already exist")
     parser.add_argument("--mode", type=str, default="Native", help="'Native' or 'Reference'")
     parser.add_argument("--outlier_filter", type=str, nargs="*",
-                        default=[None, "lstm_ae_glb_ds1_label_elbow",
-                                 "spatial_knn_label_elbow", "spatial_grid_label_elbow"],
-                        help="Outlier filter(s) to visualize. Pass 'None' for baseline. Default: all four.")
+                        default=config.OUTLIER_FILTERS,
+                        help="Outlier filter(s) to visualize. Pass 'None' for baseline. Default: config.OUTLIER_FILTERS.")
     parser.add_argument("--n_splits", type=int, default=1,
                         help="Must match the --n_splits used for the corresponding 03 training run")
     parser.add_argument("--curve_type", type=str, nargs="+",

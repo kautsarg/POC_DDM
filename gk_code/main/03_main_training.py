@@ -11,8 +11,8 @@ from safe_io import safe_joblib_dump
 from pipeline_utils import get_exp_paths, check_task_id
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
-from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
-from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
+from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
+from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS)
 from sklearn.feature_selection import mutual_info_classif
@@ -315,7 +315,6 @@ if __name__ == "__main__":
             elif args.supcon == 3:
                 models = list(BRANCH_SUPCON3_MTL_MODEL_KEYS)
             else:
-                # models = list(MTL_MODEL_KEYS)
                 models = {
                     "cnn_mtl",
                     "gru_mtl", "cnn_gru_dual_mtl",

@@ -263,25 +263,16 @@ def create_cnn_trans_dual_supcon_mtl_model(T, n_classes, head_size=32, num_heads
 
 # ======================================================================
 # SPATIAL RECONSTRUCTION + SUPCON FACTORIES
-# Input for cosine_recon variants: (T, 1) scalar curve (post-reconstruction).
+# cosine_recon variants use (T, 1) scalar input — identical architecture to
+# the canonical supcon factories; the distinction is in the input data only.
 # Input for attn_recon variants:   (k+1, T) neighbor stack.
 # ======================================================================
-
-def create_cnn_gru_dual_cosine_recon_supcon_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    return _supcon_wrap(inputs, _build_cnn_gru_dual_branches_mtl(inputs), n_classes)
-
 
 def create_cnn_gru_dual_attn_recon_supcon_model(k_plus_1, T, n_classes, attn_dim=16):
     stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
     return _supcon_wrap(stack_input,
                         _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim),
                         n_classes)
-
-
-def create_cnn_gru_dual_cosine_recon_supcon_mtl_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    return _supcon_mtl_wrap(inputs, _build_cnn_gru_dual_branches_mtl(inputs), n_classes)
 
 
 def create_cnn_gru_dual_attn_recon_supcon_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
@@ -556,23 +547,11 @@ def create_cnn_trans_dual_supcon3_mtl_model(T, n_classes, head_size=32, num_head
 # cosine_recon: (T, 1) scalar curve; attn_recon: (k+1, T) neighbor stack.
 # ======================================================================
 
-def create_cnn_gru_dual_cosine_recon_supcon2_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
-    return _branch2_supcon_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
-
-
 def create_cnn_gru_dual_attn_recon_supcon2_model(k_plus_1, T, n_classes, attn_dim=16):
     stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
     cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
         stack_input, T, attn_dim, return_branches=True)
     return _branch2_supcon_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
-
-
-def create_cnn_gru_dual_cosine_recon_supcon2_mtl_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
-    return _branch2_supcon_mtl_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
 
 
 def create_cnn_gru_dual_attn_recon_supcon2_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
@@ -582,23 +561,11 @@ def create_cnn_gru_dual_attn_recon_supcon2_mtl_model(k_plus_1, T, n_classes, att
     return _branch2_supcon_mtl_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
 
 
-def create_cnn_gru_dual_cosine_recon_supcon3_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
-    return _branch3_supcon_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
-
-
 def create_cnn_gru_dual_attn_recon_supcon3_model(k_plus_1, T, n_classes, attn_dim=16):
     stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
     cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
         stack_input, T, attn_dim, return_branches=True)
     return _branch3_supcon_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
-
-
-def create_cnn_gru_dual_cosine_recon_supcon3_mtl_model(T, n_classes):
-    inputs = tf.keras.layers.Input(shape=(T, 1))
-    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
-    return _branch3_supcon_mtl_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
 
 
 def create_cnn_gru_dual_attn_recon_supcon3_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
