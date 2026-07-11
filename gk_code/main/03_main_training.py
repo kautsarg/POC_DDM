@@ -8,6 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedShuffleSplit
 sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
+from pipeline_utils import get_exp_paths, check_task_id
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
 from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
@@ -26,13 +27,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ============================================================
 # HELPERS
 # ============================================================
-def get_exp_paths(exp_folder):
-    return sorted([
-        Path(exp_folder, name)
-        for name in os.listdir(exp_folder)
-        if (os.path.isdir(os.path.join(exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)
-    ])
-
 def load_training_data(exp_path):
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     if not os.path.exists(data_path):
@@ -96,9 +90,7 @@ if __name__ == "__main__":
     
     exp_paths = get_exp_paths(args.exp_folder)
     n_splits = args.n_splits
-    if args.task_id >= len(exp_paths):
-        print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")
-        sys.exit(0)
+    check_task_id(args.task_id, exp_paths)
 
     exp_path = exp_paths[args.task_id]
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")

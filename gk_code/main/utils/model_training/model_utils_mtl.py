@@ -284,7 +284,7 @@ def create_transformer_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim
 
 # --- 6. CNN+GRU Dual MTL (also reused for cnn_gru_dual_cosine_recon_mtl) ---
 def _build_cnn_gru_dual_branches_mtl(input_tensor, return_branches=False):
-    """Identical to model_utils._build_cnn_gru_dual_branches but self-contained."""
+    """CNN+GRU dual branches; GRU embedding is 64-dim (vs 32 in model_utils) giving 96-dim fused output."""
     c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_tensor)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
     c = tf.keras.layers.Flatten()(c)
