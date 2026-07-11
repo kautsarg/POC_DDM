@@ -783,6 +783,26 @@ def evaluate_outlier_filters(
         "transformer_supcon_mtl":   ("y_preds_AC_trans_supcon_mtl_",         "y_probs_AC_trans_supcon_mtl_",         "classes_AC_trans_supcon_mtl_"),
         "cnn_gru_dual_supcon_mtl":  ("y_preds_AC_cnn_gru_dual_supcon_mtl_",  "y_probs_AC_cnn_gru_dual_supcon_mtl_",  "classes_AC_cnn_gru_dual_supcon_mtl_"),
         "cnn_trans_dual_supcon_mtl":("y_preds_AC_cnn_trans_dual_supcon_mtl_","y_probs_AC_cnn_trans_dual_supcon_mtl_","classes_AC_cnn_trans_dual_supcon_mtl_"),
+        # Branch SupCon v2 ST
+        "cnn_gru_dual_supcon2":                  ("y_preds_AC_cnn_gru_dual_supcon2_",                  "y_probs_AC_cnn_gru_dual_supcon2_",                  "classes_AC_cnn_gru_dual_supcon2_"),
+        "cnn_trans_dual_supcon2":                ("y_preds_AC_cnn_trans_dual_supcon2_",                "y_probs_AC_cnn_trans_dual_supcon2_",                "classes_AC_cnn_trans_dual_supcon2_"),
+        "cnn_gru_dual_cosine_recon_supcon2":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon2_"),
+        "cnn_gru_dual_attn_recon_supcon2":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_",       "classes_AC_cnn_gru_dual_attn_recon_supcon2_"),
+        # Branch SupCon v2 MTL
+        "cnn_gru_dual_supcon2_mtl":              ("y_preds_AC_cnn_gru_dual_supcon2_mtl_",              "y_probs_AC_cnn_gru_dual_supcon2_mtl_",              "classes_AC_cnn_gru_dual_supcon2_mtl_"),
+        "cnn_trans_dual_supcon2_mtl":            ("y_preds_AC_cnn_trans_dual_supcon2_mtl_",            "y_probs_AC_cnn_trans_dual_supcon2_mtl_",            "classes_AC_cnn_trans_dual_supcon2_mtl_"),
+        "cnn_gru_dual_cosine_recon_supcon2_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_"),
+        "cnn_gru_dual_attn_recon_supcon2_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon2_mtl_"),
+        # Branch SupCon v3 ST
+        "cnn_gru_dual_supcon3":                  ("y_preds_AC_cnn_gru_dual_supcon3_",                  "y_probs_AC_cnn_gru_dual_supcon3_",                  "classes_AC_cnn_gru_dual_supcon3_"),
+        "cnn_trans_dual_supcon3":                ("y_preds_AC_cnn_trans_dual_supcon3_",                "y_probs_AC_cnn_trans_dual_supcon3_",                "classes_AC_cnn_trans_dual_supcon3_"),
+        "cnn_gru_dual_cosine_recon_supcon3":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon3_"),
+        "cnn_gru_dual_attn_recon_supcon3":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_",       "classes_AC_cnn_gru_dual_attn_recon_supcon3_"),
+        # Branch SupCon v3 MTL
+        "cnn_gru_dual_supcon3_mtl":              ("y_preds_AC_cnn_gru_dual_supcon3_mtl_",              "y_probs_AC_cnn_gru_dual_supcon3_mtl_",              "classes_AC_cnn_gru_dual_supcon3_mtl_"),
+        "cnn_trans_dual_supcon3_mtl":            ("y_preds_AC_cnn_trans_dual_supcon3_mtl_",            "y_probs_AC_cnn_trans_dual_supcon3_mtl_",            "classes_AC_cnn_trans_dual_supcon3_mtl_"),
+        "cnn_gru_dual_cosine_recon_supcon3_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_"),
+        "cnn_gru_dual_attn_recon_supcon3_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_mtl_"),
     }
 
     model_print_map = {
@@ -823,6 +843,26 @@ def evaluate_outlier_filters(
         "transformer_supcon_mtl": "Trans SupCon MTL",
         "cnn_gru_dual_supcon_mtl": "CNN+GRU Dual SupCon MTL",
         "cnn_trans_dual_supcon_mtl": "CNN+Tr Dual SupCon MTL",
+        # Branch SupCon v2 ST
+        "cnn_gru_dual_supcon2":                  "CNN+GRU Dual SC2",
+        "cnn_trans_dual_supcon2":                "CNN+Tr Dual SC2",
+        "cnn_gru_dual_cosine_recon_supcon2":     "CNN+GRU CosRecon SC2",
+        "cnn_gru_dual_attn_recon_supcon2":       "CNN+GRU AttnRecon SC2",
+        # Branch SupCon v2 MTL
+        "cnn_gru_dual_supcon2_mtl":              "CNN+GRU Dual SC2 MTL",
+        "cnn_trans_dual_supcon2_mtl":            "CNN+Tr Dual SC2 MTL",
+        "cnn_gru_dual_cosine_recon_supcon2_mtl": "CNN+GRU CosRecon SC2 MTL",
+        "cnn_gru_dual_attn_recon_supcon2_mtl":   "CNN+GRU AttnRecon SC2 MTL",
+        # Branch SupCon v3 ST
+        "cnn_gru_dual_supcon3":                  "CNN+GRU Dual SC3",
+        "cnn_trans_dual_supcon3":                "CNN+Tr Dual SC3",
+        "cnn_gru_dual_cosine_recon_supcon3":     "CNN+GRU CosRecon SC3",
+        "cnn_gru_dual_attn_recon_supcon3":       "CNN+GRU AttnRecon SC3",
+        # Branch SupCon v3 MTL
+        "cnn_gru_dual_supcon3_mtl":              "CNN+GRU Dual SC3 MTL",
+        "cnn_trans_dual_supcon3_mtl":            "CNN+Tr Dual SC3 MTL",
+        "cnn_gru_dual_cosine_recon_supcon3_mtl": "CNN+GRU CosRecon SC3 MTL",
+        "cnn_gru_dual_attn_recon_supcon3_mtl":   "CNN+GRU AttnRecon SC3 MTL",
     }
 
     # Add _inc entries so per-model inception works ("cnn_gru_dual_inc" in models list).
