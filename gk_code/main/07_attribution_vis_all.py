@@ -1618,7 +1618,6 @@ def render_latent_feature_mapping_figure(
         'second_half_distance': 'shape', 'distance_asymmetry_index': 'shape',
         'peak_shifting_distance': 'shape', 'area_asymmetry_index': 'shape',
         'peak_asymmetry_index': 'shape', 'accel_fwhm': 'shape',
-        'distance_asymmetry_index': 'shape',
         'y_xms': 'amplitude', 'y_xs': 'amplitude', 'y_xe': 'amplitude',
         'y_xp1': 'amplitude', 'y_xp2': 'amplitude', 'amplitude': 'amplitude',
         'F_max': 'amplitude', 'F_max_ori': 'amplitude',

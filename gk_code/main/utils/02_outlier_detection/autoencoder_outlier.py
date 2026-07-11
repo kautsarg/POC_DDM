@@ -27,7 +27,9 @@ def build_autoencoder(input_dim):
     autoencoder.compile(optimizer='adam', loss='mse')
     return autoencoder
 
-def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=50, batch_size=256, save_plot=True, downsample_factor=1, per_well=True):
+def run_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=None, epochs=50, batch_size=256, save_plot=True, downsample_factor=1, per_well=True):
+    if threshold_percentiles is None:
+        threshold_percentiles = ["elbow", 90, 95]
     os.makedirs(ae_plot_path, exist_ok=True)
     results_dfs = []
     unique_wells = np.unique(Y_well)

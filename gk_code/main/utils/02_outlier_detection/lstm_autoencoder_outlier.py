@@ -56,7 +56,9 @@ def _save_encoder(autoencoder, scaler, save_encoder_dir, dataset_name):
     safe_joblib_dump(scaler, scaler_path)
     print(f"     [XAI] Saved pretrained LSTM-AE encoder -> {encoder_path}")
 
-def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True, save_encoder_dir=None):
+def run_lstm_autoencoder_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=None, epochs=60, batch_size=128, save_plot=True, downsample_factor=1, per_well=True, save_encoder_dir=None):
+    if threshold_percentiles is None:
+        threshold_percentiles = ["elbow", 90, 95]
     os.makedirs(ae_plot_path, exist_ok=True)
     results_dfs = []
     unique_wells = np.unique(Y_well)

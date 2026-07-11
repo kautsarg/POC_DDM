@@ -46,7 +46,7 @@ def get_viz_dir(path, subdir):
     """Mirror `path` (a folder under BASE_FOLDER) under VIZ_BASE_FOLDER and append `subdir`."""
     rel = Path(path).relative_to(BASE_FOLDER)
     return Path(VIZ_BASE_FOLDER) / rel / subdir
-EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old', 'outlier_visualisation', 'outlier_visualisation_old',
+EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_old', 'outlier_visualisation', 'outlier_visualisation_old', 'cross_dataset_cv', 'model_performance_viz', 'model_performance_viz_old',
                     '1_area', '2_range', '3_range_filtered']
 
 # ==========================================

@@ -39,7 +39,9 @@ def build_lstm_autoencoder(timesteps):
     autoencoder.compile(optimizer='adam', loss='mse')
     return autoencoder
 
-def run_lstm_autoencoder_per_well_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=["elbow", 90, 95], epochs=60, batch_size=128, save_plot=True):
+def run_lstm_autoencoder_per_well_pipeline(dataset_names, dataset_curves, Y_well, ref_curves, ae_plot_path, threshold_percentiles=None, epochs=60, batch_size=128, save_plot=True):
+    if threshold_percentiles is None:
+        threshold_percentiles = ["elbow", 90, 95]
     os.makedirs(ae_plot_path, exist_ok=True)
     results_dfs = []
     

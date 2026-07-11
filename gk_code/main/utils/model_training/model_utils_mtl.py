@@ -316,6 +316,36 @@ def create_cnn_trans_dual_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_
     return _mtl_wrap(inputs, _build_cnn_trans_dual_branches_mtl(inputs, head_size, num_heads, ff_dim, num_blocks, dropout), n_classes)
 
 
+@tf.keras.utils.register_keras_serializable(package="model_utils_mtl")
+class _QuerySlice(tf.keras.layers.Layer):
+    """Extracts the first timestep (index 0) as the query: (N, k+1, D) → (N, 1, D)."""
+    def call(self, x):
+        return x[:, 0:1, :]
+
+
+@tf.keras.utils.register_keras_serializable(package="model_utils_mtl")
+class _AttnScores(tf.keras.layers.Layer):
+    """Scaled dot-product scores: Q @ K^T / sqrt(d). Needs attn_dim in config for reload."""
+    def __init__(self, attn_dim, **kwargs):
+        super().__init__(**kwargs)
+        self.attn_dim = attn_dim
+
+    def call(self, inputs):
+        q, k = inputs
+        return tf.matmul(q, k, transpose_b=True) / tf.sqrt(tf.cast(self.attn_dim, tf.float32))
+
+    def get_config(self):
+        return {**super().get_config(), "attn_dim": self.attn_dim}
+
+
+@tf.keras.utils.register_keras_serializable(package="model_utils_mtl")
+class _WeightedRecon(tf.keras.layers.Layer):
+    """Attention-weighted reconstruction: weights @ stack → (N, 1, T)."""
+    def call(self, inputs):
+        weights, stack = inputs
+        return tf.matmul(weights, stack)
+
+
 # --- 8. CNN+GRU Attn-Recon MTL ---
 def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16, return_branches=False):
     """Shared attention-weighted reconstruction → CNN+GRU embedding.
@@ -331,15 +361,11 @@ def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16, re
     ], name='per_curve_encoder')
     embeddings = tf.keras.layers.TimeDistributed(per_curve_encoder)(stack_input)  # (N, k+1, attn_dim)
 
-    query = tf.keras.layers.Lambda(lambda x: x[:, 0:1, :])(embeddings)            # (N, 1, attn_dim)
-    scores = tf.keras.layers.Lambda(
-        lambda t: tf.matmul(t[0], t[1], transpose_b=True) / tf.sqrt(tf.cast(attn_dim, tf.float32))
-    )([query, embeddings])                                                         # (N, 1, k+1)
+    query = _QuerySlice()(embeddings)                                              # (N, 1, attn_dim)
+    scores = _AttnScores(attn_dim)([query, embeddings])                           # (N, 1, k+1)
     attn_weights = tf.keras.layers.Softmax(axis=-1, name='attn_weights')(scores)  # (N, 1, k+1)
 
-    reconstructed = tf.keras.layers.Lambda(
-        lambda t: tf.matmul(t[0], t[1])                                           # (N, 1, T)
-    )([attn_weights, stack_input])
+    reconstructed = _WeightedRecon()([attn_weights, stack_input])                 # (N, 1, T)
     reconstructed = tf.keras.layers.Reshape((T, 1))(reconstructed)               # (N, T, 1)
     return _build_cnn_gru_dual_branches_mtl(reconstructed, return_branches=return_branches)
 

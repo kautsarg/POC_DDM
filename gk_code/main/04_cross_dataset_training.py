@@ -196,7 +196,8 @@ if __name__ == "__main__":
 
     # for curve_type in args.curve_type:
     # for curve_type in reversed(args.curve_type):
-    for curve_type in [args.curve_type[1], args.curve_type[2], args.curve_type[0]]:
+    ordered = [args.curve_type[i] for i in [2, 1, 0] if i < len(args.curve_type)]
+    for curve_type in ordered:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
         combined = combine_group(exp_paths, group_name, curve_type=curve_type)
