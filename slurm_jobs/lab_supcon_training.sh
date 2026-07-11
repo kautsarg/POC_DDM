@@ -8,7 +8,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=11-12
+#SBATCH --array=0-2,9-12
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -23,7 +23,11 @@ source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-PREP_TASK_ID=$((SLURM_ARRAY_TASK_ID-3))
+if [ $SLURM_ARRAY_TASK_ID -ge 9 ]; then
+    PREP_TASK_ID=$((SLURM_ARRAY_TASK_ID-3))
+else
+    PREP_TASK_ID=$SLURM_ARRAY_TASK_ID
+fi
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper
 TRAIN_FOLDER="$EXP_FOLDER"
 
@@ -45,21 +49,57 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --n_splits 5 \
     --mtl
 
-# ST SupCon
+# ST SupCon 1
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --task_id $SLURM_ARRAY_TASK_ID \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
-    --supcon
+    --supcon 1
 
-# MTL SupCon
+# MTL SupCon 1
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
     --task_id $SLURM_ARRAY_TASK_ID \
     --exp_folder "$TRAIN_FOLDER" \
     --curve_type ori_curve \
     --n_splits 5 \
-    --supcon --mtl
+    --supcon 1 \
+    --mtl
+
+# ST SupCon 2
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+    --task_id $SLURM_ARRAY_TASK_ID \
+    --exp_folder "$TRAIN_FOLDER" \
+    --curve_type ori_curve \
+    --n_splits 5 \
+    --supcon 2
+
+# MTL SupCon 2
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+    --task_id $SLURM_ARRAY_TASK_ID \
+    --exp_folder "$TRAIN_FOLDER" \
+    --curve_type ori_curve \
+    --n_splits 5 \
+    --supcon 2 \
+    --mtl
+
+# ST SupCon 3
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+    --task_id $SLURM_ARRAY_TASK_ID \
+    --exp_folder "$TRAIN_FOLDER" \
+    --curve_type ori_curve \
+    --n_splits 5 \
+    --supcon 3
+
+# MTL SupCon 3
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+    --task_id $SLURM_ARRAY_TASK_ID \
+    --exp_folder "$TRAIN_FOLDER" \
+    --curve_type ori_curve \
+    --n_splits 5 \
+    --supcon 3 \
+    --mtl
+
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
     --task_id $SLURM_ARRAY_TASK_ID \

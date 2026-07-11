@@ -137,6 +137,18 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             "cnn_supcon_mtl", "gru_supcon_mtl", "transformer_supcon_mtl",
             "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
             "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
+
+            # Branch SupCon v2 ST/MTL
+            "cnn_gru_dual_supcon2", "cnn_trans_dual_supcon2",
+            "cnn_gru_dual_cosine_recon_supcon2", "cnn_gru_dual_attn_recon_supcon2",
+            "cnn_gru_dual_supcon2_mtl", "cnn_trans_dual_supcon2_mtl",
+            "cnn_gru_dual_cosine_recon_supcon2_mtl", "cnn_gru_dual_attn_recon_supcon2_mtl",
+
+            # Branch SupCon v3 ST/MTL
+            "cnn_gru_dual_supcon3", "cnn_trans_dual_supcon3",
+            "cnn_gru_dual_cosine_recon_supcon3", "cnn_gru_dual_attn_recon_supcon3",
+            "cnn_gru_dual_supcon3_mtl", "cnn_trans_dual_supcon3_mtl",
+            "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
         ]
 
     for name in model_names:
@@ -315,9 +327,16 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             x_tf_curve = x_tf_curve_scaled
         else:
             x_tf_curve = x_tf_curve_raw
-        is_supcon_mtl = 'supcon_mtl' in _base_name
-        is_supcon     = 'supcon' in _base_name and not is_supcon_mtl
-        is_mtl  = 'mtl' in _base_name and not is_supcon_mtl
+        # More specific checks first to avoid substring collision with supcon2/supcon3.
+        is_supcon_mtl3 = 'supcon3_mtl' in _base_name   # 5 outputs: cls, reg, p1, p2, p3
+        is_supcon_mtl2 = 'supcon2_mtl' in _base_name   # 4 outputs: cls, reg, p1, p2
+        is_supcon3     = 'supcon3' in _base_name and not is_supcon_mtl3   # 4 outputs: cls, p1, p2, p3
+        is_supcon2     = 'supcon2' in _base_name and not is_supcon_mtl2   # 3 outputs: cls, p1, p2
+        is_supcon_mtl  = 'supcon_mtl' in _base_name and not is_supcon_mtl3 and not is_supcon_mtl2
+        is_supcon      = ('supcon' in _base_name and not is_supcon_mtl
+                          and not is_supcon2 and not is_supcon3
+                          and not is_supcon_mtl2 and not is_supcon_mtl3)
+        is_mtl  = 'mtl' in _base_name and not is_supcon_mtl and not is_supcon_mtl2 and not is_supcon_mtl3
         is_lf   = '_lf' in _base_name and not is_mtl and not is_supcon_mtl
         is_dual = _base_name.endswith('_dual') and not is_mtl and not is_supcon_mtl
 
@@ -326,8 +345,88 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
         flatten_layer = find_flatten_layer(model)
 
         # --------------------------------------------------------
+        # BRANCH SUPCON v3 MTL — 5 outputs: cls_out, reg_out, cnn_proj, seq_proj, fused_proj
+        if is_supcon_mtl3:
+            try:
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, reg_out, *_projs = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                    target_reg = reg_out[:, 0]
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                grad_reg = tape.gradient(target_reg, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                reg_sal = np.mean(np.abs(grad_reg.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] BranchSC3-MTL gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {
+                "is_type": "mtl",
+                "master_saliency": cls_sal,
+                "cls_saliency": cls_sal,
+                "reg_saliency": reg_sal,
+            }
+
+        # --------------------------------------------------------
+        # BRANCH SUPCON v2 MTL — 4 outputs: cls_out, reg_out, cnn_proj, seq_proj
+        elif is_supcon_mtl2:
+            try:
+                with tf.GradientTape(persistent=True) as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, reg_out, *_projs = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                    target_reg = reg_out[:, 0]
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                grad_reg = tape.gradient(target_reg, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                reg_sal = np.mean(np.abs(grad_reg.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] BranchSC2-MTL gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {
+                "is_type": "mtl",
+                "master_saliency": cls_sal,
+                "cls_saliency": cls_sal,
+                "reg_saliency": reg_sal,
+            }
+
+        # --------------------------------------------------------
+        # BRANCH SUPCON v3 ST — 4 outputs: cls_out, cnn_proj, seq_proj, fused_proj
+        elif is_supcon3:
+            try:
+                with tf.GradientTape() as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, *_projs = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] BranchSC3 gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
+
+        # --------------------------------------------------------
+        # BRANCH SUPCON v2 ST — 3 outputs: cls_out, cnn_proj, seq_proj
+        elif is_supcon2:
+            try:
+                with tf.GradientTape() as tape:
+                    tape.watch(x_tf_curve)
+                    cls_out, *_projs = model(x_tf_curve, training=False)
+                    target_cls = tf.reduce_max(cls_out, axis=1)
+                grad_cls = tape.gradient(target_cls, x_tf_curve)
+                del tape
+                cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+            except Exception as e:
+                print(f"      [!] BranchSC2 gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
+
+        # --------------------------------------------------------
         # SUPCON MTL MODELS — 3 outputs: cls_out, reg_out, proj_norm
-        if is_supcon_mtl:
+        elif is_supcon_mtl:
             try:
                 with tf.GradientTape(persistent=True) as tape:
                     tape.watch(x_tf_curve)
@@ -851,27 +950,37 @@ def plot_gradcam_per_label(models, X_full, X_man_full, y_full,
 
     for model_name, model in models.items():
         save_path = save_dir / f"05_GRADCAM_{model_name}_{name_suffix}.png"
-        _base         = model_name.removesuffix('_inc')
-        is_supcon_mtl = 'supcon_mtl' in _base
-        is_supcon     = 'supcon' in _base and not is_supcon_mtl
-        is_mtl = 'mtl' in _base and not is_supcon_mtl
+        _base          = model_name.removesuffix('_inc')
+        is_supcon_mtl3 = 'supcon3_mtl' in _base
+        is_supcon_mtl2 = 'supcon2_mtl' in _base
+        is_supcon3     = 'supcon3' in _base and not is_supcon_mtl3
+        is_supcon2     = 'supcon2' in _base and not is_supcon_mtl2
+        is_supcon_mtl  = 'supcon_mtl' in _base and not is_supcon_mtl3 and not is_supcon_mtl2
+        is_supcon      = ('supcon' in _base and not is_supcon_mtl
+                          and not is_supcon2 and not is_supcon3
+                          and not is_supcon_mtl2 and not is_supcon_mtl3)
+        is_mtl = ('mtl' in _base and not is_supcon_mtl
+                  and not is_supcon_mtl2 and not is_supcon_mtl3)
         is_lf  = '_lf' in _base and not is_mtl and not is_supcon_mtl
 
         # ── Full-dataset predictions to find best-confidence samples ──────
         try:
             x_in_full = [X_full, X_man_full] if is_lf else X_full
             raw_preds  = model.predict(x_in_full, verbose=0, batch_size=256)
-            # MTL/SupCon models return list; cls_out is always first element
-            probs = raw_preds[0] if (is_mtl or is_supcon or is_supcon_mtl) else raw_preds
+            # All multi-output models return a list; cls_out is always first element
+            _multi_out = (is_mtl or is_supcon or is_supcon_mtl
+                          or is_supcon2 or is_supcon3 or is_supcon_mtl2 or is_supcon_mtl3)
+            probs = raw_preds[0] if _multi_out else raw_preds
             if probs.ndim == 1:
                 probs = np.stack([1 - probs, probs], axis=1)
         except Exception as e:
             print(f"     [!] GradCAM predict failed for {model_name}: {e}")
             continue
 
-        n_cols     = 2 if (is_mtl or is_supcon_mtl) else 1
+        _is_dual_head = is_mtl or is_supcon_mtl or is_supcon_mtl2 or is_supcon_mtl3
+        n_cols     = 2 if _is_dual_head else 1
         col_titles = (["Classification Gradient", "Regression Gradient"]
-                      if (is_mtl or is_supcon_mtl) else ["Input Gradient"])
+                      if _is_dual_head else ["Input Gradient"])
         fig, axes  = plt.subplots(n_cls, n_cols,
                                    figsize=(9 * n_cols, 3.2 * n_cls),
                                    squeeze=False)
@@ -894,7 +1003,24 @@ def plot_gradcam_per_label(models, X_full, X_man_full, y_full,
             x_in     = [x_tf, x_man_tf] if is_lf else x_tf
 
             try:
-                if is_supcon_mtl:
+                if is_supcon_mtl3 or is_supcon_mtl2:
+                    with tf.GradientTape(persistent=True) as tape:
+                        tape.watch(x_tf)
+                        cls_out, reg_out, *_projs = model(x_in, training=False)
+                        cls_score = cls_out[0, label]
+                        reg_score = reg_out[0, 0]
+                    cls_grad = np.abs(tape.gradient(cls_score, x_tf).numpy()[0, :, 0])
+                    reg_grad = np.abs(tape.gradient(reg_score, x_tf).numpy()[0, :, 0])
+                    del tape
+                    grads = [cls_grad, reg_grad]
+                elif is_supcon3 or is_supcon2:
+                    with tf.GradientTape() as tape:
+                        tape.watch(x_tf)
+                        cls_out, *_projs = model(x_in, training=False)
+                        score = cls_out[0, label]
+                    grad = np.abs(tape.gradient(score, x_tf).numpy()[0, :, 0])
+                    grads = [grad]
+                elif is_supcon_mtl:
                     with tf.GradientTape(persistent=True) as tape:
                         tape.watch(x_tf)
                         cls_out, reg_out, _proj = model(x_in, training=False)

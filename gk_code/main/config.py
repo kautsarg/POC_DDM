@@ -338,6 +338,26 @@ MODEL_KEY_MAP = {
     "transformer_supcon_mtl":   ("y_preds_AC_trans_supcon_mtl_",         "y_probs_AC_trans_supcon_mtl_",         "classes_AC_trans_supcon_mtl_"),
     "cnn_gru_dual_supcon_mtl":  ("y_preds_AC_cnn_gru_dual_supcon_mtl_",  "y_probs_AC_cnn_gru_dual_supcon_mtl_",  "classes_AC_cnn_gru_dual_supcon_mtl_"),
     "cnn_trans_dual_supcon_mtl":("y_preds_AC_cnn_trans_dual_supcon_mtl_","y_probs_AC_cnn_trans_dual_supcon_mtl_","classes_AC_cnn_trans_dual_supcon_mtl_"),
+    # Branch SupCon v2 ST (2 heads: CNN + seq branch)
+    "cnn_gru_dual_supcon2":      ("y_preds_AC_cnn_gru_dual_supcon2_",      "y_probs_AC_cnn_gru_dual_supcon2_",      "classes_AC_cnn_gru_dual_supcon2_"),
+    "cnn_trans_dual_supcon2":    ("y_preds_AC_cnn_trans_dual_supcon2_",    "y_probs_AC_cnn_trans_dual_supcon2_",    "classes_AC_cnn_trans_dual_supcon2_"),
+    "cnn_gru_dual_cosine_recon_supcon2":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon2_"),
+    "cnn_gru_dual_attn_recon_supcon2":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_",       "classes_AC_cnn_gru_dual_attn_recon_supcon2_"),
+    # Branch SupCon v3 ST (3 heads: CNN + seq + fused)
+    "cnn_gru_dual_supcon3":      ("y_preds_AC_cnn_gru_dual_supcon3_",      "y_probs_AC_cnn_gru_dual_supcon3_",      "classes_AC_cnn_gru_dual_supcon3_"),
+    "cnn_trans_dual_supcon3":    ("y_preds_AC_cnn_trans_dual_supcon3_",    "y_probs_AC_cnn_trans_dual_supcon3_",    "classes_AC_cnn_trans_dual_supcon3_"),
+    "cnn_gru_dual_cosine_recon_supcon3":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon3_"),
+    "cnn_gru_dual_attn_recon_supcon3":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_",       "classes_AC_cnn_gru_dual_attn_recon_supcon3_"),
+    # Branch SupCon v2 MTL
+    "cnn_gru_dual_supcon2_mtl":  ("y_preds_AC_cnn_gru_dual_supcon2_mtl_",  "y_probs_AC_cnn_gru_dual_supcon2_mtl_",  "classes_AC_cnn_gru_dual_supcon2_mtl_"),
+    "cnn_trans_dual_supcon2_mtl":("y_preds_AC_cnn_trans_dual_supcon2_mtl_","y_probs_AC_cnn_trans_dual_supcon2_mtl_","classes_AC_cnn_trans_dual_supcon2_mtl_"),
+    "cnn_gru_dual_cosine_recon_supcon2_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon2_mtl_"),
+    "cnn_gru_dual_attn_recon_supcon2_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon2_mtl_"),
+    # Branch SupCon v3 MTL
+    "cnn_gru_dual_supcon3_mtl":  ("y_preds_AC_cnn_gru_dual_supcon3_mtl_",  "y_probs_AC_cnn_gru_dual_supcon3_mtl_",  "classes_AC_cnn_gru_dual_supcon3_mtl_"),
+    "cnn_trans_dual_supcon3_mtl":("y_preds_AC_cnn_trans_dual_supcon3_mtl_","y_probs_AC_cnn_trans_dual_supcon3_mtl_","classes_AC_cnn_trans_dual_supcon3_mtl_"),
+    "cnn_gru_dual_cosine_recon_supcon3_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_"),
+    "cnn_gru_dual_attn_recon_supcon3_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -359,7 +379,20 @@ _SUPCON_MODEL_KEYS = {
     "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
     "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
 }
-_NO_INC = {"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"} | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS
+# Branch SupCon keys kept separate from _SUPCON_MODEL_KEYS so --supcon force_rerun
+# does not accidentally clear branch supcon results and vice versa.
+_BRANCH_SUPCON_MODEL_KEYS = {
+    "cnn_gru_dual_supcon2",  "cnn_trans_dual_supcon2",
+    "cnn_gru_dual_cosine_recon_supcon2", "cnn_gru_dual_attn_recon_supcon2",
+    "cnn_gru_dual_supcon3",  "cnn_trans_dual_supcon3",
+    "cnn_gru_dual_cosine_recon_supcon3", "cnn_gru_dual_attn_recon_supcon3",
+    "cnn_gru_dual_supcon2_mtl", "cnn_trans_dual_supcon2_mtl",
+    "cnn_gru_dual_cosine_recon_supcon2_mtl", "cnn_gru_dual_attn_recon_supcon2_mtl",
+    "cnn_gru_dual_supcon3_mtl", "cnn_trans_dual_supcon3_mtl",
+    "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
+}
+_NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
+           | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -400,6 +433,22 @@ MODEL_PRINT_MAP = {
     "transformer_supcon_mtl": "Trans SupCon MTL",
     "cnn_gru_dual_supcon_mtl": "CNN+GRU Dual SupCon MTL",
     "cnn_trans_dual_supcon_mtl": "CNN+Tr Dual SupCon MTL",
+    # Branch SupCon v2 ST (2 heads: CNN + seq branch)
+    "cnn_gru_dual_supcon2":  "CNN+GRU Dual SC2",  "cnn_trans_dual_supcon2":  "CNN+Tr Dual SC2",
+    "cnn_gru_dual_cosine_recon_supcon2": "CNN+GRU CosRecon SC2",
+    "cnn_gru_dual_attn_recon_supcon2":   "CNN+GRU AttnRecon SC2",
+    # Branch SupCon v3 ST (3 heads: CNN + seq + fused)
+    "cnn_gru_dual_supcon3":  "CNN+GRU Dual SC3",  "cnn_trans_dual_supcon3":  "CNN+Tr Dual SC3",
+    "cnn_gru_dual_cosine_recon_supcon3": "CNN+GRU CosRecon SC3",
+    "cnn_gru_dual_attn_recon_supcon3":   "CNN+GRU AttnRecon SC3",
+    # Branch SupCon v2 MTL
+    "cnn_gru_dual_supcon2_mtl": "CNN+GRU Dual SC2 MTL", "cnn_trans_dual_supcon2_mtl": "CNN+Tr Dual SC2 MTL",
+    "cnn_gru_dual_cosine_recon_supcon2_mtl": "CNN+GRU CosRecon SC2 MTL",
+    "cnn_gru_dual_attn_recon_supcon2_mtl":   "CNN+GRU AttnRecon SC2 MTL",
+    # Branch SupCon v3 MTL
+    "cnn_gru_dual_supcon3_mtl": "CNN+GRU Dual SC3 MTL", "cnn_trans_dual_supcon3_mtl": "CNN+Tr Dual SC3 MTL",
+    "cnn_gru_dual_cosine_recon_supcon3_mtl": "CNN+GRU CosRecon SC3 MTL",
+    "cnn_gru_dual_attn_recon_supcon3_mtl":   "CNN+GRU AttnRecon SC3 MTL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

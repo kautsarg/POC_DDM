@@ -13,7 +13,9 @@ from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism, CurveResampler
 from model_utils_mtl import MTL_MODEL_KEYS, REG_SENTINEL as _MTL_REG_SENTINEL
-from model_utils_supcon import SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS
+from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
+                                BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
+                                BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS)
 
 import config
 
@@ -173,9 +175,9 @@ if __name__ == "__main__":
                         help="Train MTL models only (classification + concentration regression heads). "
                              "Results are merged into the same results joblib so standard models "
                              "do not need to be re-run.")
-    parser.add_argument("--supcon", action="store_true",
-                        help="Train SupCon models only (CE + supervised contrastive loss). "
-                             "Results are merged into the same results joblib.")
+    parser.add_argument("--supcon", type=int, choices=[0, 1, 2, 3], default=0,
+                        help="0=none, 1=original fused SupCon, 2=branch v2 (CNN+seq), "
+                             "3=branch v3 (CNN+seq+fused). Results merged into same joblib.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -227,8 +229,12 @@ if __name__ == "__main__":
         outlier_filters = [None]
 
         if args.mtl:
-            if args.supcon:
+            if args.supcon == 1:
                 models = list(SUPCON_MTL_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(BRANCH_SUPCON2_MTL_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(BRANCH_SUPCON3_MTL_MODEL_KEYS)
             else:
                 models = {
                     "cnn_mtl",
@@ -237,8 +243,12 @@ if __name__ == "__main__":
                     "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
                 }
         else:
-            if args.supcon:
+            if args.supcon == 1:
                 models = list(SUPCON_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(BRANCH_SUPCON2_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(BRANCH_SUPCON3_MODEL_KEYS)
             else:
                 models = [
                     "knn", "cnn", "cnn_inc",
@@ -283,10 +293,25 @@ if __name__ == "__main__":
                                                         f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
                     else:
                         _supcon_st_result_keys.update([_pk, _probk, _clsk])
-            if args.supcon and args.mtl:
+            _bsc_st_keys  = (set(BRANCH_SUPCON2_MODEL_KEYS)     if args.supcon == 2
+                             else set(BRANCH_SUPCON3_MODEL_KEYS) if args.supcon == 3 else set())
+            _bsc_mtl_keys = (set(BRANCH_SUPCON2_MTL_MODEL_KEYS)     if args.supcon == 2
+                             else set(BRANCH_SUPCON3_MTL_MODEL_KEYS) if args.supcon == 3 else set())
+            _bsc_st_result_keys, _bsc_mtl_result_keys = set(), set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in _bsc_st_keys:
+                    _bsc_st_result_keys.update([_pk, _probk, _clsk])
+                elif _k in _bsc_mtl_keys:
+                    _bsc_mtl_result_keys.update([_pk, _probk, _clsk,
+                                                 f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            if args.supcon == 1 and args.mtl:
                 _which = 'SupCon MTL'
-            elif args.supcon:
+            elif args.supcon == 1:
                 _which = 'SupCon ST'
+            elif args.supcon in (2, 3) and args.mtl:
+                _which = f'Branch SupCon v{args.supcon} MTL'
+            elif args.supcon in (2, 3):
+                _which = f'Branch SupCon v{args.supcon} ST'
             elif args.mtl:
                 _which = 'MTL'
             else:
@@ -304,17 +329,24 @@ if __name__ == "__main__":
                         _is_mtl        = _rk in _mtl_result_keys
                         _is_supcon_st  = _rk in _supcon_st_result_keys
                         _is_supcon_mtl = _rk in _supcon_mtl_result_keys
+                        _is_bsc_st     = _rk in _bsc_st_result_keys
+                        _is_bsc_mtl    = _rk in _bsc_mtl_result_keys
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
-                        _is_standard   = _is_model_key and not _is_mtl and not _is_supcon_st and not _is_supcon_mtl
-                        if args.supcon and args.mtl and _is_supcon_mtl:
+                        _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
+                                          and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl)
+                        if args.supcon == 1 and args.mtl and _is_supcon_mtl:
                             del _filter_res[_rk]
-                        elif args.supcon and not args.mtl and _is_supcon_st:
+                        elif args.supcon == 1 and not args.mtl and _is_supcon_st:
                             del _filter_res[_rk]
-                        elif args.mtl and not args.supcon and _is_mtl:
+                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl:
                             del _filter_res[_rk]
-                        elif not args.supcon and not args.mtl and _is_standard:
+                        elif args.supcon in (2, 3) and not args.mtl and _is_bsc_st:
+                            del _filter_res[_rk]
+                        elif args.mtl and args.supcon == 0 and _is_mtl:
+                            del _filter_res[_rk]
+                        elif args.supcon == 0 and not args.mtl and _is_standard:
                             del _filter_res[_rk]
 
         lofo_splits = build_lofo_splits(combined["dataset_id"])

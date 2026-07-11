@@ -38,7 +38,17 @@ from model_utils_supcon import (
     create_cnn_trans_dual_supcon_mtl_model,
     create_cnn_gru_dual_cosine_recon_supcon_model, create_cnn_gru_dual_attn_recon_supcon_model,
     create_cnn_gru_dual_cosine_recon_supcon_mtl_model, create_cnn_gru_dual_attn_recon_supcon_mtl_model,
+    create_cnn_gru_dual_supcon2_model, create_cnn_trans_dual_supcon2_model,
+    create_cnn_gru_dual_supcon2_mtl_model, create_cnn_trans_dual_supcon2_mtl_model,
+    create_cnn_gru_dual_supcon3_model, create_cnn_trans_dual_supcon3_model,
+    create_cnn_gru_dual_supcon3_mtl_model, create_cnn_trans_dual_supcon3_mtl_model,
+    create_cnn_gru_dual_cosine_recon_supcon2_model, create_cnn_gru_dual_attn_recon_supcon2_model,
+    create_cnn_gru_dual_cosine_recon_supcon2_mtl_model, create_cnn_gru_dual_attn_recon_supcon2_mtl_model,
+    create_cnn_gru_dual_cosine_recon_supcon3_model, create_cnn_gru_dual_attn_recon_supcon3_model,
+    create_cnn_gru_dual_cosine_recon_supcon3_mtl_model, create_cnn_gru_dual_attn_recon_supcon3_mtl_model,
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
+    BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
+    BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
 )
 from model_utils_mtl import (
     create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
@@ -819,7 +829,9 @@ def evaluate_outlier_filters(
     # rf/knn/ffi are non-Keras; attn_recon has incompatible input shape; MTL models never
     # use inception smoothing.
     _NO_INC_INCEPTION = ({"rf", "knn", "ffi", "cnn_gru_dual_attn_recon",
-                           "cnn_gru_dual_attn_recon_supcon", "cnn_gru_dual_attn_recon_supcon_mtl"}
+                           "cnn_gru_dual_attn_recon_supcon", "cnn_gru_dual_attn_recon_supcon_mtl",
+                           "cnn_gru_dual_attn_recon_supcon2", "cnn_gru_dual_attn_recon_supcon2_mtl",
+                           "cnn_gru_dual_attn_recon_supcon3", "cnn_gru_dual_attn_recon_supcon3_mtl"}
                           | set(MTL_MODEL_KEYS) | set(ALL_SUPCON_KEYS))
     for _m in list(model_key_map.keys()):
         if _m not in _NO_INC_INCEPTION:
@@ -833,6 +845,10 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_cosine_recon_mtl",     "cnn_gru_dual_attn_recon_mtl",
         "cnn_gru_dual_cosine_recon_supcon",     "cnn_gru_dual_attn_recon_supcon",
         "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
+        "cnn_gru_dual_cosine_recon_supcon2",     "cnn_gru_dual_attn_recon_supcon2",
+        "cnn_gru_dual_cosine_recon_supcon2_mtl", "cnn_gru_dual_attn_recon_supcon2_mtl",
+        "cnn_gru_dual_cosine_recon_supcon3",     "cnn_gru_dual_attn_recon_supcon3",
+        "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -1020,10 +1036,14 @@ def evaluate_outlier_filters(
                 if _base_m == 'ffi':
                     X_train_curve, X_test_curve = X_FFI[train_idx], X_FFI[test_idx]
                 elif _base_m in ('cnn_gru_dual_cosine_recon', 'cnn_gru_dual_cosine_recon_mtl',
-                                  'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_cosine_recon_supcon_mtl'):
+                                  'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_cosine_recon_supcon_mtl',
+                                  'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_cosine_recon_supcon2_mtl',
+                                  'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_cosine_recon_supcon3_mtl'):
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
                 elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
-                                  'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl'):
+                                  'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
+                                  'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
+                                  'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl'):
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -1389,6 +1409,186 @@ def evaluate_outlier_filters(
                     classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
+                elif _base_m in BRANCH_SUPCON2_MODEL_KEYS:
+                    # v2 ST: 3 outputs [cls_out, cnn_proj, seq_proj]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_supcon2':
+                        model = create_cnn_gru_dual_supcon2_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_supcon2':
+                        model = create_cnn_trans_dual_supcon2_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon2':
+                        model = create_cnn_gru_dual_cosine_recon_supcon2_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon2':
+                        model = create_cnn_gru_dual_attn_recon_supcon2_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS:
+                    # v2 MTL: 4 outputs [cls_out, reg_out, cnn_proj, seq_proj]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_supcon2_mtl':
+                        model = create_cnn_gru_dual_supcon2_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_supcon2_mtl':
+                        model = create_cnn_trans_dual_supcon2_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon2_mtl':
+                        model = create_cnn_gru_dual_cosine_recon_supcon2_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon2_mtl':
+                        model = create_cnn_gru_dual_attn_recon_supcon2_mtl_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in BRANCH_SUPCON3_MODEL_KEYS:
+                    # v3 ST: 4 outputs [cls_out, cnn_proj, seq_proj, fused_proj]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_supcon3':
+                        model = create_cnn_gru_dual_supcon3_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_supcon3':
+                        model = create_cnn_trans_dual_supcon3_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon3':
+                        model = create_cnn_gru_dual_cosine_recon_supcon3_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon3':
+                        model = create_cnn_gru_dual_attn_recon_supcon3_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS:
+                    # v3 MTL: 5 outputs [cls_out, reg_out, cnn_proj, seq_proj, fused_proj]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_supcon3_mtl':
+                        model = create_cnn_gru_dual_supcon3_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_supcon3_mtl':
+                        model = create_cnn_trans_dual_supcon3_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_cosine_recon_supcon3_mtl':
+                        model = create_cnn_gru_dual_cosine_recon_supcon3_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_gru_dual_attn_recon_supcon3_mtl':
+                        model = create_cnn_gru_dual_attn_recon_supcon3_mtl_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
                 elif _base_m in model_utils_gated._ALL_FACTORIES:
                     # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
                     # single-curve-input, no-manual-features shape as cnn_gru_dual /
@@ -1517,7 +1717,9 @@ def evaluate_outlier_filters(
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
             res_entry[classes_key] = classes_list
-            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS) and reg_preds_per_fold:
+            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
+                    or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
+                    or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS) and reg_preds_per_fold:
                 res_entry[f'y_reg_preds_{_base_m}_'] = reg_preds_per_fold
                 res_entry[f'y_reg_trues_{_base_m}_'] = reg_trues_per_fold
 
@@ -1530,7 +1732,9 @@ def evaluate_outlier_filters(
             std = np.std(fold_accs) * 100
 
             _reg_suffix = ""
-            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS) and reg_preds_per_fold:
+            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
+                    or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
+                    or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS) and reg_preds_per_fold:
                 _rp = np.concatenate(reg_preds_per_fold); _rt = np.concatenate(reg_trues_per_fold)
                 _vm = _rt != REG_SENTINEL
                 if _vm.sum() >= 2:

@@ -206,7 +206,8 @@ def _build_transformer_backbone_mtl(inputs, head_size=32, num_heads=2, ff_dim=32
     return tf.keras.layers.Dropout(dropout)(x)
 
 
-def _build_cnn_trans_dual_branches_mtl(inputs, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+def _build_cnn_trans_dual_branches_mtl(inputs, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1,
+                                        return_branches=False):
     """CNN+Transformer dual backbone (96-dim). Shared by CNN+Trans MTL and SupCon."""
     c = tf.keras.layers.Conv1D(16, 5, activation='relu')(inputs)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
@@ -231,7 +232,10 @@ def _build_cnn_trans_dual_branches_mtl(inputs, head_size=32, num_heads=2, ff_dim
     trans_emb = tf.keras.layers.Dense(64, activation='relu')(t)
     merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
     x = tf.keras.layers.Dense(96, activation='relu')(merged)
-    return tf.keras.layers.Dropout(0.2)(x)
+    z = tf.keras.layers.Dropout(0.2)(x)
+    if return_branches:
+        return cnn_emb, trans_emb, z  # (32-dim, 64-dim, 96-dim fused)
+    return z
 
 
 # ======================================================================
@@ -279,7 +283,7 @@ def create_transformer_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_dim
 
 
 # --- 6. CNN+GRU Dual MTL (also reused for cnn_gru_dual_cosine_recon_mtl) ---
-def _build_cnn_gru_dual_branches_mtl(input_tensor):
+def _build_cnn_gru_dual_branches_mtl(input_tensor, return_branches=False):
     """Identical to model_utils._build_cnn_gru_dual_branches but self-contained."""
     c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_tensor)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
@@ -295,6 +299,8 @@ def _build_cnn_gru_dual_branches_mtl(input_tensor):
     merged = tf.keras.layers.Concatenate()([cnn_emb, gru_emb])
     z = tf.keras.layers.Dense(96, activation='relu')(merged)
     z = tf.keras.layers.Dropout(0.2)(z)
+    if return_branches:
+        return cnn_emb, gru_emb, z  # (32-dim, 64-dim, 96-dim fused)
     return z
 
 
@@ -311,9 +317,10 @@ def create_cnn_trans_dual_mtl_model(T, n_classes, head_size=32, num_heads=2, ff_
 
 
 # --- 8. CNN+GRU Attn-Recon MTL ---
-def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16):
+def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16, return_branches=False):
     """Shared attention-weighted reconstruction → CNN+GRU embedding.
     stack_input: Keras tensor (N, k+1, T). Returns 96-dim embedding for _mtl_wrap/_supcon_wrap.
+    When return_branches=True, returns (cnn_emb, gru_emb, fused) for branch SupCon factories.
     """
     per_curve_encoder = tf.keras.Sequential([
         tf.keras.layers.Reshape((T, 1)),
@@ -334,7 +341,7 @@ def _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim=16):
         lambda t: tf.matmul(t[0], t[1])                                           # (N, 1, T)
     )([attn_weights, stack_input])
     reconstructed = tf.keras.layers.Reshape((T, 1))(reconstructed)               # (N, T, 1)
-    return _build_cnn_gru_dual_branches_mtl(reconstructed)
+    return _build_cnn_gru_dual_branches_mtl(reconstructed, return_branches=return_branches)
 
 
 def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16):
