@@ -8,7 +8,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=9-10
+#SBATCH --array=11-12
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out

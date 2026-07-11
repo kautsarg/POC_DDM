@@ -31,6 +31,8 @@ FILE_MAPPING = {
     '06_Z_range_filtered': 'range_strategy_filtered.xlsx',
     '07_ACA_qdPCR_conc_filtered':   'dPCR_Dataset_Pure.csv',
     '08_AMCA_qdPCR_conc_filtered':  'dPCR_Amplification_Curves.csv',
+    '09_Area_Conc': 'Area_Strategy_with_conc.csv',
+    '10_Range_Conc': 'Range_Strategy_5P_with_conc.csv',
 }
 FILE_CONC = {
     '01_ACA_qdPCR': 'Conc',
@@ -41,6 +43,8 @@ FILE_CONC = {
     '06_Z_range_filtered': None,
     '07_ACA_qdPCR_conc_filtered': 'Conc',
     '08_AMCA_qdPCR_conc_filtered': 'Conc',
+    '09_Area_Conc': 'Conc',
+    '10_Range_Conc': 'Conc',
 }
 
 FILE_MAPPING_ONE_TO_ONE = {
@@ -57,6 +61,8 @@ FILE_TARGET = {
     '06_Z_range_filtered': 'Target',
     '07_ACA_qdPCR_conc_filtered': 'LoadedPanels',
     '08_AMCA_qdPCR_conc_filtered': 'Target',
+    '09_Area_Conc': 'Target',
+    '10_Range_Conc': 'Target',
 }
 
 FILE_TARGET_ONE_TO_ONE = {
