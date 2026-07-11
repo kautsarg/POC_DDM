@@ -84,7 +84,12 @@ if __name__ == "__main__":
                         help="SupCon variant: 0=none (default), 1=original fused SupCon, "
                              "2=branch SupCon v2 (CNN+seq branch heads), "
                              "3=branch SupCon v3 (CNN+seq+fused heads). Use with --mtl for MTL variants.")
+    parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
+                        help="Restrict training (and --force_rerun clearing) to specific model keys, "
+                             "e.g. --rerun_models cnn_gru_dual_cosine_recon cnn_gru_dual_attn_recon")
     args = parser.parse_args()
+    if args.rerun_models and not args.force_rerun:
+        args.rerun_models = None  # --rerun_models has no effect without --force_rerun
 
     set_global_determinism(0, strict=not args.fast_mode)
     
@@ -239,16 +244,18 @@ if __name__ == "__main__":
                         _is_bsc_st      = _rk in _bsc_st_result_keys
                         _is_bsc_mtl     = _rk in _bsc_mtl_result_keys
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
-                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl)
-                        if args.supcon == 1 and args.mtl and _is_supcon_mtl:
+                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
+                                           and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
+                        _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
+                        if args.supcon == 1 and args.mtl and _is_supcon_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and not args.mtl and _is_supcon_st:
+                        elif args.supcon == 1 and not args.mtl and _is_supcon_st and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl:
+                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and not args.mtl and _is_bsc_st:
+                        elif args.supcon in (2, 3) and not args.mtl and _is_bsc_st and _mm:
                             del _filter_res[_rk]
-                        elif args.mtl and args.supcon == 0 and _is_mtl:
+                        elif args.mtl and args.supcon == 0 and _is_mtl and _mm:
                             del _filter_res[_rk]
                         elif args.supcon == 0 and not args.mtl and _is_standard:
                             del _filter_res[_rk]
@@ -335,6 +342,10 @@ if __name__ == "__main__":
                     "transformer", "cnn_trans_dual",
                     "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
                 ]
+
+        if args.rerun_models:
+            _allowed = set(args.rerun_models)
+            models = [m for m in models if m in _allowed]
 
         model_interp_dir = exp_path / "model_interpretation"
 

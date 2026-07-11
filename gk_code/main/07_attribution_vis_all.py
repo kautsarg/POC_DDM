@@ -298,8 +298,70 @@ def compute_latent_saliency_batch(extractor, x_tf, order, imp_shape, input_tenso
         saliency_maps.append(np.abs(grad)) 
     return saliency_maps
 
+def _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_layer, transformer_layer):
+    """Latent extraction for supcon ST models — same CNN+GRU/Transformer backbone as dual/base.
+
+    Returns an artifact dict with is_type 'dual' or 'base' and full latent info.
+    """
+    _concat = [l for l in model.layers if isinstance(l, tf.keras.layers.Concatenate)]
+    _has_emb = any(l.name == 'cnn_emb' for l in model.layers)
+
+    if _has_emb or _concat:
+        if _has_emb:
+            cnn_t = model.get_layer('cnn_emb').output
+            other_name = 'gru_emb' if any(l.name == 'gru_emb' for l in model.layers) else 'trans_emb'
+            rnn_t = model.get_layer(other_name).output
+        else:
+            cat = _concat[0]
+            cnn_t = flatten_layer.output if flatten_layer else cat.input[0]
+            rnn_t = (recurrent_layer.output if recurrent_layer else
+                     transformer_layer.output if transformer_layer else cat.input[1])
+        ext_cnn = tf.keras.Model(model.input, cnn_t)
+        ext_rnn = tf.keras.Model(model.input, rnn_t)
+        head = tf.keras.Model([cnn_t, rnn_t], model.output)
+        with tf.GradientTape(persistent=True) as tape:
+            tape.watch(x_tf_curve)
+            z_cnn = ext_cnn(x_tf_curve)
+            z_rnn = ext_rnn(x_tf_curve)
+            tape.watch(z_cnn); tape.watch(z_rnn)
+            outs = head([z_cnn, z_rnn])
+            cls_t = outs[0] if isinstance(outs, (list, tuple)) else outs
+            tgt = tf.reduce_max(cls_t, axis=1)
+        dz_cnn = tape.gradient(tgt, z_cnn).numpy()
+        dz_rnn = tape.gradient(tgt, z_rnn).numpy()
+        co, ci = rank_latents(dz_cnn); ro, ri = rank_latents(dz_rnn)
+        rs_cnn = compute_latent_saliency_batch(ext_cnn, x_tf_curve, co, ci, x_tf_curve)
+        rs_rnn = compute_latent_saliency_batch(ext_rnn, x_tf_curve, ro, ri, x_tf_curve)
+        del tape
+        return {
+            "is_type": "dual", "master_saliency": cls_sal,
+            "z_curve": z_cnn.numpy(), "curve_order": co, "curve_imp_shape": ci, "raw_saliency_curve": rs_cnn,
+            "z_rnn": z_rnn.numpy(), "rnn_order": ro, "rnn_imp_shape": ri, "raw_saliency_rnn": rs_rnn,
+        }
+    else:
+        if recurrent_layer: ext = tf.keras.Model(model.input, recurrent_layer.output)
+        elif transformer_layer: ext = tf.keras.Model(model.input, transformer_layer.output)
+        elif flatten_layer: ext = tf.keras.Model(model.input, flatten_layer.output)
+        else: ext = tf.keras.Model(model.input, model.layers[-2].output)
+        head = tf.keras.Model(ext.output, model.output)
+        with tf.GradientTape(persistent=True) as tape:
+            tape.watch(x_tf_curve)
+            z = ext(x_tf_curve); tape.watch(z)
+            outs = head(z)
+            cls_t = outs[0] if isinstance(outs, (list, tuple)) else outs
+            tgt = tf.reduce_max(cls_t, axis=1)
+        dz = tape.gradient(tgt, z).numpy()
+        co, ci = rank_latents(dz)
+        rs = compute_latent_saliency_batch(ext, x_tf_curve, co, ci, x_tf_curve)
+        del tape
+        return {
+            "is_type": "base", "master_saliency": cls_sal,
+            "z_curve": z.numpy(), "curve_order": co, "curve_imp_shape": ci, "raw_saliency_curve": rs,
+        }
+
+
 # ====================================================================
-# MODULE 4: THE OPTIMIZED ARTIFACT EXTRACTOR 
+# MODULE 4: THE OPTIMIZED ARTIFACT EXTRACTOR
 # ====================================================================
 def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
     """Runs all TF Gradient operations once and saves the matrices for all plots.
@@ -403,10 +465,10 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
                 grad_cls = tape.gradient(target_cls, x_tf_curve)
                 del tape
                 cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                artifacts[model_name] = _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_layer, transformer_layer)
             except Exception as e:
                 print(f"      [!] BranchSC3 gradient failed for {model_name}: {e} — skipping.")
                 continue
-            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
 
         # --------------------------------------------------------
         # BRANCH SUPCON v2 ST — 3 outputs: cls_out, cnn_proj, seq_proj
@@ -419,10 +481,10 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
                 grad_cls = tape.gradient(target_cls, x_tf_curve)
                 del tape
                 cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                artifacts[model_name] = _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_layer, transformer_layer)
             except Exception as e:
                 print(f"      [!] BranchSC2 gradient failed for {model_name}: {e} — skipping.")
                 continue
-            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
 
         # --------------------------------------------------------
         # SUPCON MTL MODELS — 3 outputs: cls_out, reg_out, proj_norm
@@ -459,10 +521,10 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
                 grad_cls = tape.gradient(target_cls, x_tf_curve)
                 del tape
                 cls_sal = np.mean(np.abs(grad_cls.numpy()), axis=(0, 2))
+                artifacts[model_name] = _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_layer, transformer_layer)
             except Exception as e:
                 print(f"      [!] SupCon gradient failed for {model_name}: {e} — skipping.")
                 continue
-            artifacts[model_name] = {"is_type": "st", "master_saliency": cls_sal}
 
         # --------------------------------------------------------
         # MTL MODELS — dual output: cls_out (softmax), reg_out (linear)
@@ -1306,7 +1368,6 @@ def plot_latent_feature_mapping(
     art = artifacts.get(model_name)
     if not art:
         return
-
     t = np.asarray(timestamps, dtype=float)
     T = len(mean_curve)
     if len(t) != T:

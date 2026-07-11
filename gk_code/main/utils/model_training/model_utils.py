@@ -709,6 +709,12 @@ _XAI_SAVE_NAME = {
 _XAI_SAVE_NAME.update({f"{m}_inc": f"{v}_inc" for m, v in list(_XAI_SAVE_NAME.items())})
 _XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under their own key
 
+_XAI_SAVE_NAME['cnn_gru_dual_cosine_recon'] = 'cnn_gru_dual_cosine_recon'
+_XAI_SAVE_NAME['cnn_gru_dual_attn_recon'] = 'cnn_gru_dual_attn_recon'
+_XAI_SAVE_NAME.update({_k: _k for _k in ALL_SUPCON_KEYS})
+
+
+
 
 def evaluate_outlier_filters(
     X_curves, features_df, y_encoded, outlier_filters, dataset_name, mode_name,
@@ -1086,11 +1092,9 @@ def evaluate_outlier_filters(
                     classes_list.append(cls)
 
                 elif _base_m == "cnn_gru_dual_attn_recon":
-                    # X_train_curve/X_test_curve here are (n, k+1, T) neighbour stacks, not
-                    # (n, T) curves -- create_cnn_gru_dual_attn_recon_model takes that stack
-                    # directly and learns the reconstruction + classifier jointly. No XAI
-                    # save (07_attribution_vis_all.py's saliency pipeline assumes a plain
-                    # (T,) curve input; out of scope here).
+                    # X_train_curve/X_test_curve are (n, k+1, T) neighbour stacks.
+                    # create_cnn_gru_dual_attn_recon_model learns reconstruction + classifier jointly.
+                    # 07 XAI pipeline skips these via input-shape mismatch; notebook uses the saved file.
                     tf.keras.backend.clear_session()
                     model = create_cnn_gru_dual_attn_recon_model(
                         X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
@@ -1103,6 +1107,11 @@ def evaluate_outlier_filters(
                                  callbacks=_fit_callbacks)
                     else:
                         model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
