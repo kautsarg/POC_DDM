@@ -796,7 +796,7 @@ def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=ALL_
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
 
     unified_save_path = exp_path / config.TRAINING_DATA_PATH
-    reports_dir = config.get_viz_dir(exp_path, "visual_reports")
+    reports_dir = config.get_viz_dir(exp_path.parent, "outlier_analysis") / exp_path.name / "visual_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load or build initial state from preprocessed curves.
