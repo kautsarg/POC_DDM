@@ -433,6 +433,12 @@ MODEL_PRINT_MAP = {
     "transformer_supcon_mtl": "Trans SupCon MTL",
     "cnn_gru_dual_supcon_mtl": "CNN+GRU Dual SupCon MTL",
     "cnn_trans_dual_supcon_mtl": "CNN+Tr Dual SupCon MTL",
+    # Branch SupCon v1 ST
+    "cnn_gru_dual_cosine_recon_supcon":     "CNN+GRU CosRecon SC",
+    "cnn_gru_dual_attn_recon_supcon":       "CNN+GRU AttnRecon SC",
+    # Branch SupCon v1 MTL
+    "cnn_gru_dual_cosine_recon_supcon_mtl": "CNN+GRU CosRecon SC MTL",
+    "cnn_gru_dual_attn_recon_supcon_mtl":   "CNN+GRU AttnRecon SC MTL",
     # Branch SupCon v2 ST (2 heads: CNN + seq branch)
     "cnn_gru_dual_supcon2":  "CNN+GRU Dual SC2",  "cnn_trans_dual_supcon2":  "CNN+Tr Dual SC2",
     "cnn_gru_dual_cosine_recon_supcon2": "CNN+GRU CosRecon SC2",
