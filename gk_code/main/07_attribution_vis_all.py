@@ -25,6 +25,8 @@ import model_utils_gated  # noqa: F401 — registers _SumPool1D/_OneMinus for .k
 import model_utils_mtl    # noqa: F401 — registers MTLModel for .keras deserialization
 import model_utils_supcon  # noqa: F401 — registers SupConModel/SupConMTLModel for .keras deserialization
 from model_utils_mtl import CurriculumMTLModel
+from model_utils_rcfd import (RCFDModel, RCFDSupConMTLModel,
+                               RCFDBranch2MTLModel, RCFDBranch3MTLModel)
 from model_utils_supcon import (SupConModel, SupConMTLModel,
                                 CurriculumSupConMTLModel,
                                 CurriculumBranch2MTLModel,
@@ -161,6 +163,20 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             "cnn_gru_dual_cl_supcon_mtl", "cnn_trans_dual_cl_supcon_mtl",
             "cnn_gru_dual_cl_supcon2_mtl", "cnn_trans_dual_cl_supcon2_mtl",
             "cnn_gru_dual_cl_supcon3_mtl", "cnn_trans_dual_cl_supcon3_mtl",
+
+            # RCFD (Regression-Conditioned Feature Dual)
+            "cnn_rcfd_cgd", "cnn_rcfd_ctd",
+            "gru_rcfd_cgd", "gru_rcfd_ctd",
+            "trans_rcfd_cgd", "trans_rcfd_ctd",
+            "cnn_rcfd_cgd_supcon_mtl", "cnn_rcfd_ctd_supcon_mtl",
+            "gru_rcfd_cgd_supcon_mtl", "gru_rcfd_ctd_supcon_mtl",
+            "trans_rcfd_cgd_supcon_mtl", "trans_rcfd_ctd_supcon_mtl",
+            "cnn_rcfd_cgd_supcon2_mtl", "cnn_rcfd_ctd_supcon2_mtl",
+            "gru_rcfd_cgd_supcon2_mtl", "gru_rcfd_ctd_supcon2_mtl",
+            "trans_rcfd_cgd_supcon2_mtl", "trans_rcfd_ctd_supcon2_mtl",
+            "cnn_rcfd_cgd_supcon3_mtl", "cnn_rcfd_ctd_supcon3_mtl",
+            "gru_rcfd_cgd_supcon3_mtl", "gru_rcfd_ctd_supcon3_mtl",
+            "trans_rcfd_cgd_supcon3_mtl", "trans_rcfd_ctd_supcon3_mtl",
         ]
 
     for name in model_names:
@@ -178,6 +194,10 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
                     'CurriculumSupConMTLModel': CurriculumSupConMTLModel,
                     'CurriculumBranch2MTLModel': CurriculumBranch2MTLModel,
                     'CurriculumBranch3MTLModel': CurriculumBranch3MTLModel,
+                    'RCFDModel': RCFDModel,
+                    'RCFDSupConMTLModel': RCFDSupConMTLModel,
+                    'RCFDBranch2MTLModel': RCFDBranch2MTLModel,
+                    'RCFDBranch3MTLModel': RCFDBranch3MTLModel,
                 },
             )
             model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
@@ -423,7 +443,8 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
         is_supcon      = ('supcon' in _base_name and not is_supcon_mtl
                           and not is_supcon2 and not is_supcon3
                           and not is_supcon_mtl2 and not is_supcon_mtl3)
-        is_mtl  = 'mtl' in _base_name and not is_supcon_mtl and not is_supcon_mtl2 and not is_supcon_mtl3
+        is_mtl  = (('mtl' in _base_name or 'rcfd' in _base_name)
+                   and not is_supcon_mtl and not is_supcon_mtl2 and not is_supcon_mtl3)
         is_lf   = '_lf' in _base_name and not is_mtl and not is_supcon_mtl
         is_dual = _base_name.endswith('_dual') and not is_mtl and not is_supcon_mtl
 
@@ -1047,8 +1068,8 @@ def plot_gradcam_per_label(models, X_full, X_man_full, y_full,
         is_supcon      = ('supcon' in _base and not is_supcon_mtl
                           and not is_supcon2 and not is_supcon3
                           and not is_supcon_mtl2 and not is_supcon_mtl3)
-        is_mtl = ('mtl' in _base and not is_supcon_mtl
-                  and not is_supcon_mtl2 and not is_supcon_mtl3)
+        is_mtl = (('mtl' in _base or 'rcfd' in _base)
+                  and not is_supcon_mtl and not is_supcon_mtl2 and not is_supcon_mtl3)
         is_lf  = '_lf' in _base and not is_mtl and not is_supcon_mtl
 
         # ── Full-dataset predictions to find best-confidence samples ──────

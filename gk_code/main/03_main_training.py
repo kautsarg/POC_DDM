@@ -19,6 +19,8 @@ from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
 from model_utils_mtl import CL_MTL_MODEL_KEYS
+from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
+                               RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS)
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
 import pandas as pd
@@ -94,10 +96,14 @@ if __name__ == "__main__":
                         help="Use phase-decoupled curriculum learning for MTL: Phase 1=regression, Phase 2=classification.")
     parser.add_argument("--cl_phase1_epochs", type=int, default=None,
                         help="Fixed number of Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence on val_reg_mse.")
+    parser.add_argument("--condreg", action="store_true",
+                        help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
-    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "")
+    if args.condreg:
+        args.mtl = True  # --condreg implies --mtl
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "") + (f" RCFD SC{args.supcon}" if args.condreg else "")
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
@@ -237,8 +243,17 @@ if __name__ == "__main__":
             elif _k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
                 _cl_bsc3_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
 
+        # RCFD key sets — one per supcon variant; always MTL (no ST).
+        _rcfd_result_keys = set()
+        for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k in config._RCFD_MODEL_KEYS:
+                _rcfd_result_keys.update([_pk, _probk, _clsk,
+                                          f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+
         _is_cl = getattr(args, 'mtl_cl', False)
-        if _is_cl and args.supcon == 0:
+        if getattr(args, 'condreg', False):
+            _which = f'RCFD SC{args.supcon}'
+        elif _is_cl and args.supcon == 0:
             _which = 'CL MTL'
         elif _is_cl and args.supcon == 1:
             _which = 'CL SupCon v1 MTL'
@@ -281,9 +296,10 @@ if __name__ == "__main__":
                         _is_cl_bsc2     = _rk in _cl_bsc2_result_keys
                         _is_cl_bsc3     = _rk in _cl_bsc3_result_keys
                         _is_any_cl      = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
+                        _is_rcfd        = _rk in _rcfd_result_keys
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
                                            and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                           and not _is_any_cl
+                                           and not _is_any_cl and not _is_rcfd
                                            and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
                         _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
@@ -305,6 +321,8 @@ if __name__ == "__main__":
                         elif args.mtl and args.supcon == 0 and _is_mtl and _mm:
                             del _filter_res[_rk]
                         elif args.supcon == 0 and not args.mtl and _is_standard:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
                             del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
@@ -361,7 +379,16 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        if args.mtl and getattr(args, 'mtl_cl', False):
+        if getattr(args, 'condreg', False):
+            if args.supcon == 0:
+                models = list(RCFD_MODEL_KEYS)
+            elif args.supcon == 1:
+                models = list(RCFD_SUPCON_MTL_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(RCFD_BRANCH2_MTL_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(RCFD_BRANCH3_MTL_MODEL_KEYS)
+        elif args.mtl and getattr(args, 'mtl_cl', False):
             if args.supcon == 0:
                 models = list(CL_MTL_MODEL_KEYS)
             elif args.supcon == 1:

@@ -367,6 +367,31 @@ MODEL_KEY_MAP = {
     "cnn_trans_dual_cl_supcon2_mtl": ("y_preds_AC_cnn_trans_dual_cl_supcon2_mtl_", "y_probs_AC_cnn_trans_dual_cl_supcon2_mtl_", "classes_AC_cnn_trans_dual_cl_supcon2_mtl_"),
     "cnn_gru_dual_cl_supcon3_mtl":   ("y_preds_AC_cnn_gru_dual_cl_supcon3_mtl_",   "y_probs_AC_cnn_gru_dual_cl_supcon3_mtl_",   "classes_AC_cnn_gru_dual_cl_supcon3_mtl_"),
     "cnn_trans_dual_cl_supcon3_mtl": ("y_preds_AC_cnn_trans_dual_cl_supcon3_mtl_", "y_probs_AC_cnn_trans_dual_cl_supcon3_mtl_", "classes_AC_cnn_trans_dual_cl_supcon3_mtl_"),
+    # RCFD (Regression-Conditioned Feature Dual) — base + supcon v1/v2/v3
+    "cnn_rcfd_cgd":   ("y_preds_AC_cnn_rcfd_cgd_",   "y_probs_AC_cnn_rcfd_cgd_",   "classes_AC_cnn_rcfd_cgd_"),
+    "cnn_rcfd_ctd":   ("y_preds_AC_cnn_rcfd_ctd_",   "y_probs_AC_cnn_rcfd_ctd_",   "classes_AC_cnn_rcfd_ctd_"),
+    "gru_rcfd_cgd":   ("y_preds_AC_gru_rcfd_cgd_",   "y_probs_AC_gru_rcfd_cgd_",   "classes_AC_gru_rcfd_cgd_"),
+    "gru_rcfd_ctd":   ("y_preds_AC_gru_rcfd_ctd_",   "y_probs_AC_gru_rcfd_ctd_",   "classes_AC_gru_rcfd_ctd_"),
+    "trans_rcfd_cgd": ("y_preds_AC_trans_rcfd_cgd_", "y_probs_AC_trans_rcfd_cgd_", "classes_AC_trans_rcfd_cgd_"),
+    "trans_rcfd_ctd": ("y_preds_AC_trans_rcfd_ctd_", "y_probs_AC_trans_rcfd_ctd_", "classes_AC_trans_rcfd_ctd_"),
+    "cnn_rcfd_cgd_supcon_mtl":   ("y_preds_AC_cnn_rcfd_cgd_supcon_mtl_",   "y_probs_AC_cnn_rcfd_cgd_supcon_mtl_",   "classes_AC_cnn_rcfd_cgd_supcon_mtl_"),
+    "cnn_rcfd_ctd_supcon_mtl":   ("y_preds_AC_cnn_rcfd_ctd_supcon_mtl_",   "y_probs_AC_cnn_rcfd_ctd_supcon_mtl_",   "classes_AC_cnn_rcfd_ctd_supcon_mtl_"),
+    "gru_rcfd_cgd_supcon_mtl":   ("y_preds_AC_gru_rcfd_cgd_supcon_mtl_",   "y_probs_AC_gru_rcfd_cgd_supcon_mtl_",   "classes_AC_gru_rcfd_cgd_supcon_mtl_"),
+    "gru_rcfd_ctd_supcon_mtl":   ("y_preds_AC_gru_rcfd_ctd_supcon_mtl_",   "y_probs_AC_gru_rcfd_ctd_supcon_mtl_",   "classes_AC_gru_rcfd_ctd_supcon_mtl_"),
+    "trans_rcfd_cgd_supcon_mtl": ("y_preds_AC_trans_rcfd_cgd_supcon_mtl_", "y_probs_AC_trans_rcfd_cgd_supcon_mtl_", "classes_AC_trans_rcfd_cgd_supcon_mtl_"),
+    "trans_rcfd_ctd_supcon_mtl": ("y_preds_AC_trans_rcfd_ctd_supcon_mtl_", "y_probs_AC_trans_rcfd_ctd_supcon_mtl_", "classes_AC_trans_rcfd_ctd_supcon_mtl_"),
+    "cnn_rcfd_cgd_supcon2_mtl":   ("y_preds_AC_cnn_rcfd_cgd_supcon2_mtl_",   "y_probs_AC_cnn_rcfd_cgd_supcon2_mtl_",   "classes_AC_cnn_rcfd_cgd_supcon2_mtl_"),
+    "cnn_rcfd_ctd_supcon2_mtl":   ("y_preds_AC_cnn_rcfd_ctd_supcon2_mtl_",   "y_probs_AC_cnn_rcfd_ctd_supcon2_mtl_",   "classes_AC_cnn_rcfd_ctd_supcon2_mtl_"),
+    "gru_rcfd_cgd_supcon2_mtl":   ("y_preds_AC_gru_rcfd_cgd_supcon2_mtl_",   "y_probs_AC_gru_rcfd_cgd_supcon2_mtl_",   "classes_AC_gru_rcfd_cgd_supcon2_mtl_"),
+    "gru_rcfd_ctd_supcon2_mtl":   ("y_preds_AC_gru_rcfd_ctd_supcon2_mtl_",   "y_probs_AC_gru_rcfd_ctd_supcon2_mtl_",   "classes_AC_gru_rcfd_ctd_supcon2_mtl_"),
+    "trans_rcfd_cgd_supcon2_mtl": ("y_preds_AC_trans_rcfd_cgd_supcon2_mtl_", "y_probs_AC_trans_rcfd_cgd_supcon2_mtl_", "classes_AC_trans_rcfd_cgd_supcon2_mtl_"),
+    "trans_rcfd_ctd_supcon2_mtl": ("y_preds_AC_trans_rcfd_ctd_supcon2_mtl_", "y_probs_AC_trans_rcfd_ctd_supcon2_mtl_", "classes_AC_trans_rcfd_ctd_supcon2_mtl_"),
+    "cnn_rcfd_cgd_supcon3_mtl":   ("y_preds_AC_cnn_rcfd_cgd_supcon3_mtl_",   "y_probs_AC_cnn_rcfd_cgd_supcon3_mtl_",   "classes_AC_cnn_rcfd_cgd_supcon3_mtl_"),
+    "cnn_rcfd_ctd_supcon3_mtl":   ("y_preds_AC_cnn_rcfd_ctd_supcon3_mtl_",   "y_probs_AC_cnn_rcfd_ctd_supcon3_mtl_",   "classes_AC_cnn_rcfd_ctd_supcon3_mtl_"),
+    "gru_rcfd_cgd_supcon3_mtl":   ("y_preds_AC_gru_rcfd_cgd_supcon3_mtl_",   "y_probs_AC_gru_rcfd_cgd_supcon3_mtl_",   "classes_AC_gru_rcfd_cgd_supcon3_mtl_"),
+    "gru_rcfd_ctd_supcon3_mtl":   ("y_preds_AC_gru_rcfd_ctd_supcon3_mtl_",   "y_probs_AC_gru_rcfd_ctd_supcon3_mtl_",   "classes_AC_gru_rcfd_ctd_supcon3_mtl_"),
+    "trans_rcfd_cgd_supcon3_mtl": ("y_preds_AC_trans_rcfd_cgd_supcon3_mtl_", "y_probs_AC_trans_rcfd_cgd_supcon3_mtl_", "classes_AC_trans_rcfd_cgd_supcon3_mtl_"),
+    "trans_rcfd_ctd_supcon3_mtl": ("y_preds_AC_trans_rcfd_ctd_supcon3_mtl_", "y_probs_AC_trans_rcfd_ctd_supcon3_mtl_", "classes_AC_trans_rcfd_ctd_supcon3_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -406,9 +431,22 @@ _CL_MTL_MODEL_KEYS = {
     "cnn_gru_dual_cl_supcon2_mtl", "cnn_trans_dual_cl_supcon2_mtl",
     "cnn_gru_dual_cl_supcon3_mtl", "cnn_trans_dual_cl_supcon3_mtl",
 }
+_RCFD_MODEL_KEYS = {
+    "cnn_rcfd_cgd", "cnn_rcfd_ctd", "gru_rcfd_cgd", "gru_rcfd_ctd",
+    "trans_rcfd_cgd", "trans_rcfd_ctd",
+    "cnn_rcfd_cgd_supcon_mtl", "cnn_rcfd_ctd_supcon_mtl",
+    "gru_rcfd_cgd_supcon_mtl", "gru_rcfd_ctd_supcon_mtl",
+    "trans_rcfd_cgd_supcon_mtl", "trans_rcfd_ctd_supcon_mtl",
+    "cnn_rcfd_cgd_supcon2_mtl", "cnn_rcfd_ctd_supcon2_mtl",
+    "gru_rcfd_cgd_supcon2_mtl", "gru_rcfd_ctd_supcon2_mtl",
+    "trans_rcfd_cgd_supcon2_mtl", "trans_rcfd_ctd_supcon2_mtl",
+    "cnn_rcfd_cgd_supcon3_mtl", "cnn_rcfd_ctd_supcon3_mtl",
+    "gru_rcfd_cgd_supcon3_mtl", "gru_rcfd_ctd_supcon3_mtl",
+    "trans_rcfd_cgd_supcon3_mtl", "trans_rcfd_ctd_supcon3_mtl",
+}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
-           | _CL_MTL_MODEL_KEYS)
+           | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -476,6 +514,19 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_cl_supcon_mtl":"CNN+GRU Dual CL SC",   "cnn_trans_dual_cl_supcon_mtl":"CNN+Tr Dual CL SC",
     "cnn_gru_dual_cl_supcon2_mtl":"CNN+GRU Dual CL SC2", "cnn_trans_dual_cl_supcon2_mtl":"CNN+Tr Dual CL SC2",
     "cnn_gru_dual_cl_supcon3_mtl":"CNN+GRU Dual CL SC3", "cnn_trans_dual_cl_supcon3_mtl":"CNN+Tr Dual CL SC3",
+    # RCFD (Regression-Conditioned Feature Dual)
+    "cnn_rcfd_cgd":   "CNN RCFD CGD",    "cnn_rcfd_ctd":   "CNN RCFD CTD",
+    "gru_rcfd_cgd":   "GRU RCFD CGD",    "gru_rcfd_ctd":   "GRU RCFD CTD",
+    "trans_rcfd_cgd": "Trans RCFD CGD",  "trans_rcfd_ctd": "Trans RCFD CTD",
+    "cnn_rcfd_cgd_supcon_mtl":   "CNN RCFD CGD SC1",   "cnn_rcfd_ctd_supcon_mtl":   "CNN RCFD CTD SC1",
+    "gru_rcfd_cgd_supcon_mtl":   "GRU RCFD CGD SC1",   "gru_rcfd_ctd_supcon_mtl":   "GRU RCFD CTD SC1",
+    "trans_rcfd_cgd_supcon_mtl": "Trans RCFD CGD SC1", "trans_rcfd_ctd_supcon_mtl": "Trans RCFD CTD SC1",
+    "cnn_rcfd_cgd_supcon2_mtl":   "CNN RCFD CGD SC2",   "cnn_rcfd_ctd_supcon2_mtl":   "CNN RCFD CTD SC2",
+    "gru_rcfd_cgd_supcon2_mtl":   "GRU RCFD CGD SC2",   "gru_rcfd_ctd_supcon2_mtl":   "GRU RCFD CTD SC2",
+    "trans_rcfd_cgd_supcon2_mtl": "Trans RCFD CGD SC2", "trans_rcfd_ctd_supcon2_mtl": "Trans RCFD CTD SC2",
+    "cnn_rcfd_cgd_supcon3_mtl":   "CNN RCFD CGD SC3",   "cnn_rcfd_ctd_supcon3_mtl":   "CNN RCFD CTD SC3",
+    "gru_rcfd_cgd_supcon3_mtl":   "GRU RCFD CGD SC3",   "gru_rcfd_ctd_supcon3_mtl":   "GRU RCFD CTD SC3",
+    "trans_rcfd_cgd_supcon3_mtl": "Trans RCFD CGD SC3", "trans_rcfd_ctd_supcon3_mtl": "Trans RCFD CTD SC3",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

@@ -67,6 +67,12 @@ from model_utils_mtl import (
     CL_MTL_MODEL_KEYS, AutoPhaseTransitionCallback, FixedPhaseTransitionCallback,
     create_cnn_gru_dual_cl_mtl_model, create_cnn_trans_dual_cl_mtl_model,
 )
+from model_utils_rcfd import (
+    RCFDModel, RCFDSupConMTLModel, RCFDBranch2MTLModel, RCFDBranch3MTLModel,
+    RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
+    RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS,
+    ALL_RCFD_KEYS, _RCFD_ALL_FACTORIES,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -722,6 +728,7 @@ _XAI_SAVE_NAME.update({k: k for k in CL_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_SUPCON_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in ALL_RCFD_KEYS})
 
 
 
@@ -1767,6 +1774,53 @@ def evaluate_outlier_filters(
                     reg_trues_per_fold.append(conc_test_raw)
                     tf.keras.backend.clear_session()
 
+                elif _base_m in ALL_RCFD_KEYS:
+                    # RCFD: simultaneous MTL (no phase callbacks); factory dict covers all 24 keys.
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    model = _RCFD_ALL_FACTORIES[_base_m](T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  jit_compile=False)
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
                 elif _base_m in model_utils_gated._ALL_FACTORIES:
                     # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
                     # single-curve-input, no-manual-features shape as cnn_gru_dual /
@@ -1901,7 +1955,8 @@ def evaluate_outlier_filters(
                            or _base_m in CL_MTL_MODEL_KEYS
                            or _base_m in CL_SUPCON_MTL_MODEL_KEYS
                            or _base_m in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS
-                           or _base_m in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                           or _base_m in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS
+                           or _base_m in ALL_RCFD_KEYS)
             if _is_any_mtl and reg_preds_per_fold:
                 res_entry[f'y_reg_preds_{_base_m}_'] = reg_preds_per_fold
                 res_entry[f'y_reg_trues_{_base_m}_'] = reg_trues_per_fold

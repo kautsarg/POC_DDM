@@ -20,6 +20,8 @@ from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
 from model_utils_mtl import CL_MTL_MODEL_KEYS
+from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
+                               RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS)
 
 import config
 
@@ -186,9 +188,13 @@ if __name__ == "__main__":
                         help="Use phase-decoupled curriculum learning for MTL.")
     parser.add_argument("--cl_phase1_epochs", type=int, default=None,
                         help="Fixed Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence.")
+    parser.add_argument("--condreg", action="store_true",
+                        help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
+    if args.condreg:
+        args.mtl = True  # --condreg implies --mtl
 
     set_global_determinism(0, strict=not args.fast_mode)
 
@@ -239,7 +245,16 @@ if __name__ == "__main__":
         # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
         outlier_filters = [None]
 
-        if args.mtl and getattr(args, 'mtl_cl', False):
+        if getattr(args, 'condreg', False):
+            if args.supcon == 0:
+                models = list(RCFD_MODEL_KEYS)
+            elif args.supcon == 1:
+                models = list(RCFD_SUPCON_MTL_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(RCFD_BRANCH2_MTL_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(RCFD_BRANCH3_MTL_MODEL_KEYS)
+        elif args.mtl and getattr(args, 'mtl_cl', False):
             if args.supcon == 0:
                 models = list(CL_MTL_MODEL_KEYS)
             elif args.supcon == 1:
@@ -338,8 +353,16 @@ if __name__ == "__main__":
                     _cl_bsc2_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
                 elif _k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
                     _cl_bsc3_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            _rcfd_result_keys = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in config._RCFD_MODEL_KEYS:
+                    _rcfd_result_keys.update([_pk, _probk, _clsk,
+                                              f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+
             _is_cl = getattr(args, 'mtl_cl', False)
-            if _is_cl and args.supcon == 0:
+            if getattr(args, 'condreg', False):
+                _which = f'RCFD SC{args.supcon}'
+            elif _is_cl and args.supcon == 0:
                 _which = 'CL MTL'
             elif _is_cl and args.supcon == 1:
                 _which = 'CL SupCon v1 MTL'
@@ -377,12 +400,13 @@ if __name__ == "__main__":
                         _is_cl_bsc2    = _rk in _cl_bsc2_result_keys
                         _is_cl_bsc3    = _rk in _cl_bsc3_result_keys
                         _is_any_cl     = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
+                        _is_rcfd       = _rk in _rcfd_result_keys
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                          and not _is_any_cl)
+                                          and not _is_any_cl and not _is_rcfd)
                         if _is_cl and args.supcon == 0 and _is_cl_base:
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 1 and _is_cl_supcon:
@@ -402,6 +426,8 @@ if __name__ == "__main__":
                         elif args.mtl and args.supcon == 0 and _is_mtl:
                             del _filter_res[_rk]
                         elif args.supcon == 0 and not args.mtl and _is_standard:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'condreg', False) and _is_rcfd:
                             del _filter_res[_rk]
 
         lofo_splits = build_lofo_splits(combined["dataset_id"])
