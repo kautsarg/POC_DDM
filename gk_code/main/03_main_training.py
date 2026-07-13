@@ -14,7 +14,11 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
-                                BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                                BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
+                                CL_SUPCON_MTL_MODEL_KEYS,
+                                CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
+                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+from model_utils_mtl import CL_MTL_MODEL_KEYS
 from sklearn.feature_selection import mutual_info_classif
 import numpy as np
 import pandas as pd
@@ -86,8 +90,12 @@ if __name__ == "__main__":
     parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
                         help="Restrict training (and --force_rerun clearing) to specific model keys, "
                              "e.g. --rerun_models cnn_gru_dual_cosine_recon cnn_gru_dual_attn_recon")
+    parser.add_argument("--mtl_cl", action="store_true",
+                        help="Use phase-decoupled curriculum learning for MTL: Phase 1=regression, Phase 2=classification.")
+    parser.add_argument("--cl_phase1_epochs", type=int, default=None,
+                        help="Fixed number of Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence on val_reg_mse.")
     args = parser.parse_args()
-    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "")
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if getattr(args, 'mtl_cl', False) else "")
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
@@ -212,7 +220,29 @@ if __name__ == "__main__":
             elif _k in _bsc_mtl_keys:
                 _bsc_mtl_result_keys.update([_pk, _probk, _clsk,
                                               f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-        if args.supcon == 1 and args.mtl:
+        # CL key sets — isolated from non-CL MTL so --force_rerun only clears the right variant.
+        _cl_base_result_keys  = set()
+        _cl_supcon_result_keys = set()
+        _cl_bsc2_result_keys  = set()
+        _cl_bsc3_result_keys  = set()
+        for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k in CL_MTL_MODEL_KEYS:
+                _cl_base_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            elif _k in CL_SUPCON_MTL_MODEL_KEYS:
+                _cl_supcon_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            elif _k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS:
+                _cl_bsc2_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            elif _k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
+                _cl_bsc3_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+
+        _is_cl = getattr(args, 'mtl_cl', False)
+        if _is_cl and args.supcon == 0:
+            _which = 'CL MTL'
+        elif _is_cl and args.supcon == 1:
+            _which = 'CL SupCon v1 MTL'
+        elif _is_cl and args.supcon in (2, 3):
+            _which = f'CL Branch SupCon v{args.supcon} MTL'
+        elif args.supcon == 1 and args.mtl:
             _which = 'SupCon v1 MTL'
         elif args.supcon == 1:
             _which = 'SupCon v1 ST'
@@ -244,11 +274,25 @@ if __name__ == "__main__":
                                                'y_reg_preds_', 'y_reg_trues_'))
                         _is_bsc_st      = _rk in _bsc_st_result_keys
                         _is_bsc_mtl     = _rk in _bsc_mtl_result_keys
+                        _is_cl_base     = _rk in _cl_base_result_keys
+                        _is_cl_supcon   = _rk in _cl_supcon_result_keys
+                        _is_cl_bsc2     = _rk in _cl_bsc2_result_keys
+                        _is_cl_bsc3     = _rk in _cl_bsc3_result_keys
+                        _is_any_cl      = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
                                            and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
+                                           and not _is_any_cl
                                            and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
                         _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
-                        if args.supcon == 1 and args.mtl and _is_supcon_mtl and _mm:
+                        if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 1 and _is_cl_supcon and _mm:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 2 and _is_cl_bsc2 and _mm:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 3 and _is_cl_bsc3 and _mm:
+                            del _filter_res[_rk]
+                        elif args.supcon == 1 and args.mtl and _is_supcon_mtl and _mm:
                             del _filter_res[_rk]
                         elif args.supcon == 1 and not args.mtl and _is_supcon_st and _mm:
                             del _filter_res[_rk]
@@ -315,7 +359,16 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        if args.mtl:
+        if args.mtl and getattr(args, 'mtl_cl', False):
+            if args.supcon == 0:
+                models = list(CL_MTL_MODEL_KEYS)
+            elif args.supcon == 1:
+                models = list(CL_SUPCON_MTL_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(CL_BRANCH_SUPCON2_MTL_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+        elif args.mtl:
             if args.supcon == 1:
                 models = list(SUPCON_MTL_MODEL_KEYS)
             elif args.supcon == 2:
@@ -385,6 +438,7 @@ if __name__ == "__main__":
                 k_neighbors=args.k_neighbors,
                 multitask=args.mtl,
                 y_concentration=y_concentration,
+                cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -435,6 +489,7 @@ if __name__ == "__main__":
                     k_neighbors=args.k_neighbors,
                     multitask=args.mtl,
                     y_concentration=y_concentration,
+                    cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
                 )
 
             all_ml_results[clean_title]["Native"] = res_native

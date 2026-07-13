@@ -24,7 +24,11 @@ from model_utils import set_global_determinism
 import model_utils_gated  # noqa: F401 — registers _SumPool1D/_OneMinus for .keras deserialization
 import model_utils_mtl    # noqa: F401 — registers MTLModel for .keras deserialization
 import model_utils_supcon  # noqa: F401 — registers SupConModel/SupConMTLModel for .keras deserialization
-from model_utils_supcon import SupConModel, SupConMTLModel
+from model_utils_mtl import CurriculumMTLModel
+from model_utils_supcon import (SupConModel, SupConMTLModel,
+                                CurriculumSupConMTLModel,
+                                CurriculumBranch2MTLModel,
+                                CurriculumBranch3MTLModel)
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
 WELL_CMAP = config.WELL_CMAP
@@ -151,6 +155,12 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             "cnn_gru_dual_cosine_recon_supcon3", "cnn_gru_dual_attn_recon_supcon3",
             "cnn_gru_dual_supcon3_mtl", "cnn_trans_dual_supcon3_mtl",
             "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
+
+            # Curriculum Learning (CL) MTL variants
+            "cnn_gru_dual_cl_mtl", "cnn_trans_dual_cl_mtl",
+            "cnn_gru_dual_cl_supcon_mtl", "cnn_trans_dual_cl_supcon_mtl",
+            "cnn_gru_dual_cl_supcon2_mtl", "cnn_trans_dual_cl_supcon2_mtl",
+            "cnn_gru_dual_cl_supcon3_mtl", "cnn_trans_dual_cl_supcon3_mtl",
         ]
 
     for name in model_names:
@@ -159,7 +169,14 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             try:
                 model = tf.keras.models.load_model(
                     model_path,
-                    custom_objects={'SupConModel': SupConModel, 'SupConMTLModel': SupConMTLModel},
+                    custom_objects={
+                        'SupConModel': SupConModel,
+                        'SupConMTLModel': SupConMTLModel,
+                        'CurriculumMTLModel': CurriculumMTLModel,
+                        'CurriculumSupConMTLModel': CurriculumSupConMTLModel,
+                        'CurriculumBranch2MTLModel': CurriculumBranch2MTLModel,
+                        'CurriculumBranch3MTLModel': CurriculumBranch3MTLModel,
+                    },
                 )
                 model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
                 if model_seq_len != expected_seq_len:

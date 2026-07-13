@@ -9,6 +9,7 @@ from model_utils_mtl import (
     _build_transformer_backbone_mtl,
     _build_cnn_gru_dual_branches_mtl, _build_cnn_trans_dual_branches_mtl,
     _build_cnn_gru_dual_attn_recon_embedding_mtl,
+    CurriculumMTLModel, _HEAD_LAYERS, _freeze_backbone,
 )
 
 SUPCON_TEMP   = 0.1
@@ -573,3 +574,250 @@ def create_cnn_gru_dual_attn_recon_supcon3_mtl_model(k_plus_1, T, n_classes, att
     cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
         stack_input, T, attn_dim, return_branches=True)
     return _branch3_supcon_mtl_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
+
+
+# ======================================================================
+# CURRICULUM LEARNING (CL) SUPCON VARIANTS
+# Phase 0: regression only (no supcon). Phase 1: cls + supcon (frozen backbone).
+# ======================================================================
+
+@tf.keras.utils.register_keras_serializable(package='supcon')
+class CurriculumSupConMTLModel(SupConMTLModel):
+    """PD-MTL + SupCon v1: phase 0=MSE only, phase 1=CE+SupCon (backbone frozen)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
+        n_valid = tf.reduce_sum(mask)
+        mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
+               / (n_valid + 1e-8))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: mse, lambda: ce)
+        return loss, ce, mse
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            cls_out, reg_out, proj_norm = self(x, training=True)
+            loss, ce, mse = self._compute_loss(
+                y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+            sc = supcon_loss(proj_norm, y_dict['cls_out'], self.supcon_temp)
+            sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+            total = loss + sc_w * self.supcon_lambda * sc
+        grads = tape.gradient(total, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        cls_out, reg_out, proj_norm = self(x, training=False)
+        loss, ce, mse = self._compute_loss(
+            y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+        sc = supcon_loss(proj_norm, y_dict['cls_out'], self.supcon_temp)
+        sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+        total = loss + sc_w * self.supcon_lambda * sc
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+
+@tf.keras.utils.register_keras_serializable(package='supcon')
+class CurriculumBranch2MTLModel(SupConBranch2MTLModel):
+    """PD-MTL + Branch SupCon v2: phase 0=MSE only, phase 1=CE+SupCon (backbone frozen)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
+        n_valid = tf.reduce_sum(mask)
+        mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
+               / (n_valid + 1e-8))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: mse, lambda: ce)
+        return loss, ce, mse
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            cls_out, reg_out, cnn_proj, seq_proj = self(x, training=True)
+            loss, ce, mse = self._compute_loss(
+                y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+            sc = (supcon_loss(cnn_proj, y_dict['cls_out'], self.supcon_temp)
+                  + supcon_loss(seq_proj, y_dict['cls_out'], self.supcon_temp))
+            sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+            total = loss + sc_w * self.supcon_lambda_each * sc
+        grads = tape.gradient(total, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        cls_out, reg_out, cnn_proj, seq_proj = self(x, training=False)
+        loss, ce, mse = self._compute_loss(
+            y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+        sc = (supcon_loss(cnn_proj, y_dict['cls_out'], self.supcon_temp)
+              + supcon_loss(seq_proj, y_dict['cls_out'], self.supcon_temp))
+        sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+        total = loss + sc_w * self.supcon_lambda_each * sc
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+
+@tf.keras.utils.register_keras_serializable(package='supcon')
+class CurriculumBranch3MTLModel(SupConBranch3MTLModel):
+    """PD-MTL + Branch SupCon v3: phase 0=MSE only, phase 1=CE+SupCon (backbone frozen)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
+        n_valid = tf.reduce_sum(mask)
+        mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
+               / (n_valid + 1e-8))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: mse, lambda: ce)
+        return loss, ce, mse
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            cls_out, reg_out, cnn_proj, seq_proj, fused_proj = self(x, training=True)
+            loss, ce, mse = self._compute_loss(
+                y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+            sc = (supcon_loss(cnn_proj,   y_dict['cls_out'], self.supcon_temp)
+                  + supcon_loss(seq_proj,   y_dict['cls_out'], self.supcon_temp)
+                  + supcon_loss(fused_proj, y_dict['cls_out'], self.supcon_temp))
+            sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+            total = loss + sc_w * self.supcon_lambda_each * sc
+        grads = tape.gradient(total, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        cls_out, reg_out, cnn_proj, seq_proj, fused_proj = self(x, training=False)
+        loss, ce, mse = self._compute_loss(
+            y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+        sc = (supcon_loss(cnn_proj,   y_dict['cls_out'], self.supcon_temp)
+              + supcon_loss(seq_proj,   y_dict['cls_out'], self.supcon_temp)
+              + supcon_loss(fused_proj, y_dict['cls_out'], self.supcon_temp))
+        sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
+        total = loss + sc_w * self.supcon_lambda_each * sc
+        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
+        return ({m.name: m.result() for m in self.metrics}
+                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+
+
+# ---- CL SupCon wrap helpers ----
+
+def _cl_supcon_mtl_wrap(inputs, embedding, n_classes,
+                        supcon_temp=SUPCON_TEMP, supcon_lambda=0.1):
+    cls_feat  = tf.keras.layers.Dense(16, activation='relu',   name='cls_feat')(embedding)
+    cls_out   = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    reg_feat  = tf.keras.layers.Dense(16, activation='relu',   name='reg_feat')(embedding)
+    reg_h     = tf.keras.layers.Dense(8,  activation='relu',   name='reg_hidden')(reg_feat)
+    reg_out   = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
+    proj      = tf.keras.layers.Dense(64, activation='relu',   name='proj_hidden')(embedding)
+    proj_norm = tf.keras.layers.Lambda(
+        lambda z: tf.math.l2_normalize(z, axis=1), name='proj')(proj)
+    return CurriculumSupConMTLModel(inputs=inputs, outputs=[cls_out, reg_out, proj_norm],
+                                    supcon_temp=supcon_temp, supcon_lambda=supcon_lambda)
+
+
+def _cl_branch2_supcon_mtl_wrap(inputs, cnn_emb, seq_emb, fused, n_classes):
+    cls_feat  = tf.keras.layers.Dense(16, activation='relu', name='cls_feat')(fused)
+    cls_out   = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    reg_feat  = tf.keras.layers.Dense(16, activation='relu', name='reg_feat')(fused)
+    reg_h     = tf.keras.layers.Dense(8,  activation='relu', name='reg_hidden')(reg_feat)
+    reg_out   = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
+    cnn_proj  = _proj_head(cnn_emb, 'cnn')
+    seq_proj  = _proj_head(seq_emb, 'seq')
+    return CurriculumBranch2MTLModel(inputs=inputs,
+                                     outputs=[cls_out, reg_out, cnn_proj, seq_proj])
+
+
+def _cl_branch3_supcon_mtl_wrap(inputs, cnn_emb, seq_emb, fused, n_classes):
+    cls_feat   = tf.keras.layers.Dense(16, activation='relu', name='cls_feat')(fused)
+    cls_out    = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    reg_feat   = tf.keras.layers.Dense(16, activation='relu', name='reg_feat')(fused)
+    reg_h      = tf.keras.layers.Dense(8,  activation='relu', name='reg_hidden')(reg_feat)
+    reg_out    = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(seq_emb, 'seq')
+    fused_proj = _proj_head(fused,   'fused')
+    return CurriculumBranch3MTLModel(inputs=inputs,
+                                     outputs=[cls_out, reg_out, cnn_proj, seq_proj, fused_proj])
+
+
+# ---- CL SupCon v1 factories ----
+
+def create_cnn_gru_dual_cl_supcon_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    return _cl_supcon_mtl_wrap(inputs, _build_cnn_gru_dual_branches_mtl(inputs), n_classes)
+
+
+def create_cnn_trans_dual_cl_supcon_mtl_model(T, n_classes, head_size=32, num_heads=2,
+                                               ff_dim=32, num_blocks=2, dropout=0.1):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    return _cl_supcon_mtl_wrap(
+        inputs,
+        _build_cnn_trans_dual_branches_mtl(inputs, head_size, num_heads, ff_dim, num_blocks, dropout),
+        n_classes)
+
+
+CL_SUPCON_MTL_MODEL_KEYS = ['cnn_gru_dual_cl_supcon_mtl', 'cnn_trans_dual_cl_supcon_mtl']
+
+
+# ---- CL Branch SupCon v2 factories ----
+
+def create_cnn_gru_dual_cl_supcon2_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    return _cl_branch2_supcon_mtl_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_cnn_trans_dual_cl_supcon2_mtl_model(T, n_classes, head_size=32, num_heads=2,
+                                                ff_dim=32, num_blocks=2, dropout=0.1):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, trans_emb, fused = _build_cnn_trans_dual_branches_mtl(
+        inputs, head_size, num_heads, ff_dim, num_blocks, dropout, return_branches=True)
+    return _cl_branch2_supcon_mtl_wrap(inputs, cnn_emb, trans_emb, fused, n_classes)
+
+
+CL_BRANCH_SUPCON2_MTL_MODEL_KEYS = ['cnn_gru_dual_cl_supcon2_mtl', 'cnn_trans_dual_cl_supcon2_mtl']
+
+
+# ---- CL Branch SupCon v3 factories ----
+
+def create_cnn_gru_dual_cl_supcon3_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    return _cl_branch3_supcon_mtl_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_cnn_trans_dual_cl_supcon3_mtl_model(T, n_classes, head_size=32, num_heads=2,
+                                                ff_dim=32, num_blocks=2, dropout=0.1):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, trans_emb, fused = _build_cnn_trans_dual_branches_mtl(
+        inputs, head_size, num_heads, ff_dim, num_blocks, dropout, return_branches=True)
+    return _cl_branch3_supcon_mtl_wrap(inputs, cnn_emb, trans_emb, fused, n_classes)
+
+
+CL_BRANCH_SUPCON3_MTL_MODEL_KEYS = ['cnn_gru_dual_cl_supcon3_mtl', 'cnn_trans_dual_cl_supcon3_mtl']

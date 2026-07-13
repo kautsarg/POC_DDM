@@ -358,6 +358,15 @@ MODEL_KEY_MAP = {
     "cnn_trans_dual_supcon3_mtl":("y_preds_AC_cnn_trans_dual_supcon3_mtl_","y_probs_AC_cnn_trans_dual_supcon3_mtl_","classes_AC_cnn_trans_dual_supcon3_mtl_"),
     "cnn_gru_dual_cosine_recon_supcon3_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_mtl_"),
     "cnn_gru_dual_attn_recon_supcon3_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_mtl_"),
+    # CL (Phase-Decoupled) MTL variants — base + supcon v1/v2/v3
+    "cnn_gru_dual_cl_mtl":           ("y_preds_AC_cnn_gru_dual_cl_mtl_",           "y_probs_AC_cnn_gru_dual_cl_mtl_",           "classes_AC_cnn_gru_dual_cl_mtl_"),
+    "cnn_trans_dual_cl_mtl":         ("y_preds_AC_cnn_trans_dual_cl_mtl_",         "y_probs_AC_cnn_trans_dual_cl_mtl_",         "classes_AC_cnn_trans_dual_cl_mtl_"),
+    "cnn_gru_dual_cl_supcon_mtl":    ("y_preds_AC_cnn_gru_dual_cl_supcon_mtl_",    "y_probs_AC_cnn_gru_dual_cl_supcon_mtl_",    "classes_AC_cnn_gru_dual_cl_supcon_mtl_"),
+    "cnn_trans_dual_cl_supcon_mtl":  ("y_preds_AC_cnn_trans_dual_cl_supcon_mtl_",  "y_probs_AC_cnn_trans_dual_cl_supcon_mtl_",  "classes_AC_cnn_trans_dual_cl_supcon_mtl_"),
+    "cnn_gru_dual_cl_supcon2_mtl":   ("y_preds_AC_cnn_gru_dual_cl_supcon2_mtl_",   "y_probs_AC_cnn_gru_dual_cl_supcon2_mtl_",   "classes_AC_cnn_gru_dual_cl_supcon2_mtl_"),
+    "cnn_trans_dual_cl_supcon2_mtl": ("y_preds_AC_cnn_trans_dual_cl_supcon2_mtl_", "y_probs_AC_cnn_trans_dual_cl_supcon2_mtl_", "classes_AC_cnn_trans_dual_cl_supcon2_mtl_"),
+    "cnn_gru_dual_cl_supcon3_mtl":   ("y_preds_AC_cnn_gru_dual_cl_supcon3_mtl_",   "y_probs_AC_cnn_gru_dual_cl_supcon3_mtl_",   "classes_AC_cnn_gru_dual_cl_supcon3_mtl_"),
+    "cnn_trans_dual_cl_supcon3_mtl": ("y_preds_AC_cnn_trans_dual_cl_supcon3_mtl_", "y_probs_AC_cnn_trans_dual_cl_supcon3_mtl_", "classes_AC_cnn_trans_dual_cl_supcon3_mtl_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -391,8 +400,15 @@ _BRANCH_SUPCON_MODEL_KEYS = {
     "cnn_gru_dual_supcon3_mtl", "cnn_trans_dual_supcon3_mtl",
     "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
 }
+_CL_MTL_MODEL_KEYS = {
+    "cnn_gru_dual_cl_mtl", "cnn_trans_dual_cl_mtl",
+    "cnn_gru_dual_cl_supcon_mtl", "cnn_trans_dual_cl_supcon_mtl",
+    "cnn_gru_dual_cl_supcon2_mtl", "cnn_trans_dual_cl_supcon2_mtl",
+    "cnn_gru_dual_cl_supcon3_mtl", "cnn_trans_dual_cl_supcon3_mtl",
+}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
-           | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS)
+           | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
+           | _CL_MTL_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC

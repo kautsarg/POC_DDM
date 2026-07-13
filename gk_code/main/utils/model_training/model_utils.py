@@ -49,6 +49,10 @@ from model_utils_supcon import (
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
     BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
     BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
+    CL_SUPCON_MTL_MODEL_KEYS, CL_BRANCH_SUPCON2_MTL_MODEL_KEYS, CL_BRANCH_SUPCON3_MTL_MODEL_KEYS,
+    create_cnn_gru_dual_cl_supcon_mtl_model, create_cnn_trans_dual_cl_supcon_mtl_model,
+    create_cnn_gru_dual_cl_supcon2_mtl_model, create_cnn_trans_dual_cl_supcon2_mtl_model,
+    create_cnn_gru_dual_cl_supcon3_mtl_model, create_cnn_trans_dual_cl_supcon3_mtl_model,
 )
 from model_utils_mtl import (
     create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
@@ -60,6 +64,8 @@ from model_utils_mtl import (
     _ALL_GATED_MTL_FACTORIES,
     _normalize_concentration, _inverse_normalize_concentration,
     MTL_MODEL_KEYS, REG_SENTINEL,
+    CL_MTL_MODEL_KEYS, AutoPhaseTransitionCallback, FixedPhaseTransitionCallback,
+    create_cnn_gru_dual_cl_mtl_model, create_cnn_trans_dual_cl_mtl_model,
 )
 
 # ====================================================================
@@ -712,6 +718,10 @@ _XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under 
 _XAI_SAVE_NAME['cnn_gru_dual_cosine_recon'] = 'cnn_gru_dual_cosine_recon'
 _XAI_SAVE_NAME['cnn_gru_dual_attn_recon'] = 'cnn_gru_dual_attn_recon'
 _XAI_SAVE_NAME.update({_k: _k for _k in ALL_SUPCON_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CL_MTL_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CL_SUPCON_MTL_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS})
 
 
 
@@ -724,6 +734,7 @@ def evaluate_outlier_filters(
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=8,
     multitask=False, y_concentration=None,
+    cl_phase1_epochs=None,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -1510,6 +1521,249 @@ def evaluate_outlier_filters(
                     reg_trues_per_fold.append(conc_test_raw)
                     tf.keras.backend.clear_session()
 
+                elif _base_m in CL_MTL_MODEL_KEYS:
+                    # CL base: phase 0=MSE only, phase 1=CE only; 2 outputs [cls_out, reg_out]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_cl_mtl':
+                        model = create_cnn_gru_dual_cl_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_cl_mtl':
+                        model = create_cnn_trans_dual_cl_mtl_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        _cl_es   = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True)
+                        _cl_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5)
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                    else:
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_phase_cb])
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    cls_prob, reg_pred_scaled = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in CL_SUPCON_MTL_MODEL_KEYS:
+                    # CL SupCon v1: phase 0=MSE, phase 1=CE+SupCon; 3 outputs [cls_out, reg_out, proj]
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_cl_supcon_mtl':
+                        model = create_cnn_gru_dual_cl_supcon_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_cl_supcon_mtl':
+                        model = create_cnn_trans_dual_cl_supcon_mtl_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        _cl_es   = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True)
+                        _cl_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5)
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                    else:
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_phase_cb])
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS:
+                    # CL Branch SupCon v2: phase 0=MSE, phase 1=CE+SupCon; 4 outputs
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_cl_supcon2_mtl':
+                        model = create_cnn_gru_dual_cl_supcon2_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_cl_supcon2_mtl':
+                        model = create_cnn_trans_dual_cl_supcon2_mtl_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        _cl_es   = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True)
+                        _cl_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5)
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                    else:
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_phase_cb])
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
+                    # CL Branch SupCon v3: phase 0=MSE, phase 1=CE+SupCon; 5 outputs
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_cl_supcon3_mtl':
+                        model = create_cnn_gru_dual_cl_supcon3_mtl_model(T, n_classes)
+                    elif _base_m == 'cnn_trans_dual_cl_supcon3_mtl':
+                        model = create_cnn_trans_dual_cl_supcon3_mtl_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+                    conc_train_raw = (y_conc_filtered[train_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw  = (y_conc_filtered[test_idx]
+                                      if y_conc_filtered is not None
+                                      else np.full(len(test_idx),  REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        _cl_es   = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True)
+                        _cl_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5)
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
+                        model.fit(X_train_curve_fit,
+                                  {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                                  validation_data=(X_val_curve,
+                                                   {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                    else:
+                        _cl_phase_cb = (
+                            FixedPhaseTransitionCallback(cl_phase1_epochs)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
+                        model.fit(X_train_curve,
+                                  {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_cl_phase_cb])
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+                    raw_out = model.predict(X_test_curve, verbose=0)
+                    cls_prob, reg_pred_scaled = raw_out[0], raw_out[1]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    reg_pred_orig = _inverse_normalize_concentration(reg_pred_scaled[:, 0], _conc_scaler)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    reg_preds_per_fold.append(reg_pred_orig)
+                    reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
                 elif _base_m in model_utils_gated._ALL_FACTORIES:
                     # 8 gated CNN+(GRU|Transformer) dual-branch fusion models — same
                     # single-curve-input, no-manual-features shape as cnn_gru_dual /
@@ -1638,9 +1892,14 @@ def evaluate_outlier_filters(
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
             res_entry[classes_key] = classes_list
-            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
-                    or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
-                    or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS) and reg_preds_per_fold:
+            _is_any_mtl = (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
+                           or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
+                           or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS
+                           or _base_m in CL_MTL_MODEL_KEYS
+                           or _base_m in CL_SUPCON_MTL_MODEL_KEYS
+                           or _base_m in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS
+                           or _base_m in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+            if _is_any_mtl and reg_preds_per_fold:
                 res_entry[f'y_reg_preds_{_base_m}_'] = reg_preds_per_fold
                 res_entry[f'y_reg_trues_{_base_m}_'] = reg_trues_per_fold
 
@@ -1653,9 +1912,7 @@ def evaluate_outlier_filters(
             std = np.std(fold_accs) * 100
 
             _reg_suffix = ""
-            if (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
-                    or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
-                    or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS) and reg_preds_per_fold:
+            if _is_any_mtl and reg_preds_per_fold:
                 _rp = np.concatenate(reg_preds_per_fold); _rt = np.concatenate(reg_trues_per_fold)
                 _vm = _rt != REG_SENTINEL
                 if _vm.sum() >= 2:

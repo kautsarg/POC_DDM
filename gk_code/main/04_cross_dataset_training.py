@@ -15,7 +15,11 @@ from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_de
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
-                                BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                                BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
+                                CL_SUPCON_MTL_MODEL_KEYS,
+                                CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
+                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+from model_utils_mtl import CL_MTL_MODEL_KEYS
 
 import config
 
@@ -178,6 +182,10 @@ if __name__ == "__main__":
     parser.add_argument("--supcon", type=int, choices=[0, 1, 2, 3], default=0,
                         help="0=none, 1=original fused SupCon, 2=branch v2 (CNN+seq), "
                              "3=branch v3 (CNN+seq+fused). Results merged into same joblib.")
+    parser.add_argument("--mtl_cl", action="store_true",
+                        help="Use phase-decoupled curriculum learning for MTL.")
+    parser.add_argument("--cl_phase1_epochs", type=int, default=None,
+                        help="Fixed Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence.")
     args = parser.parse_args()
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -229,7 +237,16 @@ if __name__ == "__main__":
         # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
         outlier_filters = [None]
 
-        if args.mtl:
+        if args.mtl and getattr(args, 'mtl_cl', False):
+            if args.supcon == 0:
+                models = list(CL_MTL_MODEL_KEYS)
+            elif args.supcon == 1:
+                models = list(CL_SUPCON_MTL_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(CL_BRANCH_SUPCON2_MTL_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+        elif args.mtl:
             if args.supcon == 1:
                 models = list(SUPCON_MTL_MODEL_KEYS)
             elif args.supcon == 2:
@@ -306,7 +323,27 @@ if __name__ == "__main__":
                 elif _k in _bsc_mtl_keys:
                     _bsc_mtl_result_keys.update([_pk, _probk, _clsk,
                                                  f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-            if args.supcon == 1 and args.mtl:
+            _cl_base_result_keys  = set()
+            _cl_supcon_result_keys = set()
+            _cl_bsc2_result_keys  = set()
+            _cl_bsc3_result_keys  = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in CL_MTL_MODEL_KEYS:
+                    _cl_base_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+                elif _k in CL_SUPCON_MTL_MODEL_KEYS:
+                    _cl_supcon_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+                elif _k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS:
+                    _cl_bsc2_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+                elif _k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
+                    _cl_bsc3_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            _is_cl = getattr(args, 'mtl_cl', False)
+            if _is_cl and args.supcon == 0:
+                _which = 'CL MTL'
+            elif _is_cl and args.supcon == 1:
+                _which = 'CL SupCon v1 MTL'
+            elif _is_cl and args.supcon in (2, 3):
+                _which = f'CL Branch SupCon v{args.supcon} MTL'
+            elif args.supcon == 1 and args.mtl:
                 _which = 'SupCon MTL'
             elif args.supcon == 1:
                 _which = 'SupCon ST'
@@ -333,12 +370,26 @@ if __name__ == "__main__":
                         _is_supcon_mtl = _rk in _supcon_mtl_result_keys
                         _is_bsc_st     = _rk in _bsc_st_result_keys
                         _is_bsc_mtl    = _rk in _bsc_mtl_result_keys
+                        _is_cl_base    = _rk in _cl_base_result_keys
+                        _is_cl_supcon  = _rk in _cl_supcon_result_keys
+                        _is_cl_bsc2    = _rk in _cl_bsc2_result_keys
+                        _is_cl_bsc3    = _rk in _cl_bsc3_result_keys
+                        _is_any_cl     = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
-                                          and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl)
-                        if args.supcon == 1 and args.mtl and _is_supcon_mtl:
+                                          and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
+                                          and not _is_any_cl)
+                        if _is_cl and args.supcon == 0 and _is_cl_base:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 1 and _is_cl_supcon:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 2 and _is_cl_bsc2:
+                            del _filter_res[_rk]
+                        elif _is_cl and args.supcon == 3 and _is_cl_bsc3:
+                            del _filter_res[_rk]
+                        elif args.supcon == 1 and args.mtl and _is_supcon_mtl:
                             del _filter_res[_rk]
                         elif args.supcon == 1 and not args.mtl and _is_supcon_st:
                             del _filter_res[_rk]
@@ -390,6 +441,7 @@ if __name__ == "__main__":
                 k_neighbors=args.k_neighbors,
                 multitask=args.mtl,
                 y_concentration=y_concentration,
+                cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
             )
 
             lofo_results[fold_label] = res

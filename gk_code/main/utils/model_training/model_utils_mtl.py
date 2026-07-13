@@ -112,6 +112,133 @@ class MTLModel(tf.keras.Model):
 
 
 # ====================================================================
+# PHASE-DECOUPLED MTL (CURRICULUM LEARNING)
+# ====================================================================
+
+_HEAD_LAYERS = frozenset({'cls_feat', 'cls_out', 'reg_feat', 'reg_hidden', 'reg_out'})
+
+
+def _freeze_backbone(model):
+    """Freeze all non-head layers, advance curriculum_phase to 1, recompile."""
+    for layer in model.layers:
+        if layer.name not in _HEAD_LAYERS:
+            layer.trainable = False
+    model.curriculum_phase.assign(1)
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+        metrics=['accuracy'])
+
+
+@tf.keras.utils.register_keras_serializable(package='mtl')
+class CurriculumMTLModel(MTLModel):
+    """Phase-decoupled MTL: phase 0 = regression only, phase 1 = classification only."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
+        n_valid = tf.reduce_sum(mask)
+        mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
+               / (n_valid + 1e-8))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: mse, lambda: ce)
+        return loss, ce, mse
+
+    def get_config(self):
+        return super().get_config()
+
+
+class AutoPhaseTransitionCallback(tf.keras.callbacks.Callback):
+    """Transition from regression-only to cls-only when val_reg_mse plateaus.
+
+    Waits min_phase1_epochs, then triggers on patience consecutive non-improving epochs.
+    Resets EarlyStopping/ReduceLROnPlateau state at transition so Phase 2 is tracked fresh.
+    """
+
+    def __init__(self, min_phase1_epochs=30, patience=10,
+                 early_stop_cb=None, rlrp_cb=None):
+        super().__init__()
+        self.min_phase1_epochs = min_phase1_epochs
+        self.patience = patience
+        self.early_stop_cb = early_stop_cb
+        self.rlrp_cb = rlrp_cb
+        self._best = float('inf')
+        self._wait = 0
+        self._transitioned = False
+
+    def on_epoch_end(self, epoch, logs=None):
+        if self._transitioned:
+            return
+        mse = (logs or {}).get('val_reg_mse')
+        if mse is None or epoch < self.min_phase1_epochs:
+            return
+        if mse < self._best:
+            self._best = mse
+            self._wait = 0
+        else:
+            self._wait += 1
+        if self._wait >= self.patience:
+            self._transitioned = True
+            _freeze_backbone(self.model)
+            if self.early_stop_cb is not None:
+                self.early_stop_cb.best = float('inf')
+            if self.rlrp_cb is not None:
+                self.rlrp_cb.best = float('inf')
+            print(f'\n[CL] Phase 1→2 auto-transition at epoch {epoch + 1}')
+
+
+class FixedPhaseTransitionCallback(tf.keras.callbacks.Callback):
+    """Transition from regression-only to cls-only at a fixed epoch."""
+
+    def __init__(self, phase1_epochs, early_stop_cb=None, rlrp_cb=None):
+        super().__init__()
+        self.phase1_epochs = phase1_epochs
+        self.early_stop_cb = early_stop_cb
+        self.rlrp_cb = rlrp_cb
+        self._transitioned = False
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if not self._transitioned and epoch == self.phase1_epochs:
+            self._transitioned = True
+            _freeze_backbone(self.model)
+            if self.early_stop_cb is not None:
+                self.early_stop_cb.best = float('inf')
+            if self.rlrp_cb is not None:
+                self.rlrp_cb.best = float('inf')
+            print(f'\n[CL] Phase 1→2 fixed transition at epoch {epoch}')
+
+
+def _cl_mtl_wrap(inputs, embedding, n_classes):
+    """Same as _mtl_wrap but returns CurriculumMTLModel."""
+    cls_feat = tf.keras.layers.Dense(16, activation='relu',    name='cls_feat')(embedding)
+    cls_out  = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    reg_feat = tf.keras.layers.Dense(16, activation='relu',    name='reg_feat')(embedding)
+    reg_h    = tf.keras.layers.Dense(8,  activation='relu',    name='reg_hidden')(reg_feat)
+    reg_out  = tf.keras.layers.Dense(1,  activation='linear',  name='reg_out')(reg_h)
+    return CurriculumMTLModel(inputs=inputs, outputs=[cls_out, reg_out])
+
+
+def create_cnn_gru_dual_cl_mtl_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    return _cl_mtl_wrap(inputs, _build_cnn_gru_dual_branches_mtl(inputs), n_classes)
+
+
+def create_cnn_trans_dual_cl_mtl_model(T, n_classes, head_size=32, num_heads=2,
+                                        ff_dim=32, num_blocks=2, dropout=0.1):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    return _cl_mtl_wrap(inputs,
+                        _build_cnn_trans_dual_branches_mtl(inputs, head_size, num_heads,
+                                                            ff_dim, num_blocks, dropout),
+                        n_classes)
+
+
+CL_MTL_MODEL_KEYS = ['cnn_gru_dual_cl_mtl', 'cnn_trans_dual_cl_mtl']
+
+
+# ====================================================================
 # CONCENTRATION NORMALISATION HELPER
 # ====================================================================
 
