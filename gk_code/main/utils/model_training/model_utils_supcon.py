@@ -609,10 +609,10 @@ class CurriculumSupConMTLModel(SupConMTLModel):
             sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
             total = loss + sc_w * self.supcon_lambda * sc
         grads = tape.gradient(total, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self.optimizer.apply_gradients(
+            (g, v) for g, v in zip(grads, self.trainable_variables) if g is not None)
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -622,9 +622,8 @@ class CurriculumSupConMTLModel(SupConMTLModel):
         sc = supcon_loss(proj_norm, y_dict['cls_out'], self.supcon_temp)
         sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
         total = loss + sc_w * self.supcon_lambda * sc
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
 
 @tf.keras.utils.register_keras_serializable(package='supcon')
@@ -656,10 +655,10 @@ class CurriculumBranch2MTLModel(SupConBranch2MTLModel):
             sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
             total = loss + sc_w * self.supcon_lambda_each * sc
         grads = tape.gradient(total, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self.optimizer.apply_gradients(
+            (g, v) for g, v in zip(grads, self.trainable_variables) if g is not None)
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -670,9 +669,8 @@ class CurriculumBranch2MTLModel(SupConBranch2MTLModel):
               + supcon_loss(seq_proj, y_dict['cls_out'], self.supcon_temp))
         sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
         total = loss + sc_w * self.supcon_lambda_each * sc
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
 
 @tf.keras.utils.register_keras_serializable(package='supcon')
@@ -705,10 +703,10 @@ class CurriculumBranch3MTLModel(SupConBranch3MTLModel):
             sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
             total = loss + sc_w * self.supcon_lambda_each * sc
         grads = tape.gradient(total, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self.optimizer.apply_gradients(
+            (g, v) for g, v in zip(grads, self.trainable_variables) if g is not None)
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -720,9 +718,8 @@ class CurriculumBranch3MTLModel(SupConBranch3MTLModel):
               + supcon_loss(fused_proj, y_dict['cls_out'], self.supcon_temp))
         sc_w = tf.cast(tf.equal(self.curriculum_phase, 1), tf.float32)
         total = loss + sc_w * self.supcon_lambda_each * sc
-        self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
-        return ({m.name: m.result() for m in self.metrics}
-                | {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+        self._loss_tracker.update_state(total)
+        return {'loss': total, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc}
 
 
 # ---- CL SupCon wrap helpers ----

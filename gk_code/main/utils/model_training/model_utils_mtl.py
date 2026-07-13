@@ -119,14 +119,19 @@ _HEAD_LAYERS = frozenset({'cls_feat', 'cls_out', 'reg_feat', 'reg_hidden', 'reg_
 
 
 def _freeze_backbone(model):
-    """Freeze all non-head layers, advance curriculum_phase to 1, recompile."""
+    """Freeze all non-head layers, advance curriculum_phase to 1, recompile.
+
+    compile() resets train_function to None; make_train_function(force=True) rebuilds it
+    so the running fit() loop doesn't call None(iterator) on the next batch/epoch.
+    """
     for layer in model.layers:
         if layer.name not in _HEAD_LAYERS:
             layer.trainable = False
     model.curriculum_phase.assign(1)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-        metrics=['accuracy'])
+        jit_compile=False)
+    model.make_train_function(force=True)
 
 
 @tf.keras.utils.register_keras_serializable(package='mtl')
@@ -146,6 +151,26 @@ class CurriculumMTLModel(MTLModel):
                / (n_valid + 1e-8))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: mse, lambda: ce)
         return loss, ce, mse
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            cls_out, reg_out = self(x, training=True)
+            loss, ce, mse = self._compute_loss(
+                y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+        grads = tape.gradient(loss, self.trainable_variables)
+        self.optimizer.apply_gradients(
+            (g, v) for g, v in zip(grads, self.trainable_variables) if g is not None)
+        self._loss_tracker.update_state(loss)
+        return {'loss': loss, 'cls_ce': ce, 'reg_mse': mse}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        cls_out, reg_out = self(x, training=False)
+        loss, ce, mse = self._compute_loss(
+            y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
+        self._loss_tracker.update_state(loss)
+        return {'loss': loss, 'cls_ce': ce, 'reg_mse': mse}
 
     def get_config(self):
         return super().get_config()

@@ -34,72 +34,22 @@ TRAIN_FOLDER="$EXP_FOLDER"
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $PREP_TASK_ID --exp_folder "$EXP_FOLDER"
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$TRAIN_FOLDER" --filters
 
-# # ST Normal
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5
+run_train() {
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
+        --task_id $SLURM_ARRAY_TASK_ID \
+        --exp_folder "$TRAIN_FOLDER" \
+        --curve_type ori_curve \
+        --n_splits 5 \
+        "$@"
+}
 
-# # MTL Normal
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --mtl
-
-# # ST SupCon 1
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 1
-
-# # MTL SupCon 1
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 1 \
-#     --mtl
-
-# # ST SupCon 2
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 2
-
-# # MTL SupCon 2
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 2 \
-#     --mtl
-
-# # ST SupCon 3
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 3
-
-# # MTL SupCon 3
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
-#     --task_id $SLURM_ARRAY_TASK_ID \
-#     --exp_folder "$TRAIN_FOLDER" \
-#     --curve_type ori_curve \
-#     --n_splits 5 \
-#     --supcon 3 \
-#     --mtl
-
+# ST / MTL / MTL-CL for each supcon variant (0=none, 1-3=supcon variants)
+for SC in 0 1 2 3; do
+    SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+    run_train "${SARG[@]}" --mtl_cl  # MTL CL
+    run_train "${SARG[@]}" --mtl     # MTL
+    run_train "${SARG[@]}"           # ST
+done
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
     --task_id $SLURM_ARRAY_TASK_ID \

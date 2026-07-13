@@ -95,7 +95,9 @@ if __name__ == "__main__":
     parser.add_argument("--cl_phase1_epochs", type=int, default=None,
                         help="Fixed number of Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence on val_reg_mse.")
     args = parser.parse_args()
-    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if getattr(args, 'mtl_cl', False) else "")
+    if args.mtl_cl:
+        args.mtl = True  # --mtl_cl implies --mtl
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "")
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun

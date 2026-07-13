@@ -165,25 +165,27 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
 
     for name in model_names:
         model_path = model_dir / f"{name}_{filter_key}_{curve_type}_model.keras"
-        if model_path.exists():
-            try:
-                model = tf.keras.models.load_model(
-                    model_path,
-                    custom_objects={
-                        'SupConModel': SupConModel,
-                        'SupConMTLModel': SupConMTLModel,
-                        'CurriculumMTLModel': CurriculumMTLModel,
-                        'CurriculumSupConMTLModel': CurriculumSupConMTLModel,
-                        'CurriculumBranch2MTLModel': CurriculumBranch2MTLModel,
-                        'CurriculumBranch3MTLModel': CurriculumBranch3MTLModel,
-                    },
-                )
-                model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
-                if model_seq_len != expected_seq_len:
-                    continue
-                models[name] = model
-            except Exception as e:
-                print(f"     [!] Failed to load {name}: {str(e)}")
+        if not model_path.exists():
+            print(f"     [SKIP] {name}: {model_path.name} not found")
+            continue
+        try:
+            model = tf.keras.models.load_model(
+                model_path,
+                custom_objects={
+                    'SupConModel': SupConModel,
+                    'SupConMTLModel': SupConMTLModel,
+                    'CurriculumMTLModel': CurriculumMTLModel,
+                    'CurriculumSupConMTLModel': CurriculumSupConMTLModel,
+                    'CurriculumBranch2MTLModel': CurriculumBranch2MTLModel,
+                    'CurriculumBranch3MTLModel': CurriculumBranch3MTLModel,
+                },
+            )
+            model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
+            if model_seq_len != expected_seq_len:
+                continue
+            models[name] = model
+        except Exception as e:
+            print(f"     [!] Failed to load {name}: {str(e)}")
             
     return models
 

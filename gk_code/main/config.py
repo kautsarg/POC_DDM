@@ -471,6 +471,11 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_supcon3_mtl": "CNN+GRU Dual SC3 MTL", "cnn_trans_dual_supcon3_mtl": "CNN+Tr Dual SC3 MTL",
     "cnn_gru_dual_cosine_recon_supcon3_mtl": "CNN+GRU CosRecon SC3 MTL",
     "cnn_gru_dual_attn_recon_supcon3_mtl":   "CNN+GRU AttnRecon SC3 MTL",
+    # CL MTL (curriculum learning)
+    "cnn_gru_dual_cl_mtl":       "CNN+GRU Dual CL",      "cnn_trans_dual_cl_mtl":       "CNN+Tr Dual CL",
+    "cnn_gru_dual_cl_supcon_mtl":"CNN+GRU Dual CL SC",   "cnn_trans_dual_cl_supcon_mtl":"CNN+Tr Dual CL SC",
+    "cnn_gru_dual_cl_supcon2_mtl":"CNN+GRU Dual CL SC2", "cnn_trans_dual_cl_supcon2_mtl":"CNN+Tr Dual CL SC2",
+    "cnn_gru_dual_cl_supcon3_mtl":"CNN+GRU Dual CL SC3", "cnn_trans_dual_cl_supcon3_mtl":"CNN+Tr Dual CL SC3",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

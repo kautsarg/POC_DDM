@@ -922,25 +922,34 @@ def evaluate_outlier_filters(
 
             # --- CHECK CACHE ---
             if (preds_key in res_entry) and (m not in rerun_models):
-                fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
-                acc = np.mean(fold_accs) * 100
-                std = np.std(fold_accs) * 100
+                # If XAI save is expected but the .keras file is missing, fall through
+                # to retrain so the file is written (happens when XAI save was added after
+                # the model's first training run populated the cache).
+                _xai_file_missing = (
+                    save_model_dir is not None and m in _XAI_SAVE_NAME
+                    and not (Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras").exists()
+                )
+                if not _xai_file_missing:
+                    fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
+                    acc = np.mean(fold_accs) * 100
+                    std = np.std(fold_accs) * 100
 
-                print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
-                _reg_suffix = ""
-                _rk = f'y_reg_preds_{_base_m}_'
-                _tk = f'y_reg_trues_{_base_m}_'
-                if _rk in res_entry and _tk in res_entry:
-                    _rp = np.concatenate(res_entry[_rk]); _rt = np.concatenate(res_entry[_tk])
-                    _vm = _rt != REG_SENTINEL
-                    if _vm.sum() >= 2:
-                        _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
-                print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: Cached")
-                if m in _recon_models_left:
-                    _recon_models_left.discard(m)
-                    if not _recon_models_left:
-                        _free_spatial_recon()
-                continue
+                    print(f"     [CACHE HIT] {m.upper()} cached result found. Skipping training.")
+                    _reg_suffix = ""
+                    _rk = f'y_reg_preds_{_base_m}_'
+                    _tk = f'y_reg_trues_{_base_m}_'
+                    if _rk in res_entry and _tk in res_entry:
+                        _rp = np.concatenate(res_entry[_rk]); _rt = np.concatenate(res_entry[_tk])
+                        _vm = _rt != REG_SENTINEL
+                        if _vm.sum() >= 2:
+                            _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
+                    print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: Cached")
+                    if m in _recon_models_left:
+                        _recon_models_left.discard(m)
+                        if not _recon_models_left:
+                            _free_spatial_recon()
+                    continue
+                print(f"     [XAI-RETRAIN] {m.upper()} cached but .keras missing — retraining to save model.")
 
             # Lazily build the (N, k+1, T) neighbour stack the first time it's actually
             # needed for training (not on a cache hit, see above) -- see the comment where
@@ -1244,8 +1253,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
 
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1313,8 +1321,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon':
                         model = create_cnn_gru_dual_attn_recon_supcon_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
 
                     if _val_split_ok:
                         model.fit(
@@ -1354,8 +1361,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon2':
                         model = create_cnn_gru_dual_attn_recon_supcon2_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
                         model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
@@ -1389,8 +1395,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon2_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon2_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1444,8 +1449,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon3':
                         model = create_cnn_gru_dual_attn_recon_supcon3_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
                         model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
@@ -1479,8 +1483,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon3_mtl':
                         model = create_cnn_gru_dual_attn_recon_supcon3_mtl_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
-                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1530,7 +1533,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_cl_mtl':
                         model = create_cnn_trans_dual_cl_mtl_model(T, n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                                  jit_compile=False)
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1590,7 +1593,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_cl_supcon_mtl':
                         model = create_cnn_trans_dual_cl_supcon_mtl_model(T, n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                                  jit_compile=False)
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1651,7 +1654,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_cl_supcon2_mtl':
                         model = create_cnn_trans_dual_cl_supcon2_mtl_model(T, n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                                  jit_compile=False)
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None
@@ -1712,7 +1715,7 @@ def evaluate_outlier_filters(
                     elif _base_m == 'cnn_trans_dual_cl_supcon3_mtl':
                         model = create_cnn_trans_dual_cl_supcon3_mtl_model(T, n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                  metrics=['accuracy'])
+                                  jit_compile=False)
                     epochs = 500
                     conc_train_raw = (y_conc_filtered[train_idx]
                                       if y_conc_filtered is not None

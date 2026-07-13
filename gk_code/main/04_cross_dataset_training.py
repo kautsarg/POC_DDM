@@ -187,6 +187,8 @@ if __name__ == "__main__":
     parser.add_argument("--cl_phase1_epochs", type=int, default=None,
                         help="Fixed Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence.")
     args = parser.parse_args()
+    if args.mtl_cl:
+        args.mtl = True  # --mtl_cl implies --mtl
 
     set_global_determinism(0, strict=not args.fast_mode)
 
