@@ -61,7 +61,6 @@ def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key)
 # MAIN
 # ============================================================
 if __name__ == "__main__":
-    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}\n{'='*70}\n")
     parser = argparse.ArgumentParser(description="Main Training Pipeline")
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
@@ -88,6 +87,8 @@ if __name__ == "__main__":
                         help="Restrict training (and --force_rerun clearing) to specific model keys, "
                              "e.g. --rerun_models cnn_gru_dual_cosine_recon cnn_gru_dual_attn_recon")
     args = parser.parse_args()
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "")
+    print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
 

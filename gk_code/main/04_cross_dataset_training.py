@@ -252,11 +252,12 @@ if __name__ == "__main__":
                 models = list(BRANCH_SUPCON3_MODEL_KEYS)
             else:
                 models = [
-                    "knn", "cnn", "cnn_inc",
+                    # "knn", 
+                    "cnn", # "cnn_inc",
                     # "cnn_lf",
-                    "gru", "cnn_gru_dual", "cnn_gru_dual_inc",
+                    "gru", "cnn_gru_dual", # "cnn_gru_dual_inc",
                     # "gru_lf",
-                    "transformer", "cnn_trans_dual", "cnn_trans_dual_inc",
+                    "transformer", "cnn_trans_dual", # "cnn_trans_dual_inc",
                     # "trans_lf",
                     "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
                     # "lstm_ae_clf",

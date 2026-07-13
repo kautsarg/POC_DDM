@@ -23,6 +23,8 @@ import config
 from model_utils import set_global_determinism
 import model_utils_gated  # noqa: F401 — registers _SumPool1D/_OneMinus for .keras deserialization
 import model_utils_mtl    # noqa: F401 — registers MTLModel for .keras deserialization
+import model_utils_supcon  # noqa: F401 — registers SupConModel/SupConMTLModel for .keras deserialization
+from model_utils_supcon import SupConModel, SupConMTLModel
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
 WELL_CMAP = config.WELL_CMAP
@@ -155,7 +157,10 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
         model_path = model_dir / f"{name}_{filter_key}_{curve_type}_model.keras"
         if model_path.exists():
             try:
-                model = tf.keras.models.load_model(model_path)
+                model = tf.keras.models.load_model(
+                    model_path,
+                    custom_objects={'SupConModel': SupConModel, 'SupConMTLModel': SupConMTLModel},
+                )
                 model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
                 if model_seq_len != expected_seq_len:
                     continue
@@ -343,12 +348,13 @@ def _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_
         elif transformer_layer: ext = tf.keras.Model(model.input, transformer_layer.output)
         elif flatten_layer: ext = tf.keras.Model(model.input, flatten_layer.output)
         else: ext = tf.keras.Model(model.input, model.layers[-2].output)
-        head = tf.keras.Model(ext.output, model.output)
+        _m_outs = model.output if isinstance(model.output, (list, tuple)) else [model.output]
+        _combined = tf.keras.Model(model.input, [ext.output] + list(_m_outs))
         with tf.GradientTape(persistent=True) as tape:
             tape.watch(x_tf_curve)
-            z = ext(x_tf_curve); tape.watch(z)
-            outs = head(z)
-            cls_t = outs[0] if isinstance(outs, (list, tuple)) else outs
+            _comb_outs = _combined(x_tf_curve)
+            z = _comb_outs[0]; tape.watch(z)
+            cls_t = _comb_outs[1]
             tgt = tf.reduce_max(cls_t, axis=1)
         dz = tape.gradient(tgt, z).numpy()
         co, ci = rank_latents(dz)
@@ -709,13 +715,14 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             elif flatten_layer: extractor = tf.keras.Model(inputs=model.input, outputs=flatten_layer.output)
             else: extractor = tf.keras.Model(inputs=model.input, outputs=model.layers[-2].output)
             
-            head_model = tf.keras.Model(inputs=extractor.output, outputs=model.output)
-            
+            _m_outs = model.output if isinstance(model.output, (list, tuple)) else [model.output]
+            _combined = tf.keras.Model(inputs=model.input, outputs=[extractor.output] + list(_m_outs))
+
             with tf.GradientTape(persistent=True) as tape:
                 tape.watch(x_tf_curve)
-                z_curve = extractor(x_tf_curve)
-                tape.watch(z_curve)
-                target_master = tf.reduce_max(head_model(z_curve), axis=1)
+                _comb_outs = _combined(x_tf_curve)
+                z_curve = _comb_outs[0]; tape.watch(z_curve)
+                target_master = tf.reduce_max(_comb_outs[1], axis=1)
                 
             dy_dz = tape.gradient(target_master, z_curve).numpy()
             curve_order, curve_imp_shape = rank_latents(dy_dz)
