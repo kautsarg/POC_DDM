@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30
-#SBATCH --array=0-2,9-12
+#SBATCH --partition=a30,a40,a100
+#SBATCH --array=0-2,9-10,11-12
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -44,20 +44,32 @@ run_train() {
 }
 
 
-# RCFD: 4 supcon variants × 6 models = 24 models total
-# for SC in 0 1 2 3; do
-for SC in 0 3; do
+# # RCFD: 4 supcon variants × 6 models = 24 models total
+# # for SC in 0 1 2 3; do
+# for SC in 0 3; do
+#     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+#     run_train --condreg "${SARG[@]}"
+# done
+
+# # ST / MTL / MTL-CL for each supcon variant (0=none, 1-3=supcon variants)
+# # for SC in 0 1 2 3; do
+# for SC in 0 3; do
+#     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+#     run_train "${SARG[@]}" --mtl_cl  # MTL CL
+#     run_train "${SARG[@]}" --mtl     # MTL
+#     run_train "${SARG[@]}"           # ST
+# done
+
+# SECOND PHASE
+for SC in 0 1 2 3; do
     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
     run_train --condreg "${SARG[@]}"
 done
 
-# ST / MTL / MTL-CL for each supcon variant (0=none, 1-3=supcon variants)
-# for SC in 0 1 2 3; do
-for SC in 0 3; do
+for SC in 0 1 2 3; do
     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
-    run_train "${SARG[@]}" --mtl_cl  # MTL CL
-    run_train "${SARG[@]}" --mtl     # MTL
     run_train "${SARG[@]}"           # ST
+    run_train "${SARG[@]}" --mtl     # MTL
 done
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \

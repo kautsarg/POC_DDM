@@ -379,52 +379,103 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
+        # if getattr(args, 'condreg', False):
+        #     if args.supcon == 0:
+        #         models = list(RCFD_MODEL_KEYS)
+        #     elif args.supcon == 1:
+        #         models = list(RCFD_SUPCON_MTL_MODEL_KEYS)
+        #     elif args.supcon == 2:
+        #         models = list(RCFD_BRANCH2_MTL_MODEL_KEYS)
+        #     elif args.supcon == 3:
+        #         models = list(RCFD_BRANCH3_MTL_MODEL_KEYS)
+        # elif args.mtl and getattr(args, 'mtl_cl', False):
+        #     if args.supcon == 0:
+        #         models = list(CL_MTL_MODEL_KEYS)
+        #     elif args.supcon == 1:
+        #         models = list(CL_SUPCON_MTL_MODEL_KEYS)
+        #     elif args.supcon == 2:
+        #         models = list(CL_BRANCH_SUPCON2_MTL_MODEL_KEYS)
+        #     elif args.supcon == 3:
+        #         models = list(CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+        # elif args.mtl:
+        #     if args.supcon == 1:
+        #         models = list(SUPCON_MTL_MODEL_KEYS)
+        #     elif args.supcon == 2:
+        #         models = list(BRANCH_SUPCON2_MTL_MODEL_KEYS)
+        #     elif args.supcon == 3:
+        #         models = list(BRANCH_SUPCON3_MTL_MODEL_KEYS)
+        #     else:
+        #         models = [
+        #             # "cnn_mtl",
+        #             # "gru_mtl", 
+        #             "cnn_gru_dual_mtl",
+        #             # "transformer_mtl", 
+        #             # "cnn_trans_dual_mtl",
+        #             "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
+        #         ]
+        # else:
+        #     if args.supcon == 1:
+        #         models = list(SUPCON_MODEL_KEYS)
+        #     elif args.supcon == 2:
+        #         models = list(BRANCH_SUPCON2_MODEL_KEYS)
+        #     elif args.supcon == 3:
+        #         models = list(BRANCH_SUPCON3_MODEL_KEYS)
+        #     else:
+        #         models = [
+        #             # "knn", "cnn",
+        #             # "gru", 
+        #             "cnn_gru_dual",
+        #             # "transformer", 
+        #             # "cnn_trans_dual",
+        #             "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+        #         ]
+
+
+        #### CNN+GRU DUAL VARIANTS ONLY
+        # CONDITIONAL REGRESSION (RCFD) MODELS
         if getattr(args, 'condreg', False):
-            if args.supcon == 0:
-                models = list(RCFD_MODEL_KEYS)
+            if args.supcon == 0:    
+                models = ['cnn_rcfd_cgd', 'gru_rcfd_cgd', 'trans_rcfd_cgd']
             elif args.supcon == 1:
-                models = list(RCFD_SUPCON_MTL_MODEL_KEYS)
+                models = ['cnn_rcfd_cgd_supcon_mtl', 'gru_rcfd_cgd_supcon_mtl', 'trans_rcfd_cgd_supcon_mtl']
             elif args.supcon == 2:
-                models = list(RCFD_BRANCH2_MTL_MODEL_KEYS)
+                models = ['cnn_rcfd_cgd_supcon2_mtl', 'gru_rcfd_cgd_supcon2_mtl', 'trans_rcfd_cgd_supcon2_mtl']
             elif args.supcon == 3:
-                models = list(RCFD_BRANCH3_MTL_MODEL_KEYS)
+                models = ['cnn_rcfd_cgd_supcon3_mtl', 'gru_rcfd_cgd_supcon3_mtl', 'trans_rcfd_cgd_supcon3_mtl']
+        
+        # CURRICULUM LEARNING (CL) MTL MODELS
         elif args.mtl and getattr(args, 'mtl_cl', False):
             if args.supcon == 0:
-                models = list(CL_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_cl_mtl']
             elif args.supcon == 1:
-                models = list(CL_SUPCON_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_cl_supcon_mtl']
             elif args.supcon == 2:
-                models = list(CL_BRANCH_SUPCON2_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_cl_supcon2_mtl']
             elif args.supcon == 3:
-                models = list(CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_cl_supcon3_mtl']
+        
+        # MULTI-TASK LEARNING (MTL) MODELS
         elif args.mtl:
             if args.supcon == 1:
-                models = list(SUPCON_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon_mtl', 'cnn_gru_dual_cosine_recon_supcon_mtl', 'cnn_gru_dual_attn_recon_supcon_mtl']
             elif args.supcon == 2:
-                models = list(BRANCH_SUPCON2_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon2_mtl', 'cnn_gru_dual_cosine_recon_supcon2_mtl', 'cnn_gru_dual_attn_recon_supcon2_mtl']
             elif args.supcon == 3:
-                models = list(BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon3_mtl', 'cnn_gru_dual_cosine_recon_supcon3_mtl', 'cnn_gru_dual_attn_recon_supcon3_mtl']
             else:
-                models = {
-                    "cnn_mtl",
-                    "gru_mtl", "cnn_gru_dual_mtl",
-                    "transformer_mtl", "cnn_trans_dual_mtl",
-                    "cnn_gru_dual_cosine_recon_mtl", "cnn_gru_dual_attn_recon_mtl",
-                }
+                models = ['cnn_gru_dual_mtl', 'cnn_gru_dual_cosine_recon_mtl', 'cnn_gru_dual_attn_recon_mtl']
+                
+        # SINGLE-TASK (ST) MODELS
         else:
             if args.supcon == 1:
-                models = list(SUPCON_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon', 'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon']
             elif args.supcon == 2:
-                models = list(BRANCH_SUPCON2_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon2', 'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2']
             elif args.supcon == 3:
-                models = list(BRANCH_SUPCON3_MODEL_KEYS)
+                models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3']
             else:
-                models = [
-                    "knn", "cnn",
-                    "gru", "cnn_gru_dual",
-                    "transformer", "cnn_trans_dual",
-                    "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
-                ]
+                models = ['cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
+
 
         if args.rerun_models:
             _allowed = set(args.rerun_models)
