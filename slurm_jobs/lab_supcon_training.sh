@@ -72,6 +72,13 @@ for SC in 0 1 2 3; do
     run_train "${SARG[@]}" --mtl     # MTL
 done
 
+# LABEL CONSOLIDATION (LC) — 4 SC variants × 3 models = 12 models total
+# Combined label+conc target; pure ST (no regression head).
+for SC in 0 1 2 3; do
+    SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+    run_train --lbl_conc "${SARG[@]}"
+done
+
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
     --task_id $SLURM_ARRAY_TASK_ID \
     --exp_folder "$TRAIN_FOLDER" \

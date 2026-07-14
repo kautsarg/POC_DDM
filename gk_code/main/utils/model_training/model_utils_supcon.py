@@ -57,6 +57,23 @@ ALL_SUPCON_KEYS = (SUPCON_MODEL_KEYS + SUPCON_MTL_MODEL_KEYS
                    + BRANCH_SUPCON2_MODEL_KEYS + BRANCH_SUPCON2_MTL_MODEL_KEYS
                    + BRANCH_SUPCON3_MODEL_KEYS + BRANCH_SUPCON3_MTL_MODEL_KEYS)
 
+# Label Consolidation (LC) — same architectures as ST variants, combined label+conc target.
+# n_classes expands from n_labels to n_labels × n_concentrations; no regression head.
+LC_SC0_MODEL_KEYS = [
+    'cnn_gru_dual_lc', 'cnn_gru_dual_cosine_recon_lc', 'cnn_gru_dual_attn_recon_lc',
+]
+LC_SUPCON_MODEL_KEYS = [
+    'cnn_gru_dual_supcon_lc', 'cnn_gru_dual_cosine_recon_supcon_lc', 'cnn_gru_dual_attn_recon_supcon_lc',
+]
+LC_BRANCH_SUPCON2_MODEL_KEYS = [
+    'cnn_gru_dual_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon2_lc',
+]
+LC_BRANCH_SUPCON3_MODEL_KEYS = [
+    'cnn_gru_dual_supcon3_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc', 'cnn_gru_dual_attn_recon_supcon3_lc',
+]
+ALL_LC_KEYS = (LC_SC0_MODEL_KEYS + LC_SUPCON_MODEL_KEYS
+               + LC_BRANCH_SUPCON2_MODEL_KEYS + LC_BRANCH_SUPCON3_MODEL_KEYS)
+
 
 # ======================================================================
 # LOSS

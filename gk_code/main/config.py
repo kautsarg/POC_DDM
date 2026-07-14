@@ -392,6 +392,19 @@ MODEL_KEY_MAP = {
     "gru_rcfd_ctd_supcon3_mtl":   ("y_preds_AC_gru_rcfd_ctd_supcon3_mtl_",   "y_probs_AC_gru_rcfd_ctd_supcon3_mtl_",   "classes_AC_gru_rcfd_ctd_supcon3_mtl_"),
     "trans_rcfd_cgd_supcon3_mtl": ("y_preds_AC_trans_rcfd_cgd_supcon3_mtl_", "y_probs_AC_trans_rcfd_cgd_supcon3_mtl_", "classes_AC_trans_rcfd_cgd_supcon3_mtl_"),
     "trans_rcfd_ctd_supcon3_mtl": ("y_preds_AC_trans_rcfd_ctd_supcon3_mtl_", "y_probs_AC_trans_rcfd_ctd_supcon3_mtl_", "classes_AC_trans_rcfd_ctd_supcon3_mtl_"),
+    # Label Consolidation (LC) — pure ST, combined label+conc target; 4 SC variants × 3 architectures
+    "cnn_gru_dual_lc":                  ("y_preds_AC_cnn_gru_dual_lc_",                  "y_probs_AC_cnn_gru_dual_lc_",                  "classes_AC_cnn_gru_dual_lc_"),
+    "cnn_gru_dual_cosine_recon_lc":     ("y_preds_AC_cnn_gru_dual_cosine_recon_lc_",     "y_probs_AC_cnn_gru_dual_cosine_recon_lc_",     "classes_AC_cnn_gru_dual_cosine_recon_lc_"),
+    "cnn_gru_dual_attn_recon_lc":       ("y_preds_AC_cnn_gru_dual_attn_recon_lc_",       "y_probs_AC_cnn_gru_dual_attn_recon_lc_",       "classes_AC_cnn_gru_dual_attn_recon_lc_"),
+    "cnn_gru_dual_supcon_lc":           ("y_preds_AC_cnn_gru_dual_supcon_lc_",           "y_probs_AC_cnn_gru_dual_supcon_lc_",           "classes_AC_cnn_gru_dual_supcon_lc_"),
+    "cnn_gru_dual_cosine_recon_supcon_lc": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_lc_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_lc_", "classes_AC_cnn_gru_dual_cosine_recon_supcon_lc_"),
+    "cnn_gru_dual_attn_recon_supcon_lc":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_lc_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon_lc_",   "classes_AC_cnn_gru_dual_attn_recon_supcon_lc_"),
+    "cnn_gru_dual_supcon2_lc":          ("y_preds_AC_cnn_gru_dual_supcon2_lc_",          "y_probs_AC_cnn_gru_dual_supcon2_lc_",          "classes_AC_cnn_gru_dual_supcon2_lc_"),
+    "cnn_gru_dual_cosine_recon_supcon2_lc": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_lc_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_lc_", "classes_AC_cnn_gru_dual_cosine_recon_supcon2_lc_"),
+    "cnn_gru_dual_attn_recon_supcon2_lc":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_lc_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_lc_",   "classes_AC_cnn_gru_dual_attn_recon_supcon2_lc_"),
+    "cnn_gru_dual_supcon3_lc":          ("y_preds_AC_cnn_gru_dual_supcon3_lc_",          "y_probs_AC_cnn_gru_dual_supcon3_lc_",          "classes_AC_cnn_gru_dual_supcon3_lc_"),
+    "cnn_gru_dual_cosine_recon_supcon3_lc": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_lc_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_lc_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_lc_"),
+    "cnn_gru_dual_attn_recon_supcon3_lc":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_lc_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_lc_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_lc_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -444,9 +457,15 @@ _RCFD_MODEL_KEYS = {
     "gru_rcfd_cgd_supcon3_mtl", "gru_rcfd_ctd_supcon3_mtl",
     "trans_rcfd_cgd_supcon3_mtl", "trans_rcfd_ctd_supcon3_mtl",
 }
+_LC_MODEL_KEYS = {
+    "cnn_gru_dual_lc", "cnn_gru_dual_cosine_recon_lc", "cnn_gru_dual_attn_recon_lc",
+    "cnn_gru_dual_supcon_lc", "cnn_gru_dual_cosine_recon_supcon_lc", "cnn_gru_dual_attn_recon_supcon_lc",
+    "cnn_gru_dual_supcon2_lc", "cnn_gru_dual_cosine_recon_supcon2_lc", "cnn_gru_dual_attn_recon_supcon2_lc",
+    "cnn_gru_dual_supcon3_lc", "cnn_gru_dual_cosine_recon_supcon3_lc", "cnn_gru_dual_attn_recon_supcon3_lc",
+}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
-           | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS)
+           | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -527,6 +546,19 @@ MODEL_PRINT_MAP = {
     "cnn_rcfd_cgd_supcon3_mtl":   "CNN RCFD CGD SC3",   "cnn_rcfd_ctd_supcon3_mtl":   "CNN RCFD CTD SC3",
     "gru_rcfd_cgd_supcon3_mtl":   "GRU RCFD CGD SC3",   "gru_rcfd_ctd_supcon3_mtl":   "GRU RCFD CTD SC3",
     "trans_rcfd_cgd_supcon3_mtl": "Trans RCFD CGD SC3", "trans_rcfd_ctd_supcon3_mtl": "Trans RCFD CTD SC3",
+    # Label Consolidation (LC) — pure ST, combined label+conc target
+    "cnn_gru_dual_lc":                       "CNN+GRU LC",
+    "cnn_gru_dual_cosine_recon_lc":          "CNN+GRU CosRecon LC",
+    "cnn_gru_dual_attn_recon_lc":            "CNN+GRU AttnRecon LC",
+    "cnn_gru_dual_supcon_lc":                "CNN+GRU LC SC1",
+    "cnn_gru_dual_cosine_recon_supcon_lc":   "CNN+GRU CosRecon LC SC1",
+    "cnn_gru_dual_attn_recon_supcon_lc":     "CNN+GRU AttnRecon LC SC1",
+    "cnn_gru_dual_supcon2_lc":               "CNN+GRU LC SC2",
+    "cnn_gru_dual_cosine_recon_supcon2_lc":  "CNN+GRU CosRecon LC SC2",
+    "cnn_gru_dual_attn_recon_supcon2_lc":    "CNN+GRU AttnRecon LC SC2",
+    "cnn_gru_dual_supcon3_lc":               "CNN+GRU LC SC3",
+    "cnn_gru_dual_cosine_recon_supcon3_lc":  "CNN+GRU CosRecon LC SC3",
+    "cnn_gru_dual_attn_recon_supcon3_lc":    "CNN+GRU AttnRecon LC SC3",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

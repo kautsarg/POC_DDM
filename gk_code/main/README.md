@@ -84,6 +84,29 @@ Use `--cl_phase1_epochs INT` to fix the Phase 1 duration instead of auto-detecti
 
 ---
 
+### Label Consolidation — `--lbl_conc`
+
+Fuses the well label and concentration into a single classification target:
+
+```
+class = f"{label}_{concentration}"   →  "KPC_1M", "KPC_100K", "NDM_10K", …
+```
+
+Output neurons expand from `n_labels` → `n_labels × n_concentrations`. Same model architectures as ST — no regression head. Mutually exclusive with `--mtl`.
+
+3 models per call (same CNN+GRU dual trio). Combine with `--supcon` for contrastive variants:
+
+| Command | SC | Projection target |
+|---|---|---|
+| `--lbl_conc` | SC0 | — |
+| `--lbl_conc --supcon 1` | SC1 | Fused embedding |
+| `--lbl_conc --supcon 2` | SC2 | CNN branch + seq branch |
+| `--lbl_conc --supcon 3` | SC3 | CNN branch + seq branch + fused |
+
+SupCon contrastive loss uses the combined label as anchor — pulls `KPC_1M` clusters together, separates them from `KPC_100K`.
+
+---
+
 ### RCFD — `--condreg` (implies `--mtl`)
 
 Regression-Conditioned Feature Dual: a lightweight early encoder predicts concentration first, then conditions the dual-backbone embedding via FiLM before classification.
@@ -125,6 +148,10 @@ Combine with `--supcon` to add contrastive heads on the conditioned embedding:
 | `--condreg --supcon 1` | RCFD + SC1 | `[cls, reg, proj]` |
 | `--condreg --supcon 2` | RCFD + SC2 | `[cls, reg, cnn_proj, seq_proj]` |
 | `--condreg --supcon 3` | RCFD + SC3 | `[cls, reg, cnn_proj, seq_proj, fused_proj]` |
+| `--lbl_conc` | LC SC0 | `[cls]` |
+| `--lbl_conc --supcon 1` | LC SC1 | `[cls, proj]` |
+| `--lbl_conc --supcon 2` | LC SC2 | `[cls, cnn_proj, seq_proj]` |
+| `--lbl_conc --supcon 3` | LC SC3 | `[cls, cnn_proj, seq_proj, fused_proj]` |
 
 ---
 
@@ -138,3 +165,4 @@ Combine with `--supcon` to add contrastive heads on the conditioned embedding:
 | `--fast_mode` | Disables strict TF op-determinism for faster GRU/LSTM/Transformer training. Seeds are still set; reruns are not bit-exact. |
 | `--k_neighbors INT` | Neighbour count for `cnn_gru_dual_cosine_recon` / `cnn_gru_dual_attn_recon`. Default `24`. |
 | `--cl_phase1_epochs INT` | Fixed Phase 1 epoch count for CL-MTL. Omit to use auto-convergence on `val_reg_mse`. |
+| `--lbl_conc` | Label Consolidation: combine label + concentration into a single classification target. Pure ST, mutually exclusive with `--mtl`. |

@@ -53,6 +53,8 @@ from model_utils_supcon import (
     create_cnn_gru_dual_cl_supcon_mtl_model, create_cnn_trans_dual_cl_supcon_mtl_model,
     create_cnn_gru_dual_cl_supcon2_mtl_model, create_cnn_trans_dual_cl_supcon2_mtl_model,
     create_cnn_gru_dual_cl_supcon3_mtl_model, create_cnn_trans_dual_cl_supcon3_mtl_model,
+    LC_SC0_MODEL_KEYS, LC_SUPCON_MODEL_KEYS,
+    LC_BRANCH_SUPCON2_MODEL_KEYS, LC_BRANCH_SUPCON3_MODEL_KEYS, ALL_LC_KEYS,
 )
 from model_utils_mtl import (
     create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
@@ -729,6 +731,7 @@ _XAI_SAVE_NAME.update({k: k for k in CL_SUPCON_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_RCFD_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
 
 
 
@@ -1148,6 +1151,33 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
+                elif _base_m in LC_SC0_MODEL_KEYS:
+                    # LC SC0: standard dual backbone, n_classes = n_labels × n_conc.
+                    # cosine_recon: same arch, different input curve. attn_recon: (k+1, T) stack.
+                    tf.keras.backend.clear_session()
+                    if _base_m == 'cnn_gru_dual_attn_recon_lc':
+                        model = create_cnn_gru_dual_attn_recon_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    else:
+                        model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, y_train_fit,
+                                  validation_data=(X_val_curve, y_val),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
                 elif _base_m in MTL_MODEL_KEYS:
                     # MTL models: shared backbone + classification head + regression head.
                     # Kendall uncertainty weighting (MTLModel custom train/test_step).
@@ -1529,6 +1559,95 @@ def evaluate_outlier_filters(
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     reg_preds_per_fold.append(reg_pred_orig)
                     reg_trues_per_fold.append(conc_test_raw)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in LC_SUPCON_MODEL_KEYS:
+                    # LC SC1: SupCon on fused embedding; n_classes = n_labels × n_conc. No reg head.
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_attn_recon_supcon_lc':
+                        model = create_cnn_gru_dual_attn_recon_supcon_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    else:
+                        model = create_cnn_gru_dual_supcon_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                    cls_prob, _proj = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in LC_BRANCH_SUPCON2_MODEL_KEYS:
+                    # LC SC2: SupCon on CNN+seq branches; 3 outputs [cls_out, cnn_proj, seq_proj].
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_attn_recon_supcon2_lc':
+                        model = create_cnn_gru_dual_attn_recon_supcon2_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    else:
+                        model = create_cnn_gru_dual_supcon2_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in LC_BRANCH_SUPCON3_MODEL_KEYS:
+                    # LC SC3: SupCon on CNN+seq+fused; 4 outputs [cls_out, cnn_proj, seq_proj, fused_proj].
+                    tf.keras.backend.clear_session()
+                    T = X_train_curve.shape[1]
+                    if _base_m == 'cnn_gru_dual_attn_recon_supcon3_lc':
+                        model = create_cnn_gru_dual_attn_recon_supcon3_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    else:
+                        model = create_cnn_gru_dual_supcon3_model(T, n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
+                    epochs = 500
+                    if _val_split_ok:
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
                 elif _base_m in CL_MTL_MODEL_KEYS:

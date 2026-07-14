@@ -17,7 +17,8 @@ from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
                                 CL_SUPCON_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
-                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS,
+                                ALL_LC_KEYS)
 from model_utils_mtl import CL_MTL_MODEL_KEYS
 from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
                                RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS)
@@ -56,6 +57,18 @@ def load_or_init_results(results_file_path):
         except Exception as e:
             print(f"  -> [WARNING] Results file corrupt ({e}), starting fresh: {results_file_path}")
     return {}
+
+def _lc_label(well_label, conc):
+    """Format combined label+concentration string for LC target encoding."""
+    try:
+        c = float(conc)
+    except (TypeError, ValueError):
+        return f'{well_label}_0'
+    if c <= 0 or np.isnan(c):
+        return f'{well_label}_0'
+    if c >= 1e6:  return f'{well_label}_{c/1e6:.3g}M'
+    if c >= 1e3:  return f'{well_label}_{c/1e3:.3g}K'
+    return f'{well_label}_{c:.3g}'
 
 def make_checkpoint_fn(all_ml_results, results_file_path, clean_title, mode_key):
     def _checkpoint(updated_results):
@@ -98,12 +111,17 @@ if __name__ == "__main__":
                         help="Fixed number of Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence on val_reg_mse.")
     parser.add_argument("--condreg", action="store_true",
                         help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
+    parser.add_argument("--lbl_conc", action="store_true",
+                        help="Label Consolidation: combine label+concentration into one classification target. "
+                             "Pure ST — mutually exclusive with --mtl.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
     if args.condreg:
         args.mtl = True  # --condreg implies --mtl
-    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "") + (f" RCFD SC{args.supcon}" if args.condreg else "")
+    if getattr(args, 'lbl_conc', False) and args.mtl:
+        sys.exit('[!] --lbl_conc is not compatible with --mtl. Use one or the other.')
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "") + (f" RCFD SC{args.supcon}" if args.condreg else "") + (f" LC SC{args.supcon}" if getattr(args, 'lbl_conc', False) else "")
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
@@ -131,9 +149,9 @@ if __name__ == "__main__":
     kinetic_features = training_data["kinetic_features"]
     Y_well = training_data["Y_well"]
 
-    # Load concentration for MTL regression head (sentinel-encoded for missing values).
+    # Load concentration for MTL regression head or LC label encoding.
     y_concentration = None
-    if args.mtl:
+    if args.mtl or getattr(args, 'lbl_conc', False):
         raw_conc = training_data.get("concentration", None)
         if raw_conc is not None:
             _arr = np.asarray(raw_conc, dtype=object)
@@ -188,8 +206,17 @@ if __name__ == "__main__":
         print(f"  [*] No custom mapping found for {exp_path.name}. Retaining default well labels.")
 
     # Convert to encoded labels
-    encoder = LabelEncoder()
-    y_full = encoder.fit_transform(Y_well)
+    if getattr(args, 'lbl_conc', False):
+        if y_concentration is None:
+            sys.exit('[!] --lbl_conc requires concentration data in curve_for_training.joblib.')
+        # Y_well is already post-label_mapping here; combine with concentration
+        combined = [_lc_label(y, c) for y, c in zip(Y_well, y_concentration)]
+        encoder = LabelEncoder()
+        y_full = encoder.fit_transform(combined)
+        print(f'  [LC] {len(set(combined))} combined classes: {sorted(set(combined))}')
+    else:
+        encoder = LabelEncoder()
+        y_full = encoder.fit_transform(Y_well)
 
     # outlier_filters = config.OUTLIER_FILTERS
     # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
@@ -250,8 +277,16 @@ if __name__ == "__main__":
                 _rcfd_result_keys.update([_pk, _probk, _clsk,
                                           f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
 
+        # LC key sets — pure ST; no reg keys.
+        _lc_result_keys = set()
+        for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k in config._LC_MODEL_KEYS:
+                _lc_result_keys.update([_pk, _probk, _clsk])
+
         _is_cl = getattr(args, 'mtl_cl', False)
-        if getattr(args, 'condreg', False):
+        if getattr(args, 'lbl_conc', False):
+            _which = f'LC SC{args.supcon}'
+        elif getattr(args, 'condreg', False):
             _which = f'RCFD SC{args.supcon}'
         elif _is_cl and args.supcon == 0:
             _which = 'CL MTL'
@@ -297,9 +332,10 @@ if __name__ == "__main__":
                         _is_cl_bsc3     = _rk in _cl_bsc3_result_keys
                         _is_any_cl      = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_rcfd        = _rk in _rcfd_result_keys
+                        _is_lc          = _rk in _lc_result_keys
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
                                            and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                           and not _is_any_cl and not _is_rcfd
+                                           and not _is_any_cl and not _is_rcfd and not _is_lc
                                            and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
                         _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
@@ -323,6 +359,8 @@ if __name__ == "__main__":
                         elif args.supcon == 0 and not args.mtl and _is_standard:
                             del _filter_res[_rk]
                         elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'lbl_conc', False) and _is_lc and _mm:
                             del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
@@ -432,8 +470,18 @@ if __name__ == "__main__":
 
 
         #### CNN+GRU DUAL VARIANTS ONLY
+        # LABEL CONSOLIDATION (LC) MODELS
+        if getattr(args, 'lbl_conc', False):
+            _sc_lc = {
+                0: ['cnn_gru_dual_lc', 'cnn_gru_dual_cosine_recon_lc', 'cnn_gru_dual_attn_recon_lc'],
+                1: ['cnn_gru_dual_supcon_lc', 'cnn_gru_dual_cosine_recon_supcon_lc', 'cnn_gru_dual_attn_recon_supcon_lc'],
+                2: ['cnn_gru_dual_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon2_lc'],
+                3: ['cnn_gru_dual_supcon3_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc', 'cnn_gru_dual_attn_recon_supcon3_lc'],
+            }
+            models = _sc_lc[args.supcon]
+
         # CONDITIONAL REGRESSION (RCFD) MODELS
-        if getattr(args, 'condreg', False):
+        elif getattr(args, 'condreg', False):
             if args.supcon == 0:    
                 models = ['cnn_rcfd_cgd', 'gru_rcfd_cgd', 'trans_rcfd_cgd']
             elif args.supcon == 1:
@@ -517,7 +565,7 @@ if __name__ == "__main__":
                 well_ids=well_ids_full,
                 k_neighbors=args.k_neighbors,
                 multitask=args.mtl,
-                y_concentration=y_concentration,
+                y_concentration=(None if getattr(args, 'lbl_conc', False) else y_concentration),
                 cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
             )
 
@@ -568,7 +616,7 @@ if __name__ == "__main__":
                     well_ids=well_ids_full,
                     k_neighbors=args.k_neighbors,
                     multitask=args.mtl,
-                    y_concentration=y_concentration,
+                    y_concentration=(None if getattr(args, 'lbl_conc', False) else y_concentration),
                     cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
                 )
 
