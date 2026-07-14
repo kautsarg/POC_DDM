@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30,a40,a100
+#SBATCH --partition=a40,a100
 #SBATCH --array=0-2,9-10,11-12
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
@@ -79,16 +79,16 @@ for SC in 0 1 2 3; do
     run_train --lbl_conc "${SARG[@]}"
 done
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
-    --task_id $SLURM_ARRAY_TASK_ID \
-    --exp_folder "$TRAIN_FOLDER" \
-    --curve_type ori_curve \
-    --n_splits 5 \
-    --force_rerun
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
+#     --task_id $SLURM_ARRAY_TASK_ID \
+#     --exp_folder "$TRAIN_FOLDER" \
+#     --curve_type ori_curve \
+#     --n_splits 5 \
+#     --force_rerun
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py \
-    --task_id $SLURM_ARRAY_TASK_ID \
-    --exp_folder "$TRAIN_FOLDER" \
-    --force_rerun
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py \
+#     --task_id $SLURM_ARRAY_TASK_ID \
+#     --exp_folder "$TRAIN_FOLDER" \
+#     --force_rerun
 
 deactivate

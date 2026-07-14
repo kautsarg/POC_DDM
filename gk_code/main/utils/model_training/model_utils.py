@@ -745,6 +745,7 @@ def evaluate_outlier_filters(
     coords=None, well_ids=None, k_neighbors=8,
     multitask=False, y_concentration=None,
     cl_phase1_epochs=None,
+    lc_classes=None,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -795,6 +796,11 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_cosine_recon_supcon2_mtl", "cnn_gru_dual_attn_recon_supcon2_mtl",
         "cnn_gru_dual_cosine_recon_supcon3",     "cnn_gru_dual_attn_recon_supcon3",
         "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
+        # LC variants (same spatial neighbour requirements)
+        "cnn_gru_dual_cosine_recon_lc",         "cnn_gru_dual_attn_recon_lc",
+        "cnn_gru_dual_cosine_recon_supcon_lc",  "cnn_gru_dual_attn_recon_supcon_lc",
+        "cnn_gru_dual_cosine_recon_supcon2_lc", "cnn_gru_dual_attn_recon_supcon2_lc",
+        "cnn_gru_dual_cosine_recon_supcon3_lc", "cnn_gru_dual_attn_recon_supcon3_lc",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -986,12 +992,16 @@ def evaluate_outlier_filters(
                 elif _base_m in ('cnn_gru_dual_cosine_recon', 'cnn_gru_dual_cosine_recon_mtl',
                                   'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_cosine_recon_supcon_mtl',
                                   'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_cosine_recon_supcon2_mtl',
-                                  'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_cosine_recon_supcon3_mtl'):
+                                  'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_cosine_recon_supcon3_mtl',
+                                  'cnn_gru_dual_cosine_recon_lc', 'cnn_gru_dual_cosine_recon_supcon_lc',
+                                  'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc'):
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
                 elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
-                                  'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl'):
+                                  'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl',
+                                  'cnn_gru_dual_attn_recon_lc', 'cnn_gru_dual_attn_recon_supcon_lc',
+                                  'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc'):
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -1174,7 +1184,7 @@ def evaluate_outlier_filters(
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     prob = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(prob, axis=1)
-                    cls  = np.unique(y_encoded)
+                    cls  = lc_classes if lc_classes is not None else np.unique(y_encoded)
                     preds.append(pred); probs.append(prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
@@ -1586,7 +1596,7 @@ def evaluate_outlier_filters(
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     cls_prob, _proj = model.predict(X_test_curve, verbose=0)
                     pred = np.argmax(cls_prob, axis=1)
-                    cls  = np.unique(y_encoded)
+                    cls  = lc_classes if lc_classes is not None else np.unique(y_encoded)
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
@@ -1616,7 +1626,7 @@ def evaluate_outlier_filters(
                     raw_out  = model.predict(X_test_curve, verbose=0)
                     cls_prob = raw_out[0]
                     pred = np.argmax(cls_prob, axis=1)
-                    cls  = np.unique(y_encoded)
+                    cls  = lc_classes if lc_classes is not None else np.unique(y_encoded)
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
@@ -1646,7 +1656,7 @@ def evaluate_outlier_filters(
                     raw_out  = model.predict(X_test_curve, verbose=0)
                     cls_prob = raw_out[0]
                     pred = np.argmax(cls_prob, axis=1)
-                    cls  = np.unique(y_encoded)
+                    cls  = lc_classes if lc_classes is not None else np.unique(y_encoded)
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 

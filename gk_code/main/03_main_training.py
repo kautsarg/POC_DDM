@@ -249,7 +249,11 @@ if __name__ == "__main__":
                          else set(BRANCH_SUPCON3_MTL_MODEL_KEYS) if args.supcon == 3 else set())
         _bsc_st_result_keys  = set()
         _bsc_mtl_result_keys = set()
+        _bsc_all_result_keys = set()  # all SC2+SC3 keys — for _is_standard exclusion
         for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k in config._BRANCH_SUPCON_MODEL_KEYS:
+                _bsc_all_result_keys.update([_pk, _probk, _clsk,
+                                              f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
             if _k in _bsc_st_keys:
                 _bsc_st_result_keys.update([_pk, _probk, _clsk])
             elif _k in _bsc_mtl_keys:
@@ -270,18 +274,35 @@ if __name__ == "__main__":
             elif _k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS:
                 _cl_bsc3_result_keys.update([_pk, _probk, _clsk, f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
 
-        # RCFD key sets — one per supcon variant; always MTL (no ST).
+        # RCFD key sets — full set (for _is_standard exclusion) + scoped to --supcon variant.
         _rcfd_result_keys = set()
+        _rcfd_sc_result_keys = set()
         for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
-            if _k in config._RCFD_MODEL_KEYS:
-                _rcfd_result_keys.update([_pk, _probk, _clsk,
-                                          f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            if _k not in config._RCFD_MODEL_KEYS:
+                continue
+            _rcfd_result_keys.update([_pk, _probk, _clsk,
+                                      f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            if _k.endswith('_supcon3_mtl'):   _k_rcfd_sc = 3
+            elif _k.endswith('_supcon2_mtl'): _k_rcfd_sc = 2
+            elif _k.endswith('_supcon_mtl'):  _k_rcfd_sc = 1
+            else:                              _k_rcfd_sc = 0
+            if _k_rcfd_sc == args.supcon:
+                _rcfd_sc_result_keys.update([_pk, _probk, _clsk,
+                                              f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
 
-        # LC key sets — pure ST; no reg keys.
+        # LC key sets — full set (for _is_standard exclusion) + scoped to --supcon variant.
         _lc_result_keys = set()
+        _lc_sc_result_keys = set()
         for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
-            if _k in config._LC_MODEL_KEYS:
-                _lc_result_keys.update([_pk, _probk, _clsk])
+            if _k not in config._LC_MODEL_KEYS:
+                continue
+            _lc_result_keys.update([_pk, _probk, _clsk])
+            if 'supcon3_lc' in _k:   _k_lc_sc = 3
+            elif 'supcon2_lc' in _k: _k_lc_sc = 2
+            elif 'supcon_lc' in _k:  _k_lc_sc = 1
+            else:                     _k_lc_sc = 0
+            if _k_lc_sc == args.supcon:
+                _lc_sc_result_keys.update([_pk, _probk, _clsk])
 
         _is_cl = getattr(args, 'mtl_cl', False)
         if getattr(args, 'lbl_conc', False):
@@ -326,6 +347,7 @@ if __name__ == "__main__":
                                                'y_reg_preds_', 'y_reg_trues_'))
                         _is_bsc_st      = _rk in _bsc_st_result_keys
                         _is_bsc_mtl     = _rk in _bsc_mtl_result_keys
+                        _is_bsc_all     = _rk in _bsc_all_result_keys
                         _is_cl_base     = _rk in _cl_base_result_keys
                         _is_cl_supcon   = _rk in _cl_supcon_result_keys
                         _is_cl_bsc2     = _rk in _cl_bsc2_result_keys
@@ -334,7 +356,7 @@ if __name__ == "__main__":
                         _is_rcfd        = _rk in _rcfd_result_keys
                         _is_lc          = _rk in _lc_result_keys
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
-                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
+                                           and not _is_supcon_mtl and not _is_bsc_all
                                            and not _is_any_cl and not _is_rcfd and not _is_lc
                                            and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
                         _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
@@ -346,21 +368,21 @@ if __name__ == "__main__":
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 3 and _is_cl_bsc3 and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and args.mtl and _is_supcon_mtl and _mm:
+                        elif args.supcon == 1 and args.mtl and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_supcon_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and not args.mtl and _is_supcon_st and _mm:
+                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'lbl_conc', False) and _is_supcon_st and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl and _mm:
+                        elif args.supcon in (2, 3) and args.mtl and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_bsc_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and not args.mtl and _is_bsc_st and _mm:
+                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'lbl_conc', False) and _is_bsc_st and _mm:
                             del _filter_res[_rk]
-                        elif args.mtl and args.supcon == 0 and _is_mtl and _mm:
+                        elif args.mtl and args.supcon == 0 and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 0 and not args.mtl and _is_standard:
+                        elif args.supcon == 0 and not args.mtl and not getattr(args, 'lbl_conc', False) and _is_standard:
                             del _filter_res[_rk]
-                        elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
+                        elif getattr(args, 'condreg', False) and _rk in _rcfd_sc_result_keys and _mm:
                             del _filter_res[_rk]
-                        elif getattr(args, 'lbl_conc', False) and _is_lc and _mm:
+                        elif getattr(args, 'lbl_conc', False) and _rk in _lc_sc_result_keys and _mm:
                             del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
@@ -567,6 +589,7 @@ if __name__ == "__main__":
                 multitask=args.mtl,
                 y_concentration=(None if getattr(args, 'lbl_conc', False) else y_concentration),
                 cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                lc_classes=(encoder.classes_ if getattr(args, 'lbl_conc', False) else None),
             )
 
             all_ml_results[clean_title]["Reference"] = res_ref
@@ -618,6 +641,7 @@ if __name__ == "__main__":
                     multitask=args.mtl,
                     y_concentration=(None if getattr(args, 'lbl_conc', False) else y_concentration),
                     cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                    lc_classes=(encoder.classes_ if getattr(args, 'lbl_conc', False) else None),
                 )
 
             all_ml_results[clean_title]["Native"] = res_native
