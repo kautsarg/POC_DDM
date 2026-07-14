@@ -12,6 +12,15 @@ from model_utils_supcon import (
 )
 
 
+@tf.keras.utils.register_keras_serializable(package='rcfd')
+class _StopGradient(tf.keras.layers.Layer):
+    """Breaks the gradient tape: cls loss cannot update the early encoder via FiLM."""
+    def call(self, x):
+        return tf.stop_gradient(x)
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
 # ======================================================================
 # MODEL CLASSES — pure subclasses for Keras serialization
 # ======================================================================
@@ -82,8 +91,7 @@ def _apply_film_scalar(c_pred, z_raw, emb_dim=96, name_prefix='film'):
        samples (near-zero after BN) produce near-identity FiLM.
     3. Identity init: gamma starts at 1, beta at 0 — epoch-0 is exact identity.
     """
-    c_sg  = tf.keras.layers.Lambda(
-        lambda x: tf.stop_gradient(x), name=f'{name_prefix}_sg')(c_pred)
+    c_sg  = _StopGradient(name=f'{name_prefix}_sg')(c_pred)
     c_bn  = tf.keras.layers.BatchNormalization(name=f'{name_prefix}_c_bn')(c_sg)
     gamma = tf.keras.layers.Dense(
         emb_dim, kernel_initializer='zeros', bias_initializer='ones',

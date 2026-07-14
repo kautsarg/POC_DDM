@@ -91,6 +91,7 @@ def supcon_loss(embeddings, labels, temp=SUPCON_TEMP):
 # MODEL CLASSES
 # ======================================================================
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConModel(tf.keras.Model):
     """ST + SupCon: CE + supervised contrastive loss on projection head."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
@@ -124,6 +125,7 @@ class SupConModel(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics} | {'loss': loss, 'cls_ce': ce, 'supcon': sc}
 
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConMTLModel(MTLModel):
     """MTL + SupCon: UW-SO (CE + MSE) + supervised contrastive loss."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=0.1, **kwargs):
@@ -167,8 +169,7 @@ def _supcon_wrap(inputs, embedding, n_classes,
     cls_feat  = tf.keras.layers.Dense(16, activation='relu',  name='cls_feat')(embedding)
     cls_out   = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
     proj      = tf.keras.layers.Dense(64, activation='relu',  name='proj_hidden')(embedding)
-    proj_norm = tf.keras.layers.Lambda(
-        lambda z: tf.math.l2_normalize(z, axis=1), name='proj')(proj)
+    proj_norm = tf.keras.layers.UnitNormalization(axis=1, name='proj')(proj)
     return SupConModel(inputs=inputs, outputs=[cls_out, proj_norm],
                        supcon_temp=supcon_temp, supcon_lambda=supcon_lambda)
 
@@ -182,8 +183,7 @@ def _supcon_mtl_wrap(inputs, embedding, n_classes,
     reg_h     = tf.keras.layers.Dense(8,  activation='relu',   name='reg_hidden')(reg_feat)
     reg_out   = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
     proj      = tf.keras.layers.Dense(64, activation='relu',   name='proj_hidden')(embedding)
-    proj_norm = tf.keras.layers.Lambda(
-        lambda z: tf.math.l2_normalize(z, axis=1), name='proj')(proj)
+    proj_norm = tf.keras.layers.UnitNormalization(axis=1, name='proj')(proj)
     return SupConMTLModel(inputs=inputs, outputs=[cls_out, reg_out, proj_norm],
                           supcon_temp=supcon_temp, supcon_lambda=supcon_lambda)
 
@@ -287,6 +287,7 @@ def create_cnn_gru_dual_attn_recon_supcon_mtl_model(k_plus_1, T, n_classes, attn
 # BRANCH SUPCON MODEL CLASSES
 # ======================================================================
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConBranch2STModel(tf.keras.Model):
     """v2 ST: CE + SupCon on CNN branch + seq branch (no fused). 3 outputs."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
@@ -320,6 +321,7 @@ class SupConBranch2STModel(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics} | {'loss': loss, 'cls_ce': ce, 'supcon': sc}
 
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConBranch2MTLModel(MTLModel):
     """v2 MTL: UW-SO(CE,MSE) + SupCon on CNN branch + seq branch. 4 outputs."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.05, **kwargs):
@@ -355,6 +357,7 @@ class SupConBranch2MTLModel(MTLModel):
                 | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
 
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConBranch3STModel(tf.keras.Model):
     """v3 ST: 0.7*CE + 0.1*(L_SC_cnn + L_SC_seq + L_SC_fused). 4 outputs."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
@@ -390,6 +393,7 @@ class SupConBranch3STModel(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics} | {'loss': loss, 'cls_ce': ce, 'supcon': sc}
 
 
+@tf.keras.utils.register_keras_serializable(package='supcon')
 class SupConBranch3MTLModel(MTLModel):
     """v3 MTL: UW-SO(CE,MSE) + 0.033*(L_SC_cnn + L_SC_seq + L_SC_fused). 5 outputs."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.033, **kwargs):
@@ -434,8 +438,7 @@ class SupConBranch3MTLModel(MTLModel):
 def _proj_head(embedding, name_prefix):
     """Shared projection head: Dense(64,relu) → L2-normalize."""
     h = tf.keras.layers.Dense(64, activation='relu', name=f'{name_prefix}_proj_hidden')(embedding)
-    return tf.keras.layers.Lambda(
-        lambda z: tf.math.l2_normalize(z, axis=1), name=f'{name_prefix}_proj')(h)
+    return tf.keras.layers.UnitNormalization(axis=1, name=f'{name_prefix}_proj')(h)
 
 
 def _branch2_supcon_wrap(inputs, cnn_emb, seq_emb, fused, n_classes):
@@ -732,8 +735,7 @@ def _cl_supcon_mtl_wrap(inputs, embedding, n_classes,
     reg_h     = tf.keras.layers.Dense(8,  activation='relu',   name='reg_hidden')(reg_feat)
     reg_out   = tf.keras.layers.Dense(1,  activation='linear', name='reg_out')(reg_h)
     proj      = tf.keras.layers.Dense(64, activation='relu',   name='proj_hidden')(embedding)
-    proj_norm = tf.keras.layers.Lambda(
-        lambda z: tf.math.l2_normalize(z, axis=1), name='proj')(proj)
+    proj_norm = tf.keras.layers.UnitNormalization(axis=1, name='proj')(proj)
     return CurriculumSupConMTLModel(inputs=inputs, outputs=[cls_out, reg_out, proj_norm],
                                     supcon_temp=supcon_temp, supcon_lambda=supcon_lambda)
 

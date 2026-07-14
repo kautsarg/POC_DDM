@@ -28,9 +28,40 @@ from model_utils_mtl import CurriculumMTLModel
 from model_utils_rcfd import (RCFDModel, RCFDSupConMTLModel,
                                RCFDBranch2MTLModel, RCFDBranch3MTLModel)
 from model_utils_supcon import (SupConModel, SupConMTLModel,
+                                SupConBranch2STModel, SupConBranch2MTLModel,
+                                SupConBranch3STModel, SupConBranch3MTLModel,
                                 CurriculumSupConMTLModel,
                                 CurriculumBranch2MTLModel,
                                 CurriculumBranch3MTLModel)
+
+import types as _types
+
+# Keras 3 compat for old .keras files with Lambda layers (l2_normalize, stop_gradient, etc.).
+#
+# Problem 1 — Shape inference: Keras 3 Lambda.compute_output_spec tries to call
+# self.function(KerasTensor) to infer output shape.  tf.* ops aren't always
+# KerasTensor-aware in Keras 3, so this fails.  Setting a non-default
+# compute_output_shape makes Keras use the shape-pass-through path instead.
+# NB: Keras builds shapes_dict with key 'inputs_shape'; single-arg path passes
+# values[0] regardless of the parameter name, so 'input_shape' works fine.
+tf.keras.layers.Lambda.compute_output_shape = lambda self, input_shape=None: input_shape
+
+# Problem 2 — Eager call: deserialized lambda bytecode loses its module-level
+# globals (e.g. 'tf' not defined).  Inject tf on first call.
+# IMPORTANT: the replacement must keep the original signature (self, inputs, mask,
+# training) so that Keras 3's CallSpec maps 'inputs' correctly when building
+# shapes_dict for compute_output_shape above.  Using (*args, **kwargs) breaks that.
+_orig_lambda_call = tf.keras.layers.Lambda.call
+
+def _lambda_call_tf_fix(self, inputs, mask=None, training=None):
+    fn = self.function
+    if fn is not None and callable(fn) and 'tf' not in fn.__globals__:
+        self.function = _types.FunctionType(
+            fn.__code__, {**fn.__globals__, 'tf': tf},
+            fn.__name__, fn.__defaults__, fn.__closure__)
+    return _orig_lambda_call(self, inputs, mask=mask, training=training)
+
+tf.keras.layers.Lambda.call = _lambda_call_tf_fix
 
 # Shared colour-blind-safe colormap for well-index class labels (0..N_WELLS-1).
 WELL_CMAP = config.WELL_CMAP
@@ -187,9 +218,14 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
         try:
             model = tf.keras.models.load_model(
                 model_path,
+                safe_mode=False,   # existing .keras files may contain Lambda layers
                 custom_objects={
                     'SupConModel': SupConModel,
                     'SupConMTLModel': SupConMTLModel,
+                    'SupConBranch2STModel': SupConBranch2STModel,
+                    'SupConBranch2MTLModel': SupConBranch2MTLModel,
+                    'SupConBranch3STModel': SupConBranch3STModel,
+                    'SupConBranch3MTLModel': SupConBranch3MTLModel,
                     'CurriculumMTLModel': CurriculumMTLModel,
                     'CurriculumSupConMTLModel': CurriculumSupConMTLModel,
                     'CurriculumBranch2MTLModel': CurriculumBranch2MTLModel,
@@ -238,6 +274,10 @@ def plot_latent_tsne(models, X, X_man, y, dataset_name, save_path, max_samples=2
         model_inputs = [X_batch, X_man_batch] if '_lf' in name else X_batch
 
         z = latent_model.predict(model_inputs, verbose=0)
+        if z.ndim == 1 or z.shape[1] < 2:
+            ax.set_title(f"{name.upper()}\n[latent dim={z.shape[-1]}, skip]", fontsize=10)
+            ax.axis('off')
+            continue
         if z.shape[1] > 2:
             z_2d = TSNE(n_components=2, random_state=0, init='pca', learning_rate='auto').fit_transform(z)
         else:
