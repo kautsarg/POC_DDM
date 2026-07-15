@@ -708,7 +708,8 @@ class StagedSupConSTModel(SupConModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
     def test_step(self, data):
@@ -719,7 +720,8 @@ class StagedSupConSTModel(SupConModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
 
@@ -742,7 +744,8 @@ class StagedBranch2STModel(SupConBranch2STModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
     def test_step(self, data):
@@ -754,7 +757,8 @@ class StagedBranch2STModel(SupConBranch2STModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
 
@@ -778,7 +782,8 @@ class StagedBranch3STModel(SupConBranch3STModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
     def test_step(self, data):
@@ -791,7 +796,8 @@ class StagedBranch3STModel(SupConBranch3STModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        self.compiled_metrics.update_state(y_cls, cls_out)
+        for metric in self.metrics:
+            metric.update_state(y_cls, cls_out)
         return {m.name: m.result() for m in self.metrics} | {'loss': loss}
 
 
