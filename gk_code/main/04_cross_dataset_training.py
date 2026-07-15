@@ -18,7 +18,9 @@ from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
                                 CL_SUPCON_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
-                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS)
+                                CL_BRANCH_SUPCON3_MTL_MODEL_KEYS,
+                                STAGED_SUPCON_MODEL_KEYS, STAGED_BRANCH_SUPCON2_MODEL_KEYS,
+                                STAGED_BRANCH_SUPCON3_MODEL_KEYS, ALL_STAGED_SUPCON_KEYS)
 from model_utils_mtl import CL_MTL_MODEL_KEYS
 from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
                                RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS)
@@ -190,11 +192,17 @@ if __name__ == "__main__":
                         help="Fixed Phase 1 epochs for CL-MTL. If omitted, auto-detects convergence.")
     parser.add_argument("--condreg", action="store_true",
                         help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
+    parser.add_argument("--supcon_staged", action="store_true",
+                        help="2-stage SupCon: Stage 1 SC-only until plateau, Stage 2 CE-only frozen backbone.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
     if args.condreg:
         args.mtl = True  # --condreg implies --mtl
+    if getattr(args, 'supcon_staged', False) and args.mtl:
+        sys.exit('[!] --supcon_staged is ST-only; incompatible with --mtl.')
+    if getattr(args, 'supcon_staged', False) and args.supcon == 0:
+        sys.exit('[!] --supcon_staged requires --supcon 1, 2, or 3.')
 
     set_global_determinism(0, strict=not args.fast_mode)
 
@@ -245,7 +253,14 @@ if __name__ == "__main__":
         # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
         outlier_filters = [None]
 
-        if getattr(args, 'condreg', False):
+        if getattr(args, 'supcon_staged', False):
+            if args.supcon == 1:
+                models = list(STAGED_SUPCON_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(STAGED_BRANCH_SUPCON2_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(STAGED_BRANCH_SUPCON3_MODEL_KEYS)
+        elif getattr(args, 'condreg', False):
             if args.supcon == 0:
                 models = list(RCFD_MODEL_KEYS)
             elif args.supcon == 1:
@@ -358,9 +373,23 @@ if __name__ == "__main__":
                 if _k in config._RCFD_MODEL_KEYS:
                     _rcfd_result_keys.update([_pk, _probk, _clsk,
                                               f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+            _staged_result_keys = set()
+            _staged_sc_result_keys = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k not in config._STAGED_SUPCON_MODEL_KEYS:
+                    continue
+                _staged_result_keys.update([_pk, _probk, _clsk])
+                if 'supcon3_staged' in _k:   _k_staged_sc = 3
+                elif 'supcon2_staged' in _k: _k_staged_sc = 2
+                elif 'supcon_staged' in _k:  _k_staged_sc = 1
+                else:                         _k_staged_sc = 0
+                if _k_staged_sc == args.supcon:
+                    _staged_sc_result_keys.update([_pk, _probk, _clsk])
 
             _is_cl = getattr(args, 'mtl_cl', False)
-            if getattr(args, 'condreg', False):
+            if getattr(args, 'supcon_staged', False):
+                _which = f'Staged SupCon SC{args.supcon}'
+            elif getattr(args, 'condreg', False):
                 _which = f'RCFD SC{args.supcon}'
             elif _is_cl and args.supcon == 0:
                 _which = 'CL MTL'
@@ -401,12 +430,13 @@ if __name__ == "__main__":
                         _is_cl_bsc3    = _rk in _cl_bsc3_result_keys
                         _is_any_cl     = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_rcfd       = _rk in _rcfd_result_keys
+                        _is_staged     = _rk in _staged_result_keys
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                          and not _is_any_cl and not _is_rcfd)
+                                          and not _is_any_cl and not _is_rcfd and not _is_staged)
                         if _is_cl and args.supcon == 0 and _is_cl_base:
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 1 and _is_cl_supcon:
@@ -428,6 +458,8 @@ if __name__ == "__main__":
                         elif args.supcon == 0 and not args.mtl and _is_standard:
                             del _filter_res[_rk]
                         elif getattr(args, 'condreg', False) and _is_rcfd:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys:
                             del _filter_res[_rk]
 
         lofo_splits = build_lofo_splits(combined["dataset_id"])

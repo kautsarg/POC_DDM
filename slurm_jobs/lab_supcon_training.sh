@@ -80,6 +80,12 @@ for SC in 0 1 2 3; do
     run_train --lbl_conc "${SARG[@]}"
 done
 
+# STAGED SUPCON (2-stage ST) — SC variants 1-3 only (requires supcon head).
+# Stage 1: SC loss only until val_loss plateau. Stage 2: CE-only, frozen backbone.
+for SC in 1 2 3; do
+    run_train --supcon_staged --supcon "$SC"
+done
+
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py \
 #     --task_id $SLURM_ARRAY_TASK_ID \
 #     --exp_folder "$TRAIN_FOLDER" \

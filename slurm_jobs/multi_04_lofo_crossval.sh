@@ -26,5 +26,8 @@ python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.p
 python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon 1
 python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon 2
 python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon 3
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon_staged --supcon 1
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon_staged --supcon 2
+python  -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract/ --task_id 0 --supcon_staged --supcon 3
 
 deactivate

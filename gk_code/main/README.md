@@ -107,6 +107,32 @@ SupCon contrastive loss uses the combined label as anchor — pulls `KPC_1M` clu
 
 ---
 
+### Staged SupCon — `--supcon_staged --supcon {1|2|3}`
+
+Two-stage decoupled training: backbone and projectors learn a compact class-aligned representation first, then only the classification head is trained on fixed features.
+
+| Stage | Loss | Trainable layers | End condition |
+|---|---|---|---|
+| 1 | SC loss only | All layers | `val_loss` plateau (auto) or `--cl_phase1_epochs N` |
+| 2 | Cross-entropy only | `cls_feat`, `cls_out` | EarlyStopping (patience=100) |
+
+CNN+GRU dual only. Mutually exclusive with `--mtl`. Requires `--supcon 1`, `2`, or `3`.
+
+```bash
+# SC1, auto plateau detection (requires a val split):
+python 03_main_training.py ... --supcon_staged --supcon 1
+
+# SC2, fixed 150-epoch Stage 1:
+python 03_main_training.py ... --supcon_staged --supcon 2 --cl_phase1_epochs 150
+
+# SC3, no val split (cl_phase1_epochs required):
+python 03_main_training.py ... --supcon_staged --supcon 3 --cl_phase1_epochs 100 --n_splits 5
+```
+
+Without a val split, `--cl_phase1_epochs` is required (auto-plateau detection needs `val_loss`). The auto mode monitors Stage 1 `val_loss` with `min_phase1_epochs=30` and `patience=15`.
+
+---
+
 ### RCFD — `--condreg` (implies `--mtl`)
 
 Regression-Conditioned Feature Dual: a lightweight early encoder predicts concentration first, then conditions the dual-backbone embedding via FiLM before classification.
