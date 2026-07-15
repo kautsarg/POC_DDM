@@ -447,11 +447,11 @@ if __name__ == "__main__":
                             del _filter_res[_rk]
                         elif args.supcon == 1 and args.mtl and _is_supcon_mtl:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and not args.mtl and _is_supcon_st:
+                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_supcon_st:
                             del _filter_res[_rk]
                         elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and not args.mtl and _is_bsc_st:
+                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_bsc_st:
                             del _filter_res[_rk]
                         elif args.mtl and args.supcon == 0 and _is_mtl:
                             del _filter_res[_rk]

@@ -327,7 +327,9 @@ if __name__ == "__main__":
                 _staged_sc_result_keys.update([_pk, _probk, _clsk])
 
         _is_cl = getattr(args, 'mtl_cl', False)
-        if getattr(args, 'lbl_conc', False):
+        if getattr(args, 'supcon_staged', False):
+            _which = f'Staged SupCon SC{args.supcon}'
+        elif getattr(args, 'lbl_conc', False):
             _which = f'LC SC{args.supcon}'
         elif getattr(args, 'condreg', False):
             _which = f'RCFD SC{args.supcon}'
@@ -394,11 +396,11 @@ if __name__ == "__main__":
                             del _filter_res[_rk]
                         elif args.supcon == 1 and args.mtl and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_supcon_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'lbl_conc', False) and _is_supcon_st and _mm:
+                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'lbl_conc', False) and not getattr(args, 'supcon_staged', False) and _is_supcon_st and _mm:
                             del _filter_res[_rk]
                         elif args.supcon in (2, 3) and args.mtl and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_bsc_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'lbl_conc', False) and _is_bsc_st and _mm:
+                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'lbl_conc', False) and not getattr(args, 'supcon_staged', False) and _is_bsc_st and _mm:
                             del _filter_res[_rk]
                         elif args.mtl and args.supcon == 0 and not getattr(args, 'mtl_cl', False) and not getattr(args, 'condreg', False) and _is_mtl and _mm:
                             del _filter_res[_rk]
