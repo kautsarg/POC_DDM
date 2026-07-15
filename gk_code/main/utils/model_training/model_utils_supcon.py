@@ -74,6 +74,26 @@ LC_BRANCH_SUPCON3_MODEL_KEYS = [
 ALL_LC_KEYS = (LC_SC0_MODEL_KEYS + LC_SUPCON_MODEL_KEYS
                + LC_BRANCH_SUPCON2_MODEL_KEYS + LC_BRANCH_SUPCON3_MODEL_KEYS)
 
+# Staged SupCon (2-stage ST: SC-only Phase 1, CE-only frozen Phase 2). CNN+GRU dual only.
+STAGED_SUPCON_MODEL_KEYS = [
+    'cnn_gru_dual_supcon_staged',
+    'cnn_gru_dual_cosine_recon_supcon_staged',
+    'cnn_gru_dual_attn_recon_supcon_staged',
+]
+STAGED_BRANCH_SUPCON2_MODEL_KEYS = [
+    'cnn_gru_dual_supcon2_staged',
+    'cnn_gru_dual_cosine_recon_supcon2_staged',
+    'cnn_gru_dual_attn_recon_supcon2_staged',
+]
+STAGED_BRANCH_SUPCON3_MODEL_KEYS = [
+    'cnn_gru_dual_supcon3_staged',
+    'cnn_gru_dual_cosine_recon_supcon3_staged',
+    'cnn_gru_dual_attn_recon_supcon3_staged',
+]
+ALL_STAGED_SUPCON_KEYS = (STAGED_SUPCON_MODEL_KEYS
+                          + STAGED_BRANCH_SUPCON2_MODEL_KEYS
+                          + STAGED_BRANCH_SUPCON3_MODEL_KEYS)
+
 
 # ======================================================================
 # LOSS
@@ -594,6 +614,256 @@ def create_cnn_gru_dual_attn_recon_supcon3_mtl_model(k_plus_1, T, n_classes, att
     cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
         stack_input, T, attn_dim, return_branches=True)
     return _branch3_supcon_mtl_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
+
+
+# ======================================================================
+# STAGED SUPCON (2-STAGE ST)
+# Stage 1: SC loss only → backbone learns class-compact representation.
+# Stage 2: CE loss only, backbone+projectors frozen → linear-probe on fixed features.
+# ======================================================================
+
+_STAGED_HEAD_LAYERS = frozenset({'cls_feat', 'cls_out'})
+
+
+def _freeze_backbone_staged_supcon(model):
+    """Freeze all layers except cls_feat/cls_out; transition to CE-only Stage 2."""
+    for layer in model.layers:
+        layer.trainable = layer.name in _STAGED_HEAD_LAYERS
+    model.curriculum_phase.assign(1)
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0),
+                  metrics=['accuracy'], jit_compile=False)
+    model.make_train_function(force=True)
+
+
+class FixedPhaseTransitionSTCallback(tf.keras.callbacks.Callback):
+    """Fixed-epoch Stage 1→2 transition for staged SupCon (ST only)."""
+    def __init__(self, phase1_epochs, early_stop_cb=None, rlrp_cb=None):
+        super().__init__()
+        self.phase1_epochs = phase1_epochs
+        self.early_stop_cb = early_stop_cb
+        self.rlrp_cb = rlrp_cb
+        self._transitioned = False
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if not self._transitioned and epoch == self.phase1_epochs:
+            self._transitioned = True
+            _freeze_backbone_staged_supcon(self.model)
+            if self.early_stop_cb is not None:
+                self.early_stop_cb.best = float('inf')
+            if self.rlrp_cb is not None:
+                self.rlrp_cb.best = float('inf')
+            print(f'\n[StagedSupCon] Phase 1→2 fixed at epoch {epoch}')
+
+
+class AutoPhaseTransitionSTCallback(tf.keras.callbacks.Callback):
+    """Monitors val_loss plateau in Stage 1; freezes backbone to start Stage 2."""
+    def __init__(self, min_phase1_epochs=30, patience=15,
+                 early_stop_cb=None, rlrp_cb=None):
+        super().__init__()
+        self.min_phase1_epochs = min_phase1_epochs
+        self.patience = patience
+        self.early_stop_cb = early_stop_cb
+        self.rlrp_cb = rlrp_cb
+        self._best = np.inf
+        self._wait = 0
+        self._transitioned = False
+
+    def on_epoch_end(self, epoch, logs=None):
+        if self._transitioned or epoch < self.min_phase1_epochs:
+            return
+        val_loss = (logs or {}).get('val_loss', np.inf)
+        if val_loss < self._best - 1e-4:
+            self._best = val_loss
+            self._wait = 0
+        else:
+            self._wait += 1
+            if self._wait >= self.patience:
+                print(f'\n[StagedSupCon] Phase 1→2 at epoch {epoch + 1} '
+                      f'(val_loss={val_loss:.4f}); freezing backbone.')
+                _freeze_backbone_staged_supcon(self.model)
+                if self.early_stop_cb is not None:
+                    self.early_stop_cb.best = np.inf
+                    self.early_stop_cb.wait = 0
+                if self.rlrp_cb is not None:
+                    self.rlrp_cb.best = np.inf
+                    self.rlrp_cb.wait = 0
+                self._transitioned = True
+
+
+@tf.keras.utils.register_keras_serializable(package='staged_supcon')
+class StagedSupConSTModel(SupConModel):
+    """SC1 staged: phase 0 = SC loss only; phase 1 = CE only (backbone frozen)."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        with tf.GradientTape() as tape:
+            cls_out, proj_norm = self(x, training=True)
+            sc = supcon_loss(proj_norm, y_cls, self.supcon_temp)
+            ce = tf.reduce_mean(
+                tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+            loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        grads = tape.gradient(loss, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        cls_out, proj_norm = self(x, training=False)
+        sc = supcon_loss(proj_norm, y_cls, self.supcon_temp)
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+
+@tf.keras.utils.register_keras_serializable(package='staged_supcon2')
+class StagedBranch2STModel(SupConBranch2STModel):
+    """SC2 staged: phase 0 = SC_cnn + SC_seq; phase 1 = CE only (backbone frozen)."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        with tf.GradientTape() as tape:
+            cls_out, cnn_proj, seq_proj = self(x, training=True)
+            sc = (supcon_loss(cnn_proj, y_cls, self.supcon_temp)
+                  + supcon_loss(seq_proj, y_cls, self.supcon_temp))
+            ce = tf.reduce_mean(
+                tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+            loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        grads = tape.gradient(loss, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        cls_out, cnn_proj, seq_proj = self(x, training=False)
+        sc = (supcon_loss(cnn_proj, y_cls, self.supcon_temp)
+              + supcon_loss(seq_proj, y_cls, self.supcon_temp))
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+
+@tf.keras.utils.register_keras_serializable(package='staged_supcon3')
+class StagedBranch3STModel(SupConBranch3STModel):
+    """SC3 staged: phase 0 = SC_cnn + SC_seq + SC_fused; phase 1 = CE only."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.curriculum_phase = tf.Variable(0, trainable=False, dtype=tf.int32)
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        with tf.GradientTape() as tape:
+            cls_out, cnn_proj, seq_proj, fused_proj = self(x, training=True)
+            sc = (supcon_loss(cnn_proj,   y_cls, self.supcon_temp)
+                  + supcon_loss(seq_proj,   y_cls, self.supcon_temp)
+                  + supcon_loss(fused_proj, y_cls, self.supcon_temp))
+            ce = tf.reduce_mean(
+                tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+            loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        grads = tape.gradient(loss, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        y_cls = y_dict['cls_out']
+        cls_out, cnn_proj, seq_proj, fused_proj = self(x, training=False)
+        sc = (supcon_loss(cnn_proj,   y_cls, self.supcon_temp)
+              + supcon_loss(seq_proj,   y_cls, self.supcon_temp)
+              + supcon_loss(fused_proj, y_cls, self.supcon_temp))
+        ce = tf.reduce_mean(
+            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
+        loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
+        self.compiled_metrics.update_state(y_cls, cls_out)
+        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+
+
+def _staged_supcon_wrap(inputs, embedding, n_classes):
+    """Attach SC1 head (cls + single proj) and return StagedSupConSTModel."""
+    cls_feat  = tf.keras.layers.Dense(16, activation='relu',  name='cls_feat')(embedding)
+    cls_out   = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    proj      = tf.keras.layers.Dense(64, activation='relu',  name='proj_hidden')(embedding)
+    proj_norm = tf.keras.layers.UnitNormalization(axis=1, name='proj')(proj)
+    return StagedSupConSTModel(inputs=inputs, outputs=[cls_out, proj_norm])
+
+
+def _staged_branch2_wrap(inputs, cnn_emb, seq_emb, fused, n_classes):
+    """Attach SC2 head (cls + cnn_proj + seq_proj) and return StagedBranch2STModel."""
+    cls_feat = tf.keras.layers.Dense(16, activation='relu', name='cls_feat')(fused)
+    cls_out  = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(seq_emb, 'seq')
+    return StagedBranch2STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj])
+
+
+def _staged_branch3_wrap(inputs, cnn_emb, seq_emb, fused, n_classes):
+    """Attach SC3 head (cls + cnn/seq/fused proj) and return StagedBranch3STModel."""
+    cls_feat   = tf.keras.layers.Dense(16, activation='relu', name='cls_feat')(fused)
+    cls_out    = tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(cls_feat)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(seq_emb, 'seq')
+    fused_proj = _proj_head(fused,   'fused')
+    return StagedBranch3STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
+
+
+# ---- Staged SupCon factory functions (CNN+GRU dual only) ----
+# cosine_recon variants share the same factory as the canonical variant
+# (different input data, identical architecture) — same pattern as existing supcon.
+
+def create_cnn_gru_dual_supcon_staged_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1))
+    return _staged_supcon_wrap(inputs, _build_cnn_gru_dual_branches_mtl(inputs), n_classes)
+
+
+def create_cnn_gru_dual_attn_recon_supcon_staged_model(k_plus_1, T, n_classes, attn_dim=16):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    return _staged_supcon_wrap(
+        stack_input,
+        _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim),
+        n_classes)
+
+
+def create_cnn_gru_dual_supcon2_staged_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    return _staged_branch2_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_cnn_gru_dual_attn_recon_supcon2_staged_model(k_plus_1, T, n_classes, attn_dim=16):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
+        stack_input, T, attn_dim, return_branches=True)
+    return _staged_branch2_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_cnn_gru_dual_supcon3_staged_model(T, n_classes):
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    return _staged_branch3_wrap(inputs, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_cnn_gru_dual_attn_recon_supcon3_staged_model(k_plus_1, T, n_classes, attn_dim=16):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
+        stack_input, T, attn_dim, return_branches=True)
+    return _staged_branch3_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
 
 
 # ======================================================================

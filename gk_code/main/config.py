@@ -405,6 +405,18 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_supcon3_lc":          ("y_preds_AC_cnn_gru_dual_supcon3_lc_",          "y_probs_AC_cnn_gru_dual_supcon3_lc_",          "classes_AC_cnn_gru_dual_supcon3_lc_"),
     "cnn_gru_dual_cosine_recon_supcon3_lc": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_lc_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_lc_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_lc_"),
     "cnn_gru_dual_attn_recon_supcon3_lc":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_lc_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_lc_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_lc_"),
+    # Staged SupCon ST — SC1
+    "cnn_gru_dual_supcon_staged":               ("y_preds_AC_cnn_gru_dual_supcon_staged_",               "y_probs_AC_cnn_gru_dual_supcon_staged_",               "classes_AC_cnn_gru_dual_supcon_staged_"),
+    "cnn_gru_dual_cosine_recon_supcon_staged":  ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_staged_",  "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_staged_",  "classes_AC_cnn_gru_dual_cosine_recon_supcon_staged_"),
+    "cnn_gru_dual_attn_recon_supcon_staged":    ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_staged_",    "y_probs_AC_cnn_gru_dual_attn_recon_supcon_staged_",    "classes_AC_cnn_gru_dual_attn_recon_supcon_staged_"),
+    # SC2 staged
+    "cnn_gru_dual_supcon2_staged":              ("y_preds_AC_cnn_gru_dual_supcon2_staged_",              "y_probs_AC_cnn_gru_dual_supcon2_staged_",              "classes_AC_cnn_gru_dual_supcon2_staged_"),
+    "cnn_gru_dual_cosine_recon_supcon2_staged": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon2_staged_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon2_staged_", "classes_AC_cnn_gru_dual_cosine_recon_supcon2_staged_"),
+    "cnn_gru_dual_attn_recon_supcon2_staged":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon2_staged_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon2_staged_",   "classes_AC_cnn_gru_dual_attn_recon_supcon2_staged_"),
+    # SC3 staged
+    "cnn_gru_dual_supcon3_staged":              ("y_preds_AC_cnn_gru_dual_supcon3_staged_",              "y_probs_AC_cnn_gru_dual_supcon3_staged_",              "classes_AC_cnn_gru_dual_supcon3_staged_"),
+    "cnn_gru_dual_cosine_recon_supcon3_staged": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_staged_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_staged_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_staged_"),
+    "cnn_gru_dual_attn_recon_supcon3_staged":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_staged_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_staged_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_staged_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -463,9 +475,15 @@ _LC_MODEL_KEYS = {
     "cnn_gru_dual_supcon2_lc", "cnn_gru_dual_cosine_recon_supcon2_lc", "cnn_gru_dual_attn_recon_supcon2_lc",
     "cnn_gru_dual_supcon3_lc", "cnn_gru_dual_cosine_recon_supcon3_lc", "cnn_gru_dual_attn_recon_supcon3_lc",
 }
+_STAGED_SUPCON_MODEL_KEYS = {
+    "cnn_gru_dual_supcon_staged", "cnn_gru_dual_cosine_recon_supcon_staged", "cnn_gru_dual_attn_recon_supcon_staged",
+    "cnn_gru_dual_supcon2_staged", "cnn_gru_dual_cosine_recon_supcon2_staged", "cnn_gru_dual_attn_recon_supcon2_staged",
+    "cnn_gru_dual_supcon3_staged", "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
+}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
-           | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS)
+           | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS
+           | _STAGED_SUPCON_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -559,6 +577,16 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_supcon3_lc":               "CNN+GRU LC SC3",
     "cnn_gru_dual_cosine_recon_supcon3_lc":  "CNN+GRU CosRecon LC SC3",
     "cnn_gru_dual_attn_recon_supcon3_lc":    "CNN+GRU AttnRecon LC SC3",
+    # Staged SupCon ST
+    "cnn_gru_dual_supcon_staged":               "CNN+GRU SC1 Staged",
+    "cnn_gru_dual_cosine_recon_supcon_staged":  "CNN+GRU CosRecon SC1 Staged",
+    "cnn_gru_dual_attn_recon_supcon_staged":    "CNN+GRU AttnRecon SC1 Staged",
+    "cnn_gru_dual_supcon2_staged":              "CNN+GRU SC2 Staged",
+    "cnn_gru_dual_cosine_recon_supcon2_staged": "CNN+GRU CosRecon SC2 Staged",
+    "cnn_gru_dual_attn_recon_supcon2_staged":   "CNN+GRU AttnRecon SC2 Staged",
+    "cnn_gru_dual_supcon3_staged":              "CNN+GRU SC3 Staged",
+    "cnn_gru_dual_cosine_recon_supcon3_staged": "CNN+GRU CosRecon SC3 Staged",
+    "cnn_gru_dual_attn_recon_supcon3_staged":   "CNN+GRU AttnRecon SC3 Staged",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

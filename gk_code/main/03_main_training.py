@@ -18,7 +18,9 @@ from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 CL_SUPCON_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON2_MTL_MODEL_KEYS,
                                 CL_BRANCH_SUPCON3_MTL_MODEL_KEYS,
-                                ALL_LC_KEYS)
+                                ALL_LC_KEYS,
+                                STAGED_SUPCON_MODEL_KEYS, STAGED_BRANCH_SUPCON2_MODEL_KEYS,
+                                STAGED_BRANCH_SUPCON3_MODEL_KEYS, ALL_STAGED_SUPCON_KEYS)
 from model_utils_mtl import CL_MTL_MODEL_KEYS
 from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
                                RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS)
@@ -114,6 +116,8 @@ if __name__ == "__main__":
     parser.add_argument("--lbl_conc", action="store_true",
                         help="Label Consolidation: combine label+concentration into one classification target. "
                              "Pure ST — mutually exclusive with --mtl.")
+    parser.add_argument("--supcon_staged", action="store_true",
+                        help="2-stage SupCon: Stage 1 SC-only until plateau, Stage 2 CE-only frozen backbone.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
@@ -121,7 +125,11 @@ if __name__ == "__main__":
         args.mtl = True  # --condreg implies --mtl
     if getattr(args, 'lbl_conc', False) and args.mtl:
         sys.exit('[!] --lbl_conc is not compatible with --mtl. Use one or the other.')
-    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "") + (f" RCFD SC{args.supcon}" if args.condreg else "") + (f" LC SC{args.supcon}" if getattr(args, 'lbl_conc', False) else "")
+    if getattr(args, 'supcon_staged', False) and args.mtl:
+        sys.exit('[!] --supcon_staged is ST-only; incompatible with --mtl.')
+    if getattr(args, 'supcon_staged', False) and args.supcon == 0:
+        sys.exit('[!] --supcon_staged requires --supcon 1, 2, or 3.')
+    _mode = ("MTL" if args.mtl else "ST") + (f" SupCon-{args.supcon}" if args.supcon else "") + (" CL" if args.mtl_cl else "") + (f" RCFD SC{args.supcon}" if args.condreg else "") + (f" LC SC{args.supcon}" if getattr(args, 'lbl_conc', False) else "") + (" Staged" if getattr(args, 'supcon_staged', False) else "")
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
@@ -304,6 +312,20 @@ if __name__ == "__main__":
             if _k_lc_sc == args.supcon:
                 _lc_sc_result_keys.update([_pk, _probk, _clsk])
 
+        # Staged SupCon key sets — full set (for _is_standard exclusion) + scoped to --supcon variant.
+        _staged_result_keys = set()
+        _staged_sc_result_keys = set()
+        for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+            if _k not in config._STAGED_SUPCON_MODEL_KEYS:
+                continue
+            _staged_result_keys.update([_pk, _probk, _clsk])
+            if 'supcon3_staged' in _k:   _k_staged_sc = 3
+            elif 'supcon2_staged' in _k: _k_staged_sc = 2
+            elif 'supcon_staged' in _k:  _k_staged_sc = 1
+            else:                         _k_staged_sc = 0
+            if _k_staged_sc == args.supcon:
+                _staged_sc_result_keys.update([_pk, _probk, _clsk])
+
         _is_cl = getattr(args, 'mtl_cl', False)
         if getattr(args, 'lbl_conc', False):
             _which = f'LC SC{args.supcon}'
@@ -355,9 +377,11 @@ if __name__ == "__main__":
                         _is_any_cl      = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_rcfd        = _rk in _rcfd_result_keys
                         _is_lc          = _rk in _lc_result_keys
+                        _is_staged      = _rk in _staged_result_keys
                         _is_standard    = (_is_model_key and not _is_mtl and not _is_supcon_st
                                            and not _is_supcon_mtl and not _is_bsc_all
                                            and not _is_any_cl and not _is_rcfd and not _is_lc
+                                           and not _is_staged
                                            and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
                         _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
@@ -383,6 +407,8 @@ if __name__ == "__main__":
                         elif getattr(args, 'condreg', False) and _rk in _rcfd_sc_result_keys and _mm:
                             del _filter_res[_rk]
                         elif getattr(args, 'lbl_conc', False) and _rk in _lc_sc_result_keys and _mm:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys and _mm:
                             del _filter_res[_rk]
 
     total_datasets = len(dataset_name)
@@ -492,8 +518,17 @@ if __name__ == "__main__":
 
 
         #### CNN+GRU DUAL VARIANTS ONLY
+        # STAGED SUPCON (2-STAGE ST) MODELS
+        if getattr(args, 'supcon_staged', False):
+            if args.supcon == 1:
+                models = list(STAGED_SUPCON_MODEL_KEYS)
+            elif args.supcon == 2:
+                models = list(STAGED_BRANCH_SUPCON2_MODEL_KEYS)
+            elif args.supcon == 3:
+                models = list(STAGED_BRANCH_SUPCON3_MODEL_KEYS)
+
         # LABEL CONSOLIDATION (LC) MODELS
-        if getattr(args, 'lbl_conc', False):
+        elif getattr(args, 'lbl_conc', False):
             _sc_lc = {
                 0: ['cnn_gru_dual_lc', 'cnn_gru_dual_cosine_recon_lc', 'cnn_gru_dual_attn_recon_lc'],
                 1: ['cnn_gru_dual_supcon_lc', 'cnn_gru_dual_cosine_recon_supcon_lc', 'cnn_gru_dual_attn_recon_supcon_lc'],

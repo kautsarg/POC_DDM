@@ -70,6 +70,7 @@ for SC in 0 1 2 3; do
     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
     run_train "${SARG[@]}"           # ST
     run_train "${SARG[@]}" --mtl     # MTL
+    run_train "${SARG[@]}" --mtl_cl  # MTL CL
 done
 
 # LABEL CONSOLIDATION (LC) — 4 SC variants × 3 models = 12 models total

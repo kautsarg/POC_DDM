@@ -55,6 +55,16 @@ from model_utils_supcon import (
     create_cnn_gru_dual_cl_supcon3_mtl_model, create_cnn_trans_dual_cl_supcon3_mtl_model,
     LC_SC0_MODEL_KEYS, LC_SUPCON_MODEL_KEYS,
     LC_BRANCH_SUPCON2_MODEL_KEYS, LC_BRANCH_SUPCON3_MODEL_KEYS, ALL_LC_KEYS,
+    STAGED_SUPCON_MODEL_KEYS, STAGED_BRANCH_SUPCON2_MODEL_KEYS,
+    STAGED_BRANCH_SUPCON3_MODEL_KEYS, ALL_STAGED_SUPCON_KEYS,
+    _freeze_backbone_staged_supcon,
+    AutoPhaseTransitionSTCallback, FixedPhaseTransitionSTCallback,
+    create_cnn_gru_dual_supcon_staged_model,
+    create_cnn_gru_dual_attn_recon_supcon_staged_model,
+    create_cnn_gru_dual_supcon2_staged_model,
+    create_cnn_gru_dual_attn_recon_supcon2_staged_model,
+    create_cnn_gru_dual_supcon3_staged_model,
+    create_cnn_gru_dual_attn_recon_supcon3_staged_model,
 )
 from model_utils_mtl import (
     create_cnn_mtl_model, create_lstm_mtl_model, create_gru_mtl_model,
@@ -732,6 +742,7 @@ _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON2_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_RCFD_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in ALL_STAGED_SUPCON_KEYS})
 
 
 
@@ -1657,6 +1668,70 @@ def evaluate_outlier_filters(
                     cls_prob = raw_out[0]
                     pred = np.argmax(cls_prob, axis=1)
                     cls  = lc_classes if lc_classes is not None else np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in ALL_STAGED_SUPCON_KEYS:
+                    # 2-stage staged SupCon (ST only).
+                    # Stage 1: SC loss only until plateau. Stage 2: CE only, backbone frozen.
+                    tf.keras.backend.clear_session()
+                    if _base_m in STAGED_SUPCON_MODEL_KEYS:
+                        if 'attn_recon' in _base_m:
+                            model = create_cnn_gru_dual_attn_recon_supcon_staged_model(
+                                X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                        else:
+                            model = create_cnn_gru_dual_supcon_staged_model(
+                                X_train_curve.shape[1], n_classes)
+                    elif _base_m in STAGED_BRANCH_SUPCON2_MODEL_KEYS:
+                        if 'attn_recon' in _base_m:
+                            model = create_cnn_gru_dual_attn_recon_supcon2_staged_model(
+                                X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                        else:
+                            model = create_cnn_gru_dual_supcon2_staged_model(
+                                X_train_curve.shape[1], n_classes)
+                    elif _base_m in STAGED_BRANCH_SUPCON3_MODEL_KEYS:
+                        if 'attn_recon' in _base_m:
+                            model = create_cnn_gru_dual_attn_recon_supcon3_staged_model(
+                                X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                        else:
+                            model = create_cnn_gru_dual_supcon3_staged_model(
+                                X_train_curve.shape[1], n_classes)
+                    model.compile(
+                        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0),
+                        metrics=['accuracy'], jit_compile=False)
+                    epochs = 500
+                    if _val_split_ok:
+                        _st_es   = tf.keras.callbacks.EarlyStopping(
+                            monitor='val_loss', patience=100, restore_best_weights=True)
+                        _st_rlrp = tf.keras.callbacks.ReduceLROnPlateau(
+                            monitor='val_loss', factor=0.5, patience=30, min_lr=1e-5)
+                        _st_phase_cb = (
+                            FixedPhaseTransitionSTCallback(
+                                cl_phase1_epochs, early_stop_cb=_st_es, rlrp_cb=_st_rlrp)
+                            if cl_phase1_epochs else
+                            AutoPhaseTransitionSTCallback(
+                                min_phase1_epochs=30, patience=15,
+                                early_stop_cb=_st_es, rlrp_cb=_st_rlrp))
+                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                                  validation_data=(X_val_curve, {'cls_out': y_val}),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_st_es, _st_rlrp, _st_phase_cb])
+                    else:
+                        if not cl_phase1_epochs:
+                            raise ValueError(
+                                f'[{_base_m}] No val split; set --cl_phase1_epochs for Stage 1.')
+                        _st_phase_cb = FixedPhaseTransitionSTCallback(cl_phase1_epochs)
+                        model.fit(X_train_curve, {'cls_out': y_train},
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=[_st_phase_cb])
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
                     tf.keras.backend.clear_session()
 
