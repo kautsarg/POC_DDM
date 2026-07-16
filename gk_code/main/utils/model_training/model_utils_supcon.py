@@ -708,9 +708,9 @@ class StagedSupConSTModel(SupConModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -720,9 +720,9 @@ class StagedSupConSTModel(SupConModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
 
 @tf.keras.utils.register_keras_serializable(package='staged_supcon2')
@@ -744,9 +744,9 @@ class StagedBranch2STModel(SupConBranch2STModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -757,9 +757,9 @@ class StagedBranch2STModel(SupConBranch2STModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
 
 @tf.keras.utils.register_keras_serializable(package='staged_supcon3')
@@ -782,9 +782,9 @@ class StagedBranch3STModel(SupConBranch3STModel):
             loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -796,9 +796,9 @@ class StagedBranch3STModel(SupConBranch3STModel):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         loss = tf.cond(tf.equal(self.curriculum_phase, 0), lambda: sc, lambda: ce)
-        for metric in self.metrics:
-            metric.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+        acc = tf.reduce_mean(tf.cast(
+            tf.equal(tf.argmax(cls_out, axis=1), tf.cast(y_cls, tf.int64)), tf.float32))
+        return {'loss': loss, 'accuracy': acc}
 
 
 def _staged_supcon_wrap(inputs, embedding, n_classes):

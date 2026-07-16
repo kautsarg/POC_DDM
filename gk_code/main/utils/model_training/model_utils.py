@@ -812,6 +812,10 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_cosine_recon_supcon_lc",  "cnn_gru_dual_attn_recon_supcon_lc",
         "cnn_gru_dual_cosine_recon_supcon2_lc", "cnn_gru_dual_attn_recon_supcon2_lc",
         "cnn_gru_dual_cosine_recon_supcon3_lc", "cnn_gru_dual_attn_recon_supcon3_lc",
+        # Staged SupCon variants
+        "cnn_gru_dual_cosine_recon_supcon_staged",  "cnn_gru_dual_attn_recon_supcon_staged",
+        "cnn_gru_dual_cosine_recon_supcon2_staged", "cnn_gru_dual_attn_recon_supcon2_staged",
+        "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -1005,14 +1009,18 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_cosine_recon_supcon2_mtl',
                                   'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_cosine_recon_supcon3_mtl',
                                   'cnn_gru_dual_cosine_recon_lc', 'cnn_gru_dual_cosine_recon_supcon_lc',
-                                  'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc'):
+                                  'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc',
+                                  'cnn_gru_dual_cosine_recon_supcon_staged', 'cnn_gru_dual_cosine_recon_supcon2_staged',
+                                  'cnn_gru_dual_cosine_recon_supcon3_staged'):
                     X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
                 elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
                                   'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl',
                                   'cnn_gru_dual_attn_recon_lc', 'cnn_gru_dual_attn_recon_supcon_lc',
-                                  'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc'):
+                                  'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc',
+                                  'cnn_gru_dual_attn_recon_supcon_staged', 'cnn_gru_dual_attn_recon_supcon2_staged',
+                                  'cnn_gru_dual_attn_recon_supcon3_staged'):
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
