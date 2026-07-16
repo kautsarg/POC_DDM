@@ -899,6 +899,22 @@ def evaluate_outlier_filters(
         if "y_trues_" not in res_entry:
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
 
+        # Purge any stored preds whose fold count or fold sizes no longer match y_trues_.
+        # This catches old runs with a different n_splits or valid_class_mask that left
+        # inconsistent data in the cache.
+        _expected_sizes = [len(a) for a in res_entry["y_trues_"]]
+        _stale = [k for k, v in res_entry.items()
+                  if k.startswith('y_preds_') and isinstance(v, list)
+                  and [len(a) for a in v] != _expected_sizes]
+        if _stale:
+            for k in _stale:
+                base = k[len('y_preds_'):]
+                res_entry.pop(k, None)
+                res_entry.pop('y_probs_' + base, None)
+                res_entry.pop('classes_' + base, None)
+            print(f"     [Warning] Dropped {len(_stale)} stale cached prediction(s) "
+                  f"with mismatched fold shapes: {_stale}")
+
         res_entry["mask_count"] = current_mask_count
         res_entry["y_true_count"] = len(y_true)
 
