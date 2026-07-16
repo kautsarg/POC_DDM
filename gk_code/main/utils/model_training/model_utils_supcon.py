@@ -631,7 +631,7 @@ def _freeze_backbone_staged_supcon(model):
         layer.trainable = layer.name in _STAGED_HEAD_LAYERS
     model.curriculum_phase.assign(1)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0),
-                  metrics=['accuracy'], jit_compile=False)
+                  jit_compile=False)
     model.make_train_function(force=True)
 
 
