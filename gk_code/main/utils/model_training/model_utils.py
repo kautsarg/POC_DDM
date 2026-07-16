@@ -1706,7 +1706,7 @@ def evaluate_outlier_filters(
                                 X_train_curve.shape[1], n_classes)
                     model.compile(
                         optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0),
-                        metrics=['accuracy'], jit_compile=False)
+                        jit_compile=False)
                     epochs = 500
                     if _val_split_ok:
                         _st_es   = tf.keras.callbacks.EarlyStopping(
