@@ -53,7 +53,7 @@ OUTLIER_FILTERS = [
 ]
 
 # ==========================================
-# MULTIPLEX MODEL KEYS (30 total)
+# MULTIPLEX MODEL KEYS (38 total)
 # ML_MODEL_KEY_MAP and ML_MODEL_PRINT_MAP are defined in
 # utils/model_training/model_utils_multilabel.py — import from there.
 # ==========================================
@@ -69,6 +69,12 @@ MULTIPLEX_MODELS = [
     # Dual-branch CNN+Trans: base + SC1/2/3
     'cnn_trans_dual',
     'cnn_trans_dual_supcon', 'cnn_trans_dual_supcon2', 'cnn_trans_dual_supcon3',
+    # Dual-branch CNN+GRU cross-attn: base + SC1/2/3
+    'cnn_gru_dual_cross_attn',
+    'cnn_gru_dual_cross_attn_supcon', 'cnn_gru_dual_cross_attn_supcon2', 'cnn_gru_dual_cross_attn_supcon3',
+    # Dual-branch CNN+Trans cross-attn: base + SC1/2/3
+    'cnn_trans_dual_cross_attn',
+    'cnn_trans_dual_cross_attn_supcon', 'cnn_trans_dual_cross_attn_supcon2', 'cnn_trans_dual_cross_attn_supcon3',
     # RCFD — GRU early encoder, CNN+GRU dual
     'gru_rcfd_cgd',
     'gru_rcfd_cgd_supcon_mtl', 'gru_rcfd_cgd_supcon2_mtl', 'gru_rcfd_cgd_supcon3_mtl',

@@ -433,37 +433,37 @@ python -u 03_main_training.py \
 ## 7. New Model Key Checklist
 
 **Backbone helpers (`model_utils_multilabel.py`)**
-- [ ] `_build_gru_dual_seq_backbone(inputs, return_branches=False)` — returns `(z, kv_seq)` or `(z, kv_seq, cnn_emb, gru_emb)`
-- [ ] `_build_trans_dual_seq_backbone(inputs, return_branches=False)` — returns `(z, trans_seq)` or `(z, trans_seq, cnn_emb, trans_emb)`
+- [x] `_build_gru_dual_seq_backbone(inputs, return_branches=False)` — returns `(z, kv_seq)` or `(z, kv_seq, cnn_emb, gru_emb)`
+- [x] `_build_trans_dual_seq_backbone(inputs, return_branches=False)` — returns `(z, trans_seq)` or `(z, trans_seq, cnn_emb, trans_emb)`
 
 **`LabelQueryEmbedding` layer + `_ml_cross_attn_head` function**
-- [ ] `LabelQueryEmbedding` registered keras layer
-- [ ] `_ml_cross_attn_head(kv_seq, ref_tensor, n_targets, query_dim, num_heads)` function
+- [x] `LabelQueryEmbedding` registered keras layer
+- [x] `_ml_cross_attn_head(kv_seq, ref_tensor, n_targets, query_dim, num_heads)` function
 
 **Factory functions (8 × model_utils_multilabel.py)**
-- [ ] `create_ml_cnn_gru_dual_cross_attn_model`
-- [ ] `create_ml_cnn_gru_dual_cross_attn_supcon_model`
-- [ ] `create_ml_cnn_gru_dual_cross_attn_supcon2_model`
-- [ ] `create_ml_cnn_gru_dual_cross_attn_supcon3_model`
-- [ ] `create_ml_cnn_trans_dual_cross_attn_model`
-- [ ] `create_ml_cnn_trans_dual_cross_attn_supcon_model`
-- [ ] `create_ml_cnn_trans_dual_cross_attn_supcon2_model`
-- [ ] `create_ml_cnn_trans_dual_cross_attn_supcon3_model`
+- [x] `create_ml_cnn_gru_dual_cross_attn_model`
+- [x] `create_ml_cnn_gru_dual_cross_attn_supcon_model`
+- [x] `create_ml_cnn_gru_dual_cross_attn_supcon2_model`
+- [x] `create_ml_cnn_gru_dual_cross_attn_supcon3_model`
+- [x] `create_ml_cnn_trans_dual_cross_attn_model`
+- [x] `create_ml_cnn_trans_dual_cross_attn_supcon_model`
+- [x] `create_ml_cnn_trans_dual_cross_attn_supcon2_model`
+- [x] `create_ml_cnn_trans_dual_cross_attn_supcon3_model`
 
 **Registry entries (`model_utils_multilabel.py`)**
-- [ ] All 8 keys in `ML_FACTORIES`
-- [ ] All 8 keys in `ML_MODEL_KEY_MAP`
-- [ ] All 8 keys in `ML_MODEL_PRINT_MAP`
-- [ ] 6 SC1/2/3 keys added to `_SUPCON_ML_KEYS`
+- [x] All 8 keys in `ML_FACTORIES`
+- [x] All 8 keys in `ML_MODEL_KEY_MAP`
+- [x] All 8 keys in `ML_MODEL_PRINT_MAP`
+- [x] 6 SC1/2/3 keys added to `_SUPCON_ML_KEYS`
 
 **`config_multiplex.py`**
-- [ ] All 8 keys in `MULTIPLEX_MODELS`
+- [x] All 8 keys in `MULTIPLEX_MODELS`
 
 **`03_main_training.py`**
-- [ ] `--cross_attn` arg added
-- [ ] `_cross_attn_by_sc` dict (SC0/1/2/3)
-- [ ] `elif args.cross_attn: models = _cross_attn_by_sc[args.supcon]` in model-list selection
-- [ ] `"CATTN"` branch in `_mode` string
+- [x] `--cross_attn` arg added
+- [x] `_cross_attn_by_sc` dict (SC0/1/2/3)
+- [x] `elif args.cross_attn: models = _cross_attn_by_sc[args.supcon]` in model-list selection
+- [x] `"CATTN"` branch in `_mode` string
 
 **SLURM**
-- [ ] `--cross_attn --supcon 0/1/2/3` loop in `lab_multiplex_training.sh`
+- [ ] `--cross_attn --supcon 0/1/2/3` loop in `lab_multiplex_training.sh` (file not created yet)

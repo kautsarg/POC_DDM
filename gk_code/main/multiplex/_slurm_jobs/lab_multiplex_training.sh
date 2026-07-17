@@ -51,6 +51,11 @@ for SC in 0 1 2 3; do
     run_train --condreg "${SARG[@]}"
 done
 
+# Cross-attention head (label query cross-attn + inter-label self-attn): SC 0-3
+for SC in 0 1 2 3; do
+    run_train --cross_attn --supcon "$SC"
+done
+
 # python -u 06_model_prediction_report.py \
 #     --task_id $SLURM_ARRAY_TASK_ID \
 #     --exp_folder "$EXP_FOLDER" \

@@ -97,6 +97,9 @@ if __name__ == "__main__":
     parser.add_argument("--condreg", action="store_true",
                         help="Train RCFD models (Regression-Conditioned Feature Dual). "
                              "Scope to SC variant with --supcon.")
+    parser.add_argument("--cross_attn", action="store_true",
+                        help="Train label query cross-attention head models. "
+                             "Scope to SC variant with --supcon.")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Sigmoid threshold for binary prediction (default 0.5)")
     parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
@@ -111,9 +114,10 @@ if __name__ == "__main__":
     # mode_name: cosmetic label for logging (model group being run).
     # Analogous to "Native"/"Reference" in main/03 — identifies what was run.
     _mode = (
-        ("RCFD" if args.condreg else "ML")
-        + (f" SC{args.supcon}" if args.supcon else "")
-    )
+        "RCFD"  if args.condreg   else
+        "CATTN" if args.cross_attn else
+        "ML"
+    ) + f" SC{args.supcon}"
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
 
     set_global_determinism(0, strict=not args.fast_mode)
@@ -186,6 +190,14 @@ if __name__ == "__main__":
                 'trans_rcfd_cgd_supcon3_mtl', 'trans_rcfd_ctd_supcon3_mtl'],
         }
         models = _rcfd_by_sc[args.supcon]
+    elif args.cross_attn:
+        _cross_attn_by_sc = {
+            0: ['cnn_gru_dual_cross_attn',         'cnn_trans_dual_cross_attn'],
+            1: ['cnn_gru_dual_cross_attn_supcon',   'cnn_trans_dual_cross_attn_supcon'],
+            2: ['cnn_gru_dual_cross_attn_supcon2',  'cnn_trans_dual_cross_attn_supcon2'],
+            3: ['cnn_gru_dual_cross_attn_supcon3',  'cnn_trans_dual_cross_attn_supcon3'],
+        }
+        models = _cross_attn_by_sc[args.supcon]
     elif args.supcon == 0:
         models = ['cnn', 'gru', 'transformer', 'cnn_gru_dual', 'cnn_trans_dual']
     elif args.supcon == 1:
