@@ -39,6 +39,21 @@ TRAINING_DATA_PATH          = 'curve_for_training_ml.joblib'
 TRAINING_RESULT_PATH        = 'classification_performances_ml.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_ml_10fold.joblib'
 
+# Per-group result files — one per parallel-job flag (keeps SLURM jobs race-free)
+RESULT_FILE_BY_FLAG = {
+    'default':    'classification_performances_ml.joblib',
+    'cross_attn': 'classification_performances_ml_cross_attn.joblib',
+    'cattn_v2':   'classification_performances_ml_cattn_v2.joblib',
+    'auxdet':     'classification_performances_ml_auxdet.joblib',
+    'quercon':    'classification_performances_ml_quercon.joblib',
+    'condreg':    'classification_performances_ml_condreg.joblib',
+}
+RESULT_10FOLD_FILE_BY_FLAG = {
+    k: v.replace('.joblib', '_10fold.joblib')
+    for k, v in RESULT_FILE_BY_FLAG.items()
+}
+
+
 # ==========================================
 # OUTLIER FILTERS FOR MULTIPLEX
 # Spatial filters listed for structural consistency; they produce no column
@@ -53,7 +68,7 @@ OUTLIER_FILTERS = [
 ]
 
 # ==========================================
-# MULTIPLEX MODEL KEYS (38 total)
+# MULTIPLEX MODEL KEYS (62 total)
 # ML_MODEL_KEY_MAP and ML_MODEL_PRINT_MAP are defined in
 # utils/model_training/model_utils_multilabel.py — import from there.
 # ==========================================
@@ -75,6 +90,24 @@ MULTIPLEX_MODELS = [
     # Dual-branch CNN+Trans cross-attn: base + SC1/2/3
     'cnn_trans_dual_cross_attn',
     'cnn_trans_dual_cross_attn_supcon', 'cnn_trans_dual_cross_attn_supcon2', 'cnn_trans_dual_cross_attn_supcon3',
+    # v2 ablation — DeepKV: SC0-3
+    'cnn_gru_dual_cross_attn_deepkv',
+    'cnn_gru_dual_cross_attn_deepkv_supcon', 'cnn_gru_dual_cross_attn_deepkv_supcon2', 'cnn_gru_dual_cross_attn_deepkv_supcon3',
+    # v2 ablation — DeepHead: SC0-3
+    'cnn_gru_dual_cross_attn_deephead',
+    'cnn_gru_dual_cross_attn_deephead_supcon', 'cnn_gru_dual_cross_attn_deephead_supcon2', 'cnn_gru_dual_cross_attn_deephead_supcon3',
+    # v2 combined — CGD: SC0-3
+    'cnn_gru_dual_cross_attn_v2',
+    'cnn_gru_dual_cross_attn_v2_supcon', 'cnn_gru_dual_cross_attn_v2_supcon2', 'cnn_gru_dual_cross_attn_v2_supcon3',
+    # v2 combined — CTD: SC0-3
+    'cnn_trans_dual_cross_attn_v2',
+    'cnn_trans_dual_cross_attn_v2_supcon', 'cnn_trans_dual_cross_attn_v2_supcon2', 'cnn_trans_dual_cross_attn_v2_supcon3',
+    # v2 AuxDet — CGD: SC0-3
+    'cnn_gru_dual_cross_attn_v2_auxdet',
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon', 'cnn_gru_dual_cross_attn_v2_auxdet_supcon2', 'cnn_gru_dual_cross_attn_v2_auxdet_supcon3',
+    # v2 QuerCon — CGD: QuerCon + backbone SC0-3
+    'cnn_gru_dual_cross_attn_v2_quercon',
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon', 'cnn_gru_dual_cross_attn_v2_quercon_supcon2', 'cnn_gru_dual_cross_attn_v2_quercon_supcon3',
     # RCFD — GRU early encoder, CNN+GRU dual
     'gru_rcfd_cgd',
     'gru_rcfd_cgd_supcon_mtl', 'gru_rcfd_cgd_supcon2_mtl', 'gru_rcfd_cgd_supcon3_mtl',
@@ -88,3 +121,15 @@ MULTIPLEX_MODELS = [
     'trans_rcfd_ctd',
     'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
 ]
+
+
+def _flag_for_model(key):
+    if 'quercon'    in key: return 'quercon'
+    if 'auxdet'     in key: return 'auxdet'
+    if any(x in key for x in ('deepkv', 'deephead', '_v2')): return 'cattn_v2'
+    if 'cross_attn' in key: return 'cross_attn'
+    if 'rcfd'       in key: return 'condreg'
+    return 'default'
+
+
+MODEL_FLAG_MAP = {k: _flag_for_model(k) for k in MULTIPLEX_MODELS}

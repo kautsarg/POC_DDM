@@ -100,6 +100,15 @@ if __name__ == "__main__":
     parser.add_argument("--cross_attn", action="store_true",
                         help="Train label query cross-attention head models. "
                              "Scope to SC variant with --supcon.")
+    parser.add_argument("--cross_attn_v2", action="store_true",
+                        help="Train v2 cross-attn ablation models (deepkv, deephead, v2 CGD+CTD). "
+                             "Scope to SC variant with --supcon.")
+    parser.add_argument("--cross_attn_auxdet", action="store_true",
+                        help="Train v2 cross-attn with auxiliary detection head. "
+                             "Scope to SC variant with --supcon.")
+    parser.add_argument("--cross_attn_quercon", action="store_true",
+                        help="Train v2 cross-attn with query contrastive loss (QuerCon). "
+                             "Backbone SC variant added via --supcon (0=QuerCon only).")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Sigmoid threshold for binary prediction (default 0.5)")
     parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
@@ -114,8 +123,11 @@ if __name__ == "__main__":
     # mode_name: cosmetic label for logging (model group being run).
     # Analogous to "Native"/"Reference" in main/03 — identifies what was run.
     _mode = (
-        "RCFD"  if args.condreg   else
-        "CATTN" if args.cross_attn else
+        "RCFD"         if args.condreg          else
+        "CATTN"        if args.cross_attn        else
+        "CATTN-V2"     if args.cross_attn_v2     else
+        "CATTN-AUXDET" if args.cross_attn_auxdet else
+        "CATTN-QUERCON" if args.cross_attn_quercon else
         "ML"
     ) + f" SC{args.supcon}"
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
@@ -134,10 +146,16 @@ if __name__ == "__main__":
     folder   = exp_path.name
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {folder}\n{'#'*80}")
 
-    if args.n_splits > 1:
-        results_path = os.path.join(exp_path, config.TRAINING_10FOLD_RESULT_PATH)
-    else:
-        results_path = os.path.join(exp_path, config.TRAINING_RESULT_PATH)
+    _result_flag = (
+        'cross_attn' if args.cross_attn        else
+        'cattn_v2'   if args.cross_attn_v2     else
+        'auxdet'     if args.cross_attn_auxdet  else
+        'quercon'    if args.cross_attn_quercon else
+        'condreg'    if args.condreg            else
+        'default'
+    )
+    _fmap        = config.RESULT_10FOLD_FILE_BY_FLAG if args.n_splits > 1 else config.RESULT_FILE_BY_FLAG
+    results_path = os.path.join(exp_path, _fmap[_result_flag])
 
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
 
@@ -198,6 +216,34 @@ if __name__ == "__main__":
             3: ['cnn_gru_dual_cross_attn_supcon3',  'cnn_trans_dual_cross_attn_supcon3'],
         }
         models = _cross_attn_by_sc[args.supcon]
+    elif args.cross_attn_v2:
+        _cross_attn_v2_by_sc = {
+            0: ['cnn_gru_dual_cross_attn_deepkv',  'cnn_gru_dual_cross_attn_deephead',
+                'cnn_gru_dual_cross_attn_v2',       'cnn_trans_dual_cross_attn_v2'],
+            1: ['cnn_gru_dual_cross_attn_deepkv_supcon',  'cnn_gru_dual_cross_attn_deephead_supcon',
+                'cnn_gru_dual_cross_attn_v2_supcon',       'cnn_trans_dual_cross_attn_v2_supcon'],
+            2: ['cnn_gru_dual_cross_attn_deepkv_supcon2', 'cnn_gru_dual_cross_attn_deephead_supcon2',
+                'cnn_gru_dual_cross_attn_v2_supcon2',      'cnn_trans_dual_cross_attn_v2_supcon2'],
+            3: ['cnn_gru_dual_cross_attn_deepkv_supcon3', 'cnn_gru_dual_cross_attn_deephead_supcon3',
+                'cnn_gru_dual_cross_attn_v2_supcon3',      'cnn_trans_dual_cross_attn_v2_supcon3'],
+        }
+        models = _cross_attn_v2_by_sc[args.supcon]
+    elif args.cross_attn_auxdet:
+        _auxdet_by_sc = {
+            0: ['cnn_gru_dual_cross_attn_v2_auxdet'],
+            1: ['cnn_gru_dual_cross_attn_v2_auxdet_supcon'],
+            2: ['cnn_gru_dual_cross_attn_v2_auxdet_supcon2'],
+            3: ['cnn_gru_dual_cross_attn_v2_auxdet_supcon3'],
+        }
+        models = _auxdet_by_sc[args.supcon]
+    elif args.cross_attn_quercon:
+        _quercon_by_sc = {
+            0: ['cnn_gru_dual_cross_attn_v2_quercon'],
+            1: ['cnn_gru_dual_cross_attn_v2_quercon_supcon'],
+            2: ['cnn_gru_dual_cross_attn_v2_quercon_supcon2'],
+            3: ['cnn_gru_dual_cross_attn_v2_quercon_supcon3'],
+        }
+        models = _quercon_by_sc[args.supcon]
     elif args.supcon == 0:
         models = ['cnn', 'gru', 'transformer', 'cnn_gru_dual', 'cnn_trans_dual']
     elif args.supcon == 1:
@@ -276,8 +322,20 @@ if __name__ == "__main__":
     safe_joblib_dump(cached_results, results_path, compress=3)
     print(f"\n  -> Final results saved to {results_path}")
 
+    _merged = {}
+    for _fname in _fmap.values():
+        _p = os.path.join(exp_path, _fname)
+        if not os.path.exists(_p):
+            continue
+        try:
+            for _fk, _fv in joblib.load(_p).items():
+                _merged.setdefault(_fk, {}).update(_fv)
+        except Exception:
+            pass
+
     print_ml_results_summary(
-        cached_results, config.OUTLIER_FILTERS, folder, _mode,
+        _merged if _merged else cached_results,
+        config.OUTLIER_FILTERS, folder, _mode,
         ML_MODEL_KEY_MAP, ML_MODEL_PRINT_MAP)
 
     gc.collect()

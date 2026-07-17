@@ -244,6 +244,297 @@ class MultiLabelSupConBranch3STModel(tf.keras.Model):
         return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
 
 
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelAuxDetModel(tf.keras.Model):
+    """Cross-attn v2 with per-block auxiliary BCE losses (v2_auxdet).
+
+    Outputs: [cls_out, aux0, aux1, ...]. lambda_aux weight per aux term.
+    cls_prob = raw_out[0] at inference (handled by existing training loop).
+    """
+    def __init__(self, *args, lambda_aux=0.3, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lambda_aux = lambda_aux
+
+    def _step(self, x, y_dict, training):
+        y_bin   = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs = self(x, training=training)
+        loss    = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, outputs[0]))
+        for aux in outputs[1:]:
+            loss = loss + self.lambda_aux * tf.reduce_mean(
+                tf.keras.losses.binary_crossentropy(y_bin, aux))
+        return loss
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        return {'loss': self._step(x, y_dict, training=False)}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelQueryConModel(tf.keras.Model):
+    """Cross-attn v2 with per-label query contrastive loss (QuerCon).
+
+    Outputs: [cls_out, queries_norm] where queries_norm: (batch, n_targets, query_dim).
+    For each label j, SupCon is applied on queries_norm[:,j,:] keyed by y[:,j].
+    """
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, lambda_qc=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp = supcon_temp
+        self.lambda_qc   = lambda_qc
+
+    def _quercon_loss(self, queries_norm, y_bin):
+        n_j   = queries_norm.shape[1] or 3
+        total = tf.constant(0.0)
+        for j in range(n_j):
+            emb_j = queries_norm[:, j, :]
+            y_j   = tf.cast(y_bin[:, j], tf.float32)
+            pos   = (tf.expand_dims(y_j, 1) * tf.expand_dims(y_j, 0)
+                     * (1.0 - tf.eye(tf.shape(emb_j)[0])))
+            total = total + _supcon_loss_jaccard(emb_j, pos, self.supcon_temp)
+        return total / tf.cast(n_j, tf.float32)
+
+    def _step(self, x, y_dict, training):
+        y_bin           = tf.cast(y_dict['cls_out'], tf.float32)
+        cls_out, q_norm = self(x, training=training)
+        bce  = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        qc   = self._quercon_loss(q_norm, y_bin)
+        loss = (1.0 - self.lambda_qc) * bce + self.lambda_qc * qc
+        return loss, bce, qc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, qc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'quercon': qc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, qc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'quercon': qc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelQueryConSC1Model(MultiLabelQueryConModel):
+    """QuerCon + backbone Jaccard SupCon (SC1) combined. Outputs [cls_out, queries_norm, proj_norm]."""
+    def __init__(self, *args, supcon_lambda=SUPCON_LAMBDA, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_lambda = supcon_lambda
+
+    def _step(self, x, y_dict, training):
+        y_bin                      = tf.cast(y_dict['cls_out'], tf.float32)
+        cls_out, q_norm, proj_norm = self(x, training=training)
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_norm, pos_mask, self.supcon_temp)
+        qc       = self._quercon_loss(q_norm, y_bin)
+        loss     = ((1.0 - self.supcon_lambda - self.lambda_qc) * bce
+                    + self.supcon_lambda * sc + self.lambda_qc * qc)
+        return loss, bce, sc, qc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc, qc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc, qc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelAuxDetSC1Model(MultiLabelAuxDetModel):
+    """AuxDet + backbone Jaccard SupCon SC1. Outputs [cls_out, aux..., proj_norm]."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp   = supcon_temp
+        self.supcon_lambda = supcon_lambda
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs  = self(x, training=training)
+        cls_out, aux_outs, proj_norm = outputs[0], outputs[1:-1], outputs[-1]
+        l_det    = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        for aux in aux_outs:
+            l_det = l_det + self.lambda_aux * tf.reduce_mean(
+                tf.keras.losses.binary_crossentropy(y_bin, aux))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_norm, pos_mask, self.supcon_temp)
+        loss     = (1.0 - self.supcon_lambda) * l_det + self.supcon_lambda * sc
+        return loss, l_det, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, l_det, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, l_det, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelAuxDetSC2Model(MultiLabelAuxDetModel):
+    """AuxDet + branch SupCon SC2. Outputs [cls_out, aux..., cnn_proj, seq_proj]."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs  = self(x, training=training)
+        cls_out, aux_outs = outputs[0], outputs[1:-2]
+        cnn_proj, seq_proj = outputs[-2], outputs[-1]
+        l_det    = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        for aux in aux_outs:
+            l_det = l_det + self.lambda_aux * tf.reduce_mean(
+                tf.keras.losses.binary_crossentropy(y_bin, aux))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj, pos_mask, self.supcon_temp))
+        loss     = ((1.0 - 2 * self.supcon_lambda_each) * l_det
+                    + self.supcon_lambda_each * sc)
+        return loss, l_det, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, l_det, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, l_det, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelAuxDetSC3Model(MultiLabelAuxDetModel):
+    """AuxDet + three-branch SupCon SC3. Outputs [cls_out, aux..., cnn_proj, seq_proj, fused_proj]."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs  = self(x, training=training)
+        cls_out, aux_outs = outputs[0], outputs[1:-3]
+        cnn_proj, seq_proj, fused_proj = outputs[-3], outputs[-2], outputs[-1]
+        l_det    = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        for aux in aux_outs:
+            l_det = l_det + self.lambda_aux * tf.reduce_mean(
+                tf.keras.losses.binary_crossentropy(y_bin, aux))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(fused_proj, pos_mask, self.supcon_temp))
+        loss     = ((1.0 - 3 * self.supcon_lambda_each) * l_det
+                    + self.supcon_lambda_each * sc)
+        return loss, l_det, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, l_det, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, l_det, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'det_bce': l_det, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelQueryConSC2Model(MultiLabelQueryConModel):
+    """QuerCon + branch SupCon SC2. Outputs [cls_out, queries_norm, cnn_proj, seq_proj]."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, supcon_temp=supcon_temp, **kwargs)
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs  = self(x, training=training)
+        cls_out, q_norm, cnn_proj, seq_proj = outputs
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        qc       = self._quercon_loss(q_norm, y_bin)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj, pos_mask, self.supcon_temp))
+        loss     = ((1.0 - self.lambda_qc - 2 * self.supcon_lambda_each) * bce
+                    + self.lambda_qc * qc + self.supcon_lambda_each * sc)
+        return loss, bce, sc, qc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc, qc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc, qc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_cross_attn')
+class MultiLabelQueryConSC3Model(MultiLabelQueryConModel):
+    """QuerCon + three-branch SupCon SC3. Outputs [cls_out, queries_norm, cnn_proj, seq_proj, fused_proj]."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, supcon_temp=supcon_temp, **kwargs)
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'], tf.float32)
+        outputs  = self(x, training=training)
+        cls_out, q_norm, cnn_proj, seq_proj, fused_proj = outputs
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        qc       = self._quercon_loss(q_norm, y_bin)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(fused_proj, pos_mask, self.supcon_temp))
+        loss     = ((1.0 - self.lambda_qc - 3 * self.supcon_lambda_each) * bce
+                    + self.lambda_qc * qc + self.supcon_lambda_each * sc)
+        return loss, bce, sc, qc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc, qc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc, qc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc, 'quercon': qc}
+
+
 # ======================================================================
 # MULTI-LABEL MTL BASE (BCE + MSE regression, UW-SO weighting)
 # ======================================================================
@@ -790,6 +1081,176 @@ def _build_trans_dual_seq_backbone(inputs, head_size=32, num_heads=2, ff_dim=32,
     return z, trans_seq
 
 
+# ======================================================================
+# DEEP CROSS-ATTENTION v2: BACKBONE HELPERS + HEAD FUNCTIONS
+# Layer prefix 'ca2_' throughout to avoid name collision with 'ca_' models.
+# clear_session() is called before each model build in the training loop,
+# so cross-session naming conflicts do not occur in practice.
+# ======================================================================
+
+def _build_gru_dual_deep_seq_backbone(inputs, return_branches=False):
+    """CNN+GRU dual with deeper kv_seq: second BiGRU return_sequences=True + learned pos-enc.
+
+    deep_gru_seq: (batch, T, 32) after second BiGRU + positional encoding.
+    Returns (z, deep_gru_seq) or (z, deep_gru_seq, cnn_emb, gru_emb).
+    """
+    c       = tf.keras.layers.Conv1D(16, 5, activation='relu', name='ca2_cnn_conv1')(inputs)
+    c       = tf.keras.layers.Conv1D(8,  3, activation='relu', name='ca2_cnn_conv2')(c)
+    c       = tf.keras.layers.Flatten(name='ca2_cnn_flat')(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu', name='ca2_cnn_emb')(c)
+
+    g       = tf.keras.layers.Bidirectional(
+        tf.keras.layers.GRU(32, return_sequences=True), name='ca2_bigru1')(inputs)
+    g       = tf.keras.layers.LayerNormalization(name='ca2_gru_ln')(g)
+    g       = tf.keras.layers.Bidirectional(
+        tf.keras.layers.GRU(16, return_sequences=True), name='ca2_bigru2')(g)
+
+    T            = inputs.shape[1]
+    pos_emb      = tf.keras.layers.Embedding(T, 32, name='ca2_pos_emb')(tf.range(T))
+    deep_gru_seq = g + pos_emb   # (batch, T, 32)
+
+    gru_pool = tf.keras.layers.GlobalAveragePooling1D(name='ca2_bigru2_pool')(deep_gru_seq)
+    gru_pool = tf.keras.layers.Dropout(0.2, name='ca2_gru_drop')(gru_pool)
+    gru_emb  = tf.keras.layers.Dense(64, activation='relu', name='ca2_gru_emb')(gru_pool)
+
+    merged   = tf.keras.layers.Concatenate(name='ca2_cgd_merge')([cnn_emb, gru_emb])
+    z        = tf.keras.layers.Dense(96, activation='relu', name='ca2_cgd_fused')(merged)
+    z        = tf.keras.layers.Dropout(0.2, name='ca2_cgd_drop')(z)
+
+    if return_branches:
+        return z, deep_gru_seq, cnn_emb, gru_emb
+    return z, deep_gru_seq
+
+
+def _build_trans_dual_deep_seq_backbone(inputs, head_size=32, num_heads=2, ff_dim=32,
+                                         num_blocks=2, dropout=0.1, return_branches=False):
+    """CNN+Trans dual backbone with 'ca2_' prefix (mirrors _build_trans_dual_seq_backbone).
+
+    Used for cnn_trans_dual_cross_attn_v2. trans_seq: (batch, T', head_size).
+    """
+    c       = tf.keras.layers.Conv1D(16, 5, activation='relu', name='ca2_cnn_conv1')(inputs)
+    c       = tf.keras.layers.Conv1D(8,  3, activation='relu', name='ca2_cnn_conv2')(c)
+    c       = tf.keras.layers.Flatten(name='ca2_cnn_flat')(c)
+    cnn_emb = tf.keras.layers.Dense(32, activation='relu', name='ca2_cnn_emb')(c)
+
+    t           = tf.keras.layers.Conv1D(head_size, 5, strides=2, padding='same',
+                                          activation='relu', name='ca2_tr_conv')(inputs)
+    t           = tf.keras.layers.MaxPooling1D(pool_size=2, padding='same',
+                                                name='ca2_tr_pool')(t)
+    new_seq_len = t.shape[1]
+    pos_emb     = tf.keras.layers.Embedding(
+        new_seq_len, head_size, name='ca2_tr_posemb')(tf.range(new_seq_len))
+    t = t + pos_emb
+    for i in range(num_blocks):
+        attn = tf.keras.layers.MultiHeadAttention(
+            key_dim=head_size, num_heads=num_heads, dropout=dropout,
+            name=f'ca2_tr_mha{i}')(t, t)
+        attn = tf.keras.layers.Dropout(dropout, name=f'ca2_tr_attn_drop{i}')(attn)
+        t    = tf.keras.layers.LayerNormalization(
+            epsilon=1e-6, name=f'ca2_tr_ln1_{i}')(t + attn)
+        ffn  = tf.keras.layers.Dense(ff_dim, activation='relu', name=f'ca2_tr_ff1_{i}')(t)
+        ffn  = tf.keras.layers.Dropout(dropout, name=f'ca2_tr_ff_drop{i}')(ffn)
+        ffn  = tf.keras.layers.Dense(head_size, name=f'ca2_tr_ff2_{i}')(ffn)
+        t    = tf.keras.layers.LayerNormalization(
+            epsilon=1e-6, name=f'ca2_tr_ln2_{i}')(t + ffn)
+    trans_seq  = t
+
+    t          = tf.keras.layers.GlobalAveragePooling1D(name='ca2_tr_gap')(t)
+    trans_emb  = tf.keras.layers.Dense(64, activation='relu', name='ca2_tr_emb')(t)
+    merged     = tf.keras.layers.Concatenate(name='ca2_ctd_merge')([cnn_emb, trans_emb])
+    z          = tf.keras.layers.Dense(96, activation='relu', name='ca2_ctd_fused')(merged)
+    z          = tf.keras.layers.Dropout(0.2, name='ca2_ctd_drop')(z)
+
+    if return_branches:
+        return z, trans_seq, cnn_emb, trans_emb
+    return z, trans_seq
+
+
+def _ml_cross_attn_deep_head(kv_seq, ref_tensor, n_targets, query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Stacked cross-attn + inter-label SA + FFN blocks with 'ca2_' prefix.
+
+    Returns cls_out (batch, n_targets) sigmoid.
+    """
+    queries = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv      = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    logits  = tf.keras.layers.Dense(1, name='ca2_label_logit')(queries)
+    cls_out = tf.keras.layers.Activation('sigmoid', name='cls_out')(
+        tf.keras.layers.Reshape((n_targets,), name='ca2_reshape')(logits))
+    return cls_out
+
+
+def _ml_cross_attn_deep_head_aux(kv_seq, ref_tensor, n_targets, query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Deep head with per-block auxiliary BCE outputs (tapped after CA, before SA).
+
+    Returns [cls_out, aux0, aux1, ...] — for MultiLabelAuxDetModel.
+    """
+    queries  = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv       = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    aux_outs = []
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        aux_l   = tf.keras.layers.Dense(1, name=f'ca2_aux_logit_{i}')(queries)
+        aux_out = tf.keras.layers.Activation('sigmoid', name=f'ca2_aux_{i}')(
+            tf.keras.layers.Reshape((n_targets,), name=f'ca2_aux_reshape_{i}')(aux_l))
+        aux_outs.append(aux_out)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    logits  = tf.keras.layers.Dense(1, name='ca2_label_logit')(queries)
+    cls_out = tf.keras.layers.Activation('sigmoid', name='cls_out')(
+        tf.keras.layers.Reshape((n_targets,), name='ca2_reshape')(logits))
+    return [cls_out] + aux_outs
+
+
+def _ml_cross_attn_deep_head_quercon(kv_seq, ref_tensor, n_targets, query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Deep head exposing L2-normalised pre-logit query vectors for QuerCon loss.
+
+    Returns (cls_out, queries_norm) where queries_norm: (batch, n_targets, query_dim).
+    """
+    queries = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv      = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    queries_norm = tf.keras.layers.Lambda(
+        lambda q: tf.math.l2_normalize(q, axis=-1), name='ca2_queries_norm')(queries)
+    logits  = tf.keras.layers.Dense(1, name='ca2_label_logit')(queries)
+    cls_out = tf.keras.layers.Activation('sigmoid', name='cls_out')(
+        tf.keras.layers.Reshape((n_targets,), name='ca2_reshape')(logits))
+    return cls_out, queries_norm
+
+
 # -- CNN+GRU dual cross-attn SC0-3 -------------------------------------------
 
 def create_ml_cnn_gru_dual_cross_attn_model(T, n_targets):
@@ -866,6 +1327,219 @@ def create_ml_cnn_trans_dual_cross_attn_supcon3_model(T, n_targets):
         inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
 
 
+# -- CNN+GRU dual cross-attn DeepKV SC0-3 -----------------------------------
+# Shallow head (_ml_cross_attn_head) + deep backbone (_build_gru_dual_deep_seq_backbone)
+
+def create_ml_cnn_gru_dual_cross_attn_deepkv_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_head(kv_seq, inputs, n_targets)
+    return _StandardMultiLabelModel(inputs=inputs, outputs=cls_out,
+                                    name='cnn_gru_dual_cross_attn_deepkv')
+
+def create_ml_cnn_gru_dual_cross_attn_deepkv_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_head(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelSupConModel(inputs=inputs, outputs=[cls_out, proj_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_deepkv_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out  = _ml_cross_attn_head(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelSupConBranch2STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj])
+
+def create_ml_cnn_gru_dual_cross_attn_deepkv_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out    = _ml_cross_attn_head(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelSupConBranch3STModel(
+        inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
+
+
+# -- CNN+GRU dual cross-attn DeepHead SC0-3 ----------------------------------
+# Deep head (_ml_cross_attn_deep_head) + shallow backbone (_build_gru_dual_seq_backbone)
+
+def create_ml_cnn_gru_dual_cross_attn_deephead_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    return _StandardMultiLabelModel(inputs=inputs, outputs=cls_out,
+                                    name='cnn_gru_dual_cross_attn_deephead')
+
+def create_ml_cnn_gru_dual_cross_attn_deephead_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelSupConModel(inputs=inputs, outputs=[cls_out, proj_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_deephead_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_seq_backbone(inputs, return_branches=True)
+    cls_out  = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelSupConBranch2STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj])
+
+def create_ml_cnn_gru_dual_cross_attn_deephead_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_seq_backbone(inputs, return_branches=True)
+    cls_out    = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelSupConBranch3STModel(
+        inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
+
+
+# -- CNN+GRU dual cross-attn V2 SC0-3 ----------------------------------------
+# Deep head + deep backbone (combined best-of-both)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    return _StandardMultiLabelModel(inputs=inputs, outputs=cls_out,
+                                    name='cnn_gru_dual_cross_attn_v2')
+
+def create_ml_cnn_gru_dual_cross_attn_v2_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out   = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelSupConModel(inputs=inputs, outputs=[cls_out, proj_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out  = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelSupConBranch2STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out    = _ml_cross_attn_deep_head(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelSupConBranch3STModel(
+        inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
+
+
+# -- CNN+Trans dual cross-attn V2 SC0-3 --------------------------------------
+
+def create_ml_cnn_trans_dual_cross_attn_v2_model(T, n_targets):
+    inputs         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq   = _build_trans_dual_deep_seq_backbone(inputs)
+    cls_out        = _ml_cross_attn_deep_head(trans_seq, inputs, n_targets)
+    return _StandardMultiLabelModel(inputs=inputs, outputs=cls_out,
+                                    name='cnn_trans_dual_cross_attn_v2')
+
+def create_ml_cnn_trans_dual_cross_attn_v2_supcon_model(T, n_targets):
+    inputs         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq   = _build_trans_dual_deep_seq_backbone(inputs)
+    cls_out        = _ml_cross_attn_deep_head(trans_seq, inputs, n_targets)
+    proj_norm      = _proj_head(z, 'fused')
+    return MultiLabelSupConModel(inputs=inputs, outputs=[cls_out, proj_norm])
+
+def create_ml_cnn_trans_dual_cross_attn_v2_supcon2_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out  = _ml_cross_attn_deep_head(trans_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(tr_emb, 'seq')
+    return MultiLabelSupConBranch2STModel(inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj])
+
+def create_ml_cnn_trans_dual_cross_attn_v2_supcon3_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out    = _ml_cross_attn_deep_head(trans_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(tr_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelSupConBranch3STModel(
+        inputs=inputs, outputs=[cls_out, cnn_proj, seq_proj, fused_proj])
+
+
+# -- CNN+GRU V2 AuxDet SC0-3 -------------------------------------------------
+# Deep backbone + deep head with per-block aux BCE; aux_outs count = n_ca_blocks (default 2)
+# Output convention: [cls_out, aux0, aux1, ...projections...]
+
+def create_ml_cnn_gru_dual_cross_attn_v2_auxdet_model(T, n_targets):
+    inputs      = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq   = _build_gru_dual_deep_seq_backbone(inputs)
+    outputs     = _ml_cross_attn_deep_head_aux(kv_seq, inputs, n_targets)
+    return MultiLabelAuxDetModel(inputs=inputs, outputs=outputs)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    aux_outs  = _ml_cross_attn_deep_head_aux(kv_seq, inputs, n_targets)  # [cls_out, aux0, aux1]
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelAuxDetSC1Model(inputs=inputs, outputs=aux_outs + [proj_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    aux_outs = _ml_cross_attn_deep_head_aux(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelAuxDetSC2Model(inputs=inputs, outputs=aux_outs + [cnn_proj, seq_proj])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    aux_outs   = _ml_cross_attn_deep_head_aux(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelAuxDetSC3Model(inputs=inputs, outputs=aux_outs + [cnn_proj, seq_proj, fused_proj])
+
+
+# -- CNN+GRU V2 QuerCon SC0-3 ------------------------------------------------
+# Deep backbone + quercon head; outputs [cls_out, queries_norm, ...projections...]
+
+def create_ml_cnn_gru_dual_cross_attn_v2_quercon_model(T, n_targets):
+    inputs             = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq          = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out, q_norm    = _ml_cross_attn_deep_head_quercon(kv_seq, inputs, n_targets)
+    return MultiLabelQueryConModel(inputs=inputs, outputs=[cls_out, q_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon_model(T, n_targets):
+    inputs          = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq       = _build_gru_dual_deep_seq_backbone(inputs)
+    cls_out, q_norm = _ml_cross_attn_deep_head_quercon(kv_seq, inputs, n_targets)
+    proj_norm       = _proj_head(z, 'fused')
+    return MultiLabelQueryConSC1Model(inputs=inputs, outputs=[cls_out, q_norm, proj_norm])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out, q_norm = _ml_cross_attn_deep_head_quercon(kv_seq, inputs, n_targets)
+    cnn_proj        = _proj_head(cnn_emb, 'cnn')
+    seq_proj        = _proj_head(gru_emb, 'seq')
+    return MultiLabelQueryConSC2Model(inputs=inputs, outputs=[cls_out, q_norm, cnn_proj, seq_proj])
+
+def create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    cls_out, q_norm = _ml_cross_attn_deep_head_quercon(kv_seq, inputs, n_targets)
+    cnn_proj        = _proj_head(cnn_emb, 'cnn')
+    seq_proj        = _proj_head(gru_emb, 'seq')
+    fused_proj      = _proj_head(z, 'fused')
+    return MultiLabelQueryConSC3Model(
+        inputs=inputs, outputs=[cls_out, q_norm, cnn_proj, seq_proj, fused_proj])
+
+
 # -- factory dispatch --------------------------------------------------------
 
 ML_FACTORIES = {
@@ -897,6 +1571,36 @@ ML_FACTORIES = {
     'cnn_trans_dual_cross_attn_supcon':   create_ml_cnn_trans_dual_cross_attn_supcon_model,
     'cnn_trans_dual_cross_attn_supcon2':  create_ml_cnn_trans_dual_cross_attn_supcon2_model,
     'cnn_trans_dual_cross_attn_supcon3':  create_ml_cnn_trans_dual_cross_attn_supcon3_model,
+    # Cross-attn v2 ablation — DeepKV SC0-3
+    'cnn_gru_dual_cross_attn_deepkv':          create_ml_cnn_gru_dual_cross_attn_deepkv_model,
+    'cnn_gru_dual_cross_attn_deepkv_supcon':   create_ml_cnn_gru_dual_cross_attn_deepkv_supcon_model,
+    'cnn_gru_dual_cross_attn_deepkv_supcon2':  create_ml_cnn_gru_dual_cross_attn_deepkv_supcon2_model,
+    'cnn_gru_dual_cross_attn_deepkv_supcon3':  create_ml_cnn_gru_dual_cross_attn_deepkv_supcon3_model,
+    # Cross-attn v2 ablation — DeepHead SC0-3
+    'cnn_gru_dual_cross_attn_deephead':          create_ml_cnn_gru_dual_cross_attn_deephead_model,
+    'cnn_gru_dual_cross_attn_deephead_supcon':   create_ml_cnn_gru_dual_cross_attn_deephead_supcon_model,
+    'cnn_gru_dual_cross_attn_deephead_supcon2':  create_ml_cnn_gru_dual_cross_attn_deephead_supcon2_model,
+    'cnn_gru_dual_cross_attn_deephead_supcon3':  create_ml_cnn_gru_dual_cross_attn_deephead_supcon3_model,
+    # Cross-attn v2 — CGD combined SC0-3
+    'cnn_gru_dual_cross_attn_v2':          create_ml_cnn_gru_dual_cross_attn_v2_model,
+    'cnn_gru_dual_cross_attn_v2_supcon':   create_ml_cnn_gru_dual_cross_attn_v2_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_supcon2':  create_ml_cnn_gru_dual_cross_attn_v2_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_supcon3':  create_ml_cnn_gru_dual_cross_attn_v2_supcon3_model,
+    # Cross-attn v2 — CTD SC0-3
+    'cnn_trans_dual_cross_attn_v2':          create_ml_cnn_trans_dual_cross_attn_v2_model,
+    'cnn_trans_dual_cross_attn_v2_supcon':   create_ml_cnn_trans_dual_cross_attn_v2_supcon_model,
+    'cnn_trans_dual_cross_attn_v2_supcon2':  create_ml_cnn_trans_dual_cross_attn_v2_supcon2_model,
+    'cnn_trans_dual_cross_attn_v2_supcon3':  create_ml_cnn_trans_dual_cross_attn_v2_supcon3_model,
+    # Cross-attn v2 AuxDet SC0-3
+    'cnn_gru_dual_cross_attn_v2_auxdet':          create_ml_cnn_gru_dual_cross_attn_v2_auxdet_model,
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon':   create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon2':  create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon3':  create_ml_cnn_gru_dual_cross_attn_v2_auxdet_supcon3_model,
+    # Cross-attn v2 QuerCon (QuerCon + backbone SC0/1/2/3)
+    'cnn_gru_dual_cross_attn_v2_quercon':          create_ml_cnn_gru_dual_cross_attn_v2_quercon_model,
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon':   create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon2':  create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon3':  create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon3_model,
     # RCFD — GRU early encoder, CNN+GRU dual
     'gru_rcfd_cgd':                   create_ml_gru_rcfd_cgd_model,
     'gru_rcfd_cgd_supcon_mtl':        create_ml_gru_rcfd_cgd_supcon_mtl_model,
@@ -939,6 +1643,16 @@ _SUPCON_ML_KEYS = frozenset({
     # Cross-attn SC1/2/3 (SC0 base is not a SupCon key)
     'cnn_gru_dual_cross_attn_supcon',   'cnn_gru_dual_cross_attn_supcon2',   'cnn_gru_dual_cross_attn_supcon3',
     'cnn_trans_dual_cross_attn_supcon', 'cnn_trans_dual_cross_attn_supcon2', 'cnn_trans_dual_cross_attn_supcon3',
+    # Cross-attn v2 ablation SC1/2/3
+    'cnn_gru_dual_cross_attn_deepkv_supcon',  'cnn_gru_dual_cross_attn_deepkv_supcon2',  'cnn_gru_dual_cross_attn_deepkv_supcon3',
+    'cnn_gru_dual_cross_attn_deephead_supcon','cnn_gru_dual_cross_attn_deephead_supcon2','cnn_gru_dual_cross_attn_deephead_supcon3',
+    'cnn_gru_dual_cross_attn_v2_supcon',      'cnn_gru_dual_cross_attn_v2_supcon2',      'cnn_gru_dual_cross_attn_v2_supcon3',
+    'cnn_trans_dual_cross_attn_v2_supcon',    'cnn_trans_dual_cross_attn_v2_supcon2',    'cnn_trans_dual_cross_attn_v2_supcon3',
+    # AuxDet SC1/2/3
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon', 'cnn_gru_dual_cross_attn_v2_auxdet_supcon2', 'cnn_gru_dual_cross_attn_v2_auxdet_supcon3',
+    # QuerCon (all 4 — QuerCon itself is a contrastive loss so all variants are "supcon-like")
+    'cnn_gru_dual_cross_attn_v2_quercon', 'cnn_gru_dual_cross_attn_v2_quercon_supcon',
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon2', 'cnn_gru_dual_cross_attn_v2_quercon_supcon3',
 })
 
 # Canonical key maps — consumed by 03_main_training.py and print_ml_results_summary
@@ -986,6 +1700,33 @@ ML_MODEL_PRINT_MAP = {
     'cnn_trans_dual_cross_attn_supcon':   'CNN+Tr CAttn SC1',
     'cnn_trans_dual_cross_attn_supcon2':  'CNN+Tr CAttn SC2',
     'cnn_trans_dual_cross_attn_supcon3':  'CNN+Tr CAttn SC3',
+    # v2 ablation
+    'cnn_gru_dual_cross_attn_deepkv':          'CNN+GRU CAttn-DKV SC0',
+    'cnn_gru_dual_cross_attn_deepkv_supcon':   'CNN+GRU CAttn-DKV SC1',
+    'cnn_gru_dual_cross_attn_deepkv_supcon2':  'CNN+GRU CAttn-DKV SC2',
+    'cnn_gru_dual_cross_attn_deepkv_supcon3':  'CNN+GRU CAttn-DKV SC3',
+    'cnn_gru_dual_cross_attn_deephead':          'CNN+GRU CAttn-DHD SC0',
+    'cnn_gru_dual_cross_attn_deephead_supcon':   'CNN+GRU CAttn-DHD SC1',
+    'cnn_gru_dual_cross_attn_deephead_supcon2':  'CNN+GRU CAttn-DHD SC2',
+    'cnn_gru_dual_cross_attn_deephead_supcon3':  'CNN+GRU CAttn-DHD SC3',
+    'cnn_gru_dual_cross_attn_v2':          'CNN+GRU CAttn-V2 SC0',
+    'cnn_gru_dual_cross_attn_v2_supcon':   'CNN+GRU CAttn-V2 SC1',
+    'cnn_gru_dual_cross_attn_v2_supcon2':  'CNN+GRU CAttn-V2 SC2',
+    'cnn_gru_dual_cross_attn_v2_supcon3':  'CNN+GRU CAttn-V2 SC3',
+    'cnn_trans_dual_cross_attn_v2':          'CNN+Tr CAttn-V2 SC0',
+    'cnn_trans_dual_cross_attn_v2_supcon':   'CNN+Tr CAttn-V2 SC1',
+    'cnn_trans_dual_cross_attn_v2_supcon2':  'CNN+Tr CAttn-V2 SC2',
+    'cnn_trans_dual_cross_attn_v2_supcon3':  'CNN+Tr CAttn-V2 SC3',
+    # v2 AuxDet
+    'cnn_gru_dual_cross_attn_v2_auxdet':          'CNN+GRU CAttn-V2 AuxDet SC0',
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon':   'CNN+GRU CAttn-V2 AuxDet SC1',
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon2':  'CNN+GRU CAttn-V2 AuxDet SC2',
+    'cnn_gru_dual_cross_attn_v2_auxdet_supcon3':  'CNN+GRU CAttn-V2 AuxDet SC3',
+    # v2 QuerCon
+    'cnn_gru_dual_cross_attn_v2_quercon':          'CNN+GRU CAttn-V2 QuerCon',
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon':   'CNN+GRU CAttn-V2 QuerCon SC1',
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon2':  'CNN+GRU CAttn-V2 QuerCon SC2',
+    'cnn_gru_dual_cross_attn_v2_quercon_supcon3':  'CNN+GRU CAttn-V2 QuerCon SC3',
 }
 
 

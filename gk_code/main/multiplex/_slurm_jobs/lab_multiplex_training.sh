@@ -25,11 +25,11 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main/multiplex
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 
-# 01b: Preprocessing (run once; idempotent — skipped automatically if cached)
-python -u 01b_lab_curve_preprocessing.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$EXP_FOLDER"
+# # 01b: Preprocessing (run once; idempotent — skipped automatically if cached)
+# python -u 01b_lab_curve_preprocessing.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$EXP_FOLDER"
 
-# 02: Outlier detection (LSTM-AE only; spatial gracefully skipped on flat-CSV lab data)
-python -u 02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$EXP_FOLDER"
+# # 02: Outlier detection (LSTM-AE only; spatial gracefully skipped on flat-CSV lab data)
+# python -u 02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$EXP_FOLDER"
 
 run_train() {
     python -u 03_main_training.py \
@@ -54,6 +54,21 @@ done
 # Cross-attention head (label query cross-attn + inter-label self-attn): SC 0-3
 for SC in 0 1 2 3; do
     run_train --cross_attn --supcon "$SC"
+done
+
+# Cross-attn v2 ablation (deepkv / deephead / v2-CGD / v2-CTD): SC 0-3
+for SC in 0 1 2 3; do
+    run_train --cross_attn_v2 --supcon "$SC"
+done
+
+# Cross-attn v2 AuxDet (per-block aux BCE): SC 0-3
+for SC in 0 1 2 3; do
+    run_train --cross_attn_auxdet --supcon "$SC"
+done
+
+# Cross-attn v2 QuerCon (query contrastive + backbone SC): SC 0-3
+for SC in 0 1 2 3; do
+    run_train --cross_attn_quercon --supcon "$SC"
 done
 
 # python -u 06_model_prediction_report.py \
