@@ -39,7 +39,7 @@ sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
 sys.path.insert(0, str(_MULTIPLEX_DIR))
 sys.path.insert(0, str(_MULTIPLEX_DIR / "utils" / "model_training"))
 
-import config
+import config_multiplex as config
 from html_utils import _fig_to_buf, _buf_to_img_html, _panel, build_tabbed_html
 from model_utils_mtl import REG_SENTINEL as _REG_SENTINEL
 from model_utils_multilabel import (

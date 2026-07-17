@@ -33,7 +33,7 @@ sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
 sys.path.insert(0, str(_MULTIPLEX_DIR))
 sys.path.insert(0, str(_MULTIPLEX_DIR / "utils" / "model_training"))
 
-import config
+import config_multiplex as config
 from safe_io import safe_joblib_dump
 from model_utils import set_global_determinism
 from model_utils_mtl import REG_SENTINEL as _REG_SENTINEL
@@ -245,7 +245,8 @@ if __name__ == "__main__":
         y_binary           = y_binary,
         y_combo_int        = y_combo_int,
         all_targets        = all_targets,
-        outlier_filters    = config.OUTLIER_FILTERS,
+        # outlier_filters    = config.OUTLIER_FILTERS,
+        outlier_filters    = [None],
         dataset_name       = folder,
         mode_name          = _mode,
         ml_model_key_map   = ML_MODEL_KEY_MAP,

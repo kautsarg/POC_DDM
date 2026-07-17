@@ -8,7 +8,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a40,a100
-#SBATCH --array=0-2,9-10,11-12
+#SBATCH --array=13
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -31,8 +31,8 @@ fi
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper
 TRAIN_FOLDER="$EXP_FOLDER"
 
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $PREP_TASK_ID --exp_folder "$EXP_FOLDER"
-# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$TRAIN_FOLDER" --filters
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01b_lab_curve_preprocessing.py --task_id $PREP_TASK_ID --exp_folder "$EXP_FOLDER"
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $SLURM_ARRAY_TASK_ID --exp_folder "$TRAIN_FOLDER" --filters
 
 run_train() {
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py \
@@ -73,12 +73,12 @@ for SC in 0 1 2 3; do
     run_train "${SARG[@]}" --mtl_cl  # MTL CL
 done
 
-# LABEL CONSOLIDATION (LC) — 4 SC variants × 3 models = 12 models total
-# Combined label+conc target; pure ST (no regression head).
-for SC in 0 1 2 3; do
-    SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
-    run_train --lbl_conc "${SARG[@]}"
-done
+# # LABEL CONSOLIDATION (LC) — 4 SC variants × 3 models = 12 models total
+# # Combined label+conc target; pure ST (no regression head).
+# for SC in 0 1 2 3; do
+#     SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+#     run_train --lbl_conc "${SARG[@]}"
+# done
 
 # STAGED SUPCON (2-stage ST) — SC variants 1-3 only (requires supcon head).
 # Stage 1: SC loss only until val_loss plateau. Stage 2: CE-only, frozen backbone.

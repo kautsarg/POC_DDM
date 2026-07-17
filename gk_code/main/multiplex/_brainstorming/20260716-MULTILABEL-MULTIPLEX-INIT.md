@@ -1,6 +1,7 @@
-# Multi-Label Multiplex Classification — Init Brainstorming
-**Date:** 2026-07-16  
-**Scope:** Introduce `main/multiplex/` as a self-contained pipeline for multi-label droplet classification, reusing existing `main/` code without touching it.
+# Multi-Label Multiplex Classification — Implementation Reference
+**Originally drafted:** 2026-07-16  
+**Last updated:** 2026-07-17  
+**Status:** Living document — updated to reflect actual implementation. Where the original plan and the code differ, the code is authoritative.
 
 ---
 
@@ -31,7 +32,8 @@ Targets (after splitting by `_`): `{KPC, NDM, VIM}` → 3-bit binary vector per 
 1. **Do not modify any file in `main/`** — all existing pipelines stay unchanged.
 2. **Import, don't copy** — model builders, fitting utilities, IO helpers, outlier detectors all imported from `main/`.
 3. **Multi-label adaptations live in `main/multiplex/` and `main/multiplex/utils/`** only.
-4. **Reuse the same joblib result schema** — `y_trues_`, `y_preds_AC_<model>_`, `y_probs_AC_<model>_`, `classes_AC_<model>_` — but with 2D binary arrays where the existing pipeline uses 1D integer arrays.
+4. **Result schema uses `y_preds_<model>_`, `y_probs_<model>_`, `classes_<model>_`** (no `AC_` prefix — the multiplex result file is separate from main/'s `classification_performances.joblib`, so there is no collision risk and no need for the `AC_` disambiguation prefix).
+5. Result arrays are **2D** `(N_test, n_targets)` where main/ uses 1D `(N_test,)` integer arrays.
 
 ---
 
@@ -41,16 +43,18 @@ Targets (after splitting by `_`): `{KPC, NDM, VIM}` → 3-bit binary vector per 
 main/multiplex/
 ├── _brainstorming/
 │   └── 20260716-MULTILABEL-MULTIPLEX-INIT.md     ← this file
-├── config.py                                      ← multiplex-specific constants
-├── 01b_lab_curve_preprocessing.py                 ← multi-label preprocessing
-├── 02_outlier_detection_pipeline.py               ← subset of filters
-├── 03_main_training.py                            ← multi-label training driver
-├── 06_model_prediction_report.py                  ← multi-label HTML report
+├── config.py                                      ← multiplex-specific constants  [DONE]
+├── 01b_lab_curve_preprocessing.py                 ← multi-label preprocessing     [DONE]
+├── 02_outlier_detection_pipeline.py               ← subset of filters             [DONE]
+├── 03_main_training.py                            ← multi-label training driver   [DONE]
+├── 06_model_prediction_report.py                  ← multi-label HTML report       [DONE]
+├── _slurm_jobs/
+│   └── lab_multiplex_training.sh                  ← mirrors lab_supcon_training.sh [DONE]
 └── utils/
     ├── __init__.py
     └── model_training/
         ├── __init__.py
-        └── model_utils_multilabel.py              ← core multi-label extensions
+        └── model_utils_multilabel.py              ← core multi-label extensions   [DONE]
 ```
 
 ---
@@ -60,602 +64,432 @@ main/multiplex/
 **Purpose:** All multiplex-specific constants. Imports `main/config` for shared values.
 
 ```python
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import config as _base_config
+from config import *   # inherit all base constants
 
-# Inherit everything from the base config
-from config import *
+LAB_MULTIPLEX_FOLDER = os.path.join(BASE_FOLDER, "LAB_Multiplex")
 
-# ── Multiplex dataset registry ─────────────────────────────────────────────
-LAB_MULTIPLEX_FOLDER = '/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex'
+FILE_MAPPING = {'01_ACA_qdPCR': 'dPCR_Dataset_Multiplex.csv'}
+FILE_CONC    = {'01_ACA_qdPCR': 'Conc'}
+FILE_TARGET  = {'01_ACA_qdPCR': 'LoadedPanels'}
 
-FILE_MAPPING = {
-    '01_ACA_qdPCR': 'dPCR_Dataset_Multiplex.csv',
-}
-FILE_CONC = {
-    '01_ACA_qdPCR': 'Conc',
-}
-FILE_TARGET = {
-    '01_ACA_qdPCR': 'LoadedPanels',
-}
-MULTIPLEX_SEPARATOR = {
-    '01_ACA_qdPCR': '_',
-}
+# Simple string separator (one dataset → no need for per-dataset dict)
+MULTIPLEX_SEPARATOR = '_'
 
-# ── Result file names (separate from LAB_DDM results) ───────────────────────
-TRAINING_DATA_PATH         = 'curve_for_training_ml.joblib'
-TRAINING_RESULT_PATH       = 'classification_performances_ml.joblib'
+MULTIPLEX_TARGETS = ['KPC', 'NDM', 'VIM']   # sorted, deterministic binarization
+
+TRAINING_DATA_PATH          = 'curve_for_training_ml.joblib'
+TRAINING_RESULT_PATH        = 'classification_performances_ml.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_ml_10fold.joblib'
 
-# ── Outlier filters for multiplex (subset of main/config) ────────────────────
-# NOTE: spatial_knn/grid are listed but will produce NO column in kinetic_features
-# for flat-CSV lab data (no row/col spatial coords). Training will skip them with
-# a warning. They are listed to keep the filter-set structure consistent.
 OUTLIER_FILTERS = [
     None,
-    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',  # = 'lstm_ae_glb_ds1_label_elbow'
+    f'lstm_ae_glb_ds{AE_DOWNSAMPLE_FACTOR}_label_elbow',
     'spatial_knn_label_elbow',
     'spatial_grid_label_elbow',
 ]
 
-# ── Models to train ────────────────────────────────────────────────────────
 MULTIPLEX_MODELS = [
+    # Single-branch standard ST (no SupCon)
+    'cnn', 'gru', 'transformer',
+    # Single-branch SupCon SC1
+    'cnn_supcon', 'gru_supcon', 'transformer_supcon',
+    # Dual CNN+GRU: base + SC1/2/3
     'cnn_gru_dual',
-    'cnn_gru_dual_cosine_recon',
-    'cnn_gru_dual_attn_recon',
-    'cnn_gru_dual_supcon',
-    'cnn_gru_dual_cosine_recon_supcon',
-    'cnn_gru_dual_attn_recon_supcon',
-    'cnn_gru_dual_supcon2',
-    'cnn_gru_dual_cosine_recon_supcon2',
-    'cnn_gru_dual_attn_recon_supcon2',
-    'cnn_gru_dual_supcon3',
-    'cnn_gru_dual_cosine_recon_supcon3',
-    'cnn_gru_dual_attn_recon_supcon3',
+    'cnn_gru_dual_supcon', 'cnn_gru_dual_supcon2', 'cnn_gru_dual_supcon3',
+    # Dual CNN+Trans: base + SC1/2/3
+    'cnn_trans_dual',
+    'cnn_trans_dual_supcon', 'cnn_trans_dual_supcon2', 'cnn_trans_dual_supcon3',
+    # RCFD — GRU early encoder, CNN+GRU dual
     'gru_rcfd_cgd',
-    'gru_rcfd_cgd_supcon_mtl',
-    'gru_rcfd_cgd_supcon2_mtl',
-    'gru_rcfd_cgd_supcon3_mtl',
-]
+    'gru_rcfd_cgd_supcon_mtl', 'gru_rcfd_cgd_supcon2_mtl', 'gru_rcfd_cgd_supcon3_mtl',
+    # RCFD — GRU early encoder, CNN+Trans dual
+    'gru_rcfd_ctd',
+    'gru_rcfd_ctd_supcon_mtl', 'gru_rcfd_ctd_supcon2_mtl', 'gru_rcfd_ctd_supcon3_mtl',
+    # RCFD — Transformer early encoder, CNN+GRU dual
+    'trans_rcfd_cgd',
+    'trans_rcfd_cgd_supcon_mtl', 'trans_rcfd_cgd_supcon2_mtl', 'trans_rcfd_cgd_supcon3_mtl',
+    # RCFD — Transformer early encoder, CNN+Trans dual
+    'trans_rcfd_ctd',
+    'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
+]  # 30 total
 ```
 
-**Key decisions:**
-- `TRAINING_DATA_PATH` uses `_ml` suffix to avoid collision with existing LAB results in the same folder.
-- `OUTLIER_FILTERS` uses Python f-string so it resolves correctly when `AE_DOWNSAMPLE_FACTOR=1`.
-- Spatial filters listed but effectively inert for lab data (no coords).
+**Design decisions:**
+- `MULTIPLEX_SEPARATOR` is a plain string (not a dict) — one dataset, no per-dataset routing needed.
+- `cosine_recon` and `attn_recon` variants **omitted** — they require spatial pixel coordinates (`row`/`col`) which the flat-CSV lab data does not have.
+- `ML_MODEL_KEY_MAP` and `ML_MODEL_PRINT_MAP` live in `model_utils_multilabel.py` (not in config).
+- Spatial filters listed in `OUTLIER_FILTERS` for structural consistency; they produce no column for flat-CSV lab data and are gracefully skipped.
 
 ---
 
 ## 5. `01b_lab_curve_preprocessing.py`
 
-**Purpose:** Read the multiplex CSV, extract curves and kinetic features, produce `curve_for_training_ml.joblib` with the same structure as `main/01b` plus three new keys.
-
-**What to reuse (import from `main/`):**
+**What to reuse (imports from `main/`):**
 ```python
-sys.path.insert(0, parent_dir)
 import sigmoid_fitting as sp
 from safe_io import safe_joblib_dump
-from config import (WINDOW_SIZE_ORI, WINDOW_SIZE_1STDER, AE_DOWNSAMPLE_FACTOR)
-# Reuse curve-loading helpers from main/01b by importing them:
-from importlib.util import spec_from_file_location, module_from_spec
-# Load main/01b functions: sigmoid_fitting_5p, _read_table, get_numeric_sort_key,
-# _fit_single_curve, extract_kinetic_features, etc.
+from pipeline_utils import get_exp_paths
 ```
 
-**New multi-label logic (in `multiplex/01b`):**
+**New multi-label logic:**
 ```python
-from sklearn.preprocessing import MultiLabelBinarizer
-
-def parse_multilabel(raw_labels, separator):
+def parse_multilabel_column(raw_labels, separator='_'):
     """Split 'VIM_NDM' → ['VIM', 'NDM']. CSV must already be clean."""
     return [[t.strip() for t in str(lbl).split(separator) if t.strip()] for lbl in raw_labels]
-
-def binarize_labels(label_lists, all_targets=None):
-    """MultiLabelBinarizer → binary matrix (N, n_targets)."""
-    mlb = MultiLabelBinarizer(classes=all_targets)
-    binary = mlb.fit_transform(label_lists)
-    return binary, list(mlb.classes_)
 ```
 
-**New fields added to `curve_for_training_ml.joblib`:**
+**Output `curve_for_training_ml.joblib` keys** (actual implementation):
 
 | Key | Type | Description |
 |---|---|---|
-| `Y_well` | `np.ndarray[str]` | Raw label strings (`'VIM_NDM'`, etc.) — same as existing |
-| `labels` | `list[list[str]]` | Split labels per sample (`[['VIM','NDM'], ['VIM'], ...]`) |
-| `all_targets` | `list[str]` | Sorted unique targets (`['KPC','NDM','VIM']`) |
-| `label_binarized` | `np.ndarray[int]` | Shape `(N, 3)` — binary indicator matrix |
-| `concentration` | `np.ndarray[float]` | Per-sample concentration (same as existing) |
+| `curves` | `dict` | `{'ori_curves': np.ndarray (N, T)}` — curve array |
+| `timestamps` | `np.ndarray` | Time axis for the curve dimension |
+| `label_lists` | `list[list[str]]` | Per-sample target lists e.g. `[['VIM','NDM'], ['KPC'], …]` |
+| `all_targets` | `list[str]` | Sorted unique targets: `['KPC', 'NDM', 'VIM']` |
+| `well_labels` | `np.ndarray[str]` | Raw combo strings e.g. `'VIM_NDM'` (used for curve plot labels) |
+| `concentration` | `np.ndarray[float]` | Per-sample concentration (optional, may be None-filled) |
+| `kinetic_features` | `dict` | Populated by `02_outlier_detection_pipeline.py` |
 
-**Argparse defaults** — same as `main/01b_lab_curve_preprocessing.py`:
-- `--task_id` default `0`
-- `--exp_folder` default `multiplex/config.LAB_MULTIPLEX_FOLDER`
+> **Note:** `label_binarized` is **not** saved to the joblib. It is recomputed on-demand in 03 and 06 via `encode_multilabel_for_training(label_lists, all_targets)` — this keeps the joblib schema lean and avoids stale cached arrays if `all_targets` changes.
 
-**Output:** `{exp_path}/curve_for_training_ml.joblib`
-
-Same inner structure as `main/01b` output (datasets list, curve arrays, kinetic_features DataFrames) plus the new multi-label fields.
+**Argparse:** `--task_id` (int, default 0), `--exp_folder` (str, default `config.LAB_MULTIPLEX_FOLDER`).
 
 ---
 
 ## 6. `02_outlier_detection_pipeline.py`
 
-**Purpose:** Run LSTM-AE global outlier filter on multiplex data, write outlier labels to `kinetic_features` in `curve_for_training_ml.joblib`.
-
-**What to reuse (import directly):**
+**What to reuse (imports from `main/`):**
 ```python
 from lstm_autoencoder_outlier import run_lstm_autoencoder_pipeline
-# Spatial filters imported but will produce no output (no coords):
 from spatial_consistency_outlier import (
     run_spatial_consistency_knn_pipeline,
     run_spatial_consistency_grid_pipeline,
 )
+from model_utils import set_global_determinism
+from safe_io import safe_joblib_dump
+import sigmoid_fitting as sp
 ```
 
-**What is different from `main/02`:**
+**Key differences from `main/02`:**
 - Loads `curve_for_training_ml.joblib` (not `curve_for_training.joblib`)
-- Passes `config` = `multiplex.config` so `OUTLIER_FILTERS` uses the subset
-- Spatial pipelines called but skipped gracefully (no coords → no column written)
-- LSTM-AE runs on `ori_curves` as normal (multi-label has no effect on the AE)
-- Kinetic feature extraction (`extract_kinetic_features`, `get_send`) imported from `main/02` directly (no changes needed — features depend only on the curve, not on the label)
+- No per-well encoding (`per_well=False`) — flat-CSV lab data has no well structure
+- Spatial filters listed but gracefully skipped (no row/col coords → no column written)
+- LSTM-AE downsample factor: `config.AE_DOWNSAMPLE_FACTOR` (= 1)
 
-**Argparse defaults — same as `main/02_outlier_detection_pipeline.py`:**
-- `--task_id` default `0`
-- `--exp_folder` default `multiplex/config.LAB_MULTIPLEX_FOLDER`
-- `--force_rerun` flag, off
-- `--fast_mode` flag, off
-- `--filters` nargs+, default `None` (runs all `OUTLIER_FILTERS`)
+**Argparse:**
 
-**Why MSC/AMF/KNN are not included:**
-- User specified only `[None, lstm_ae_..., spatial_knn_..., spatial_grid_...]`
-- MSC (Mahalanobis) uses `kinetic_features` stratified by class — multi-label class structure complicates this; excluded for now
-- AMF (Isolation Forest) is class-agnostic but not requested
-- KNN fingerprint filter requires per-class KNN — multi-label makes "same class" ambiguous; excluded
+| Flag | Default | Notes |
+|---|---|---|
+| `--task_id` | `0` | same as main/02 |
+| `--exp_folder` | `config.LAB_MULTIPLEX_FOLDER` | — |
+| `--force_rerun` | off | same |
+| `--fast_mode` | off | same |
+| `--filters` | `[]` (empty) | `nargs="*"`, `choices=sorted(ALL_FILTERS)`. **Omitting `--filters` = no filter pipelines run.** Pass `--filters lstm_ae` to run LSTM-AE. |
+
+> **Important:** Unlike `main/02` whose `--filters` defaults to running lstm_ae, multiplex `02` defaults to `[]` — no pipelines run unless explicitly requested. This avoids inadvertently running the expensive AE during debugging.
 
 ---
 
 ## 7. `utils/model_training/model_utils_multilabel.py`
 
-This is the **core adaptation module**. It does not re-implement model training from scratch — it wraps and adapts `model_utils.evaluate_outlier_filters()`.
-
 ### 7a. Label encoding
 
 ```python
-from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
-
 def encode_multilabel_for_training(labels_list, all_targets):
-    """Returns (y_binary, y_combo_int, encoder) where:
-    - y_binary: (N, n_targets) binary indicator matrix — actual training target
-    - y_combo_int: integer-encoded combination — used ONLY for StratifiedKFold stratification
-    - encoder: fitted LabelEncoder on combination strings
+    """Returns (y_binary, y_combo_int, mlb, combo_enc).
+
+    y_binary    (N, n_targets) int8 binary indicator — actual training target
+    y_combo_int (N,) int — encoded combination string, used ONLY for StratifiedKFold
+    mlb         fitted MultiLabelBinarizer
+    combo_enc   fitted LabelEncoder on combination strings
     """
-    mlb = MultiLabelBinarizer(classes=all_targets)
-    y_binary = mlb.fit_transform(labels_list)
-    combo_strs = ['_'.join(sorted(lbl)) for lbl in labels_list]
-    enc = LabelEncoder()
-    y_combo_int = enc.fit_transform(combo_strs)
-    return y_binary, y_combo_int, enc
 ```
 
-**Rationale:** We need two encodings:
-1. `y_binary` — the actual training target (sigmoid output) and the input to the Jaccard-based SupCon mask
-2. `y_combo_int` — integer label for `StratifiedKFold` stratification **only** (SupCon now uses Jaccard on `y_binary`)
-
-Since there are only 7 unique combinations, `StratifiedKFold` on `y_combo_int` works fine without an external `iterstrat` dependency.
+Returns **4 values** (original plan said 3 — `mlb` was added to expose the fitted binarizer for downstream use).
 
 ### 7b. Model head replacement
 
 ```python
-import tensorflow as tf
-
-def adapt_for_multilabel(model, n_targets, threshold=0.5):
-    """Replace the softmax classification output with sigmoid for multi-label.
-    
-    Finds the last Dense(n_classes, softmax) layer and rebuilds the output.
-    Works for standard ST models. For custom subclass models (SupCon, RCFD)
-    a different strategy is needed (see 7c).
+def adapt_for_multilabel(model, n_targets):
+    """Replace last softmax Dense with sigmoid Dense(n_targets, name='cls_out').
+    Returns _StandardMultiLabelModel — a subclass that injects BCE train/test steps.
     """
-    # Find the layer before the softmax output
-    for layer in reversed(model.layers):
-        if hasattr(layer, 'activation') and layer.activation.__name__ == 'softmax':
-            pre_output = layer.input
-            new_out = tf.keras.layers.Dense(
-                n_targets, activation='sigmoid', name='cls_out_ml'
-            )(pre_output)
-            return tf.keras.Model(inputs=model.inputs, outputs=new_out)
-    raise ValueError("Could not find softmax output layer to replace")
 ```
 
-**For SupCon models** (Keras subclasses overriding `train_step`): their classification output is defined inside `call()`. The `adapt_for_multilabel` function cannot simply remap layers.
+`_StandardMultiLabelModel` is needed because standard functional models have no loss specified at compile time. The subclass provides custom `train_step` / `test_step` with `binary_crossentropy`. The output layer is named `'cls_out'` (not `'cls_out_ml'`) to match the training dict key.
 
-**Solution for SupCon/RCFD:** Create thin multi-label subclasses in `model_utils_multilabel.py`. The key change is the contrastive mask construction: instead of using integer class equality, compute pairwise Jaccard similarity on `y_binary` and use it as the positive-pair mask (see Section 10a for details).
+### 7c. Model class hierarchy
+
+All multi-label model classes are **standalone** (not subclasses of the corresponding main/ classes — avoids coupling to main/ private internals):
+
+```
+tf.keras.Model
+├── _StandardMultiLabelModel          # standard ST (adapt_for_multilabel)
+├── MultiLabelSupConModel             # SC1: BCE + Jaccard SupCon on fused embedding
+├── MultiLabelSupConBranch2STModel    # SC2: BCE + Jaccard SupCon on CNN + seq branches
+├── MultiLabelSupConBranch3STModel    # SC3: BCE + Jaccard SupCon on all 3 branches
+└── MultiLabelMTLModel                # RCFD base: UW-SO(BCE + MSE)
+    ├── MultiLabelRCFDModel           # RCFD SC0 (base, no SupCon)
+    ├── MultiLabelRCFDSupConMTLModel  # RCFD SC1: MTL + Jaccard SupCon on z_cond
+    ├── MultiLabelRCFDBranch2MTLModel # RCFD SC2: MTL + Jaccard SupCon on CNN + seq
+    └── MultiLabelRCFDBranch3MTLModel # RCFD SC3: MTL + Jaccard SupCon on all 3
+```
+
+### 7d. Multi-label metrics
 
 ```python
-class MultiLabelSupConSTModel(SupConSTModel):
-    """Multi-label SupCon: sigmoid cls head + Jaccard positive-pair mask."""
-    def __init__(self, *args, n_targets, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.n_targets = n_targets
-        self.cls_out = tf.keras.layers.Dense(n_targets, activation='sigmoid', name='cls_out_ml')
-    
-    def train_step(self, data):
-        # x, (y_binary, y_combo_int) = data
-        # contrastive_loss uses _jaccard_weight_matrix(y_binary) — continuous, no threshold
-        # cls_loss uses binary_crossentropy(y_binary, sigmoid(cls_out))
-        ...
+def multilabel_metrics(y_true_binary, y_pred_binary, target_names):
+    # Returns dict with: exact_acc, hamming, f1_samples, f1_macro, f1_micro, f1_per_label
 ```
 
-The standard (non-subclass) models use the simpler wrapper:
-```python
-def create_multilabel_model(base_factory, T, n_targets):
-    base_model = base_factory(T, n_targets)  # build with n_targets, then swap head
-    return adapt_for_multilabel(base_model, n_targets)
-```
+Signature takes `(y_true_binary, y_pred_binary, target_names)` — no `y_pred_proba` argument (probabilities are accessed directly from the result dict when needed in 06).
 
-**Summary:** Standard models (cnn_gru_dual + cosine/attn_recon, 3 models) use `adapt_for_multilabel`. SupCon subclass models (SC1/SC2/SC3 × 3 variants = 9 models) use `MultiLabelSupConSTModel` and its Branch2/Branch3 equivalents. RCFD models (4 models) use `MultiLabelRCFDModel` variants.
+### 7e. Model factory dispatch
 
-### 7c. Multi-label metrics
+`ML_FACTORIES` maps model key → `factory_fn(T, n_targets)`. **30 models total:**
 
-```python
-from sklearn.metrics import (
-    accuracy_score,      # exact-match (subset accuracy)
-    hamming_loss,        # fraction of wrong label bits
-    f1_score,            # multi-label F1
-)
-
-def multilabel_metrics(y_true_binary, y_pred_binary, y_pred_proba, target_names):
-    """Returns a dict of standard multi-label classification metrics."""
-    return {
-        'exact_acc':   accuracy_score(y_true_binary, y_pred_binary),
-        'hamming':     hamming_loss(y_true_binary, y_pred_binary),
-        'f1_samples':  f1_score(y_true_binary, y_pred_binary, average='samples',  zero_division=0),
-        'f1_macro':    f1_score(y_true_binary, y_pred_binary, average='macro',    zero_division=0),
-        'f1_micro':    f1_score(y_true_binary, y_pred_binary, average='micro',    zero_division=0),
-        'f1_per_label': f1_score(y_true_binary, y_pred_binary, average=None,     zero_division=0),
-    }
-```
-
-### 7d. `evaluate_outlier_filters_ml()` — adapted training loop
-
-The function signature mirrors `evaluate_outlier_filters()` from `model_utils.py` but accepts multi-label inputs:
-
-```python
-def evaluate_outlier_filters_ml(
-    X_curves,           # (N, T) float curve array
-    features_df,        # DataFrame with kinetic features + outlier filter columns
-    y_binary,           # (N, n_targets) binary indicator matrix
-    y_combo_int,        # (N,) int for stratification + SupCon pairing
-    all_targets,        # list[str] e.g. ['KPC', 'NDM', 'VIM']
-    outlier_filters,    # list from multiplex/config.OUTLIER_FILTERS
-    dataset_name,
-    mode_name,
-    cached_results=None,
-    models=MULTIPLEX_MODELS,
-    n_splits=5,
-    checkpoint_fn=None,
-    save_model_dir=None,
-    y_concentration=None,   # for RCFD regression head
-    threshold=0.5,          # sigmoid → binary prediction threshold
-    ...
-):
-```
-
-**Key differences from `evaluate_outlier_filters()`:**
-
-| Aspect | Original | Multi-label version |
+| Group | Keys | Count |
 |---|---|---|
-| `y_encoded` | 1D int array | 2D binary (N, n_targets) |
-| Stratification key | `y_encoded` | `y_combo_int` |
-| Splitter | `StratifiedKFold(y_encoded)` | `StratifiedKFold(y_combo_int)` |
-| Model compile loss | `sparse_categorical_crossentropy` | `binary_crossentropy` |
-| Model output | softmax (n_classes) | sigmoid (n_targets) |
-| Predictions | `argmax(proba)` → int | `proba > threshold` → binary |
-| `y_trues_` | list of 1D int arrays | list of 2D binary arrays |
-| `y_preds_*` | list of 1D int arrays | list of 2D binary arrays |
-| `y_probs_*` | list of (N, n_classes) | list of (N, n_targets) |
-| `classes_*` | list of int arrays | list of target name arrays |
-| Primary metric logged | accuracy (%) | exact_acc + hamming + f1_samples |
-| SupCon pair mining | `y_encoded` int | `y_combo_int` |
-| Rare class filter | `class_count < 2` | combination count < 2 |
+| Single-branch ST | `cnn`, `gru`, `transformer` | 3 |
+| Single-branch SC1 | `cnn_supcon`, `gru_supcon`, `transformer_supcon` | 3 |
+| CNN+GRU dual ST | `cnn_gru_dual` | 1 |
+| CNN+GRU dual SC1/2/3 | `cnn_gru_dual_supcon/2/3` | 3 |
+| CNN+Trans dual ST | `cnn_trans_dual` | 1 |
+| CNN+Trans dual SC1/2/3 | `cnn_trans_dual_supcon/2/3` | 3 |
+| RCFD GRU+CGD SC0/1/2/3 | `gru_rcfd_cgd[_supcon/2/3_mtl]` | 4 |
+| RCFD GRU+CTD SC0/1/2/3 | `gru_rcfd_ctd[_supcon/2/3_mtl]` | 4 |
+| RCFD Trans+CGD SC0/1/2/3 | `trans_rcfd_cgd[_supcon/2/3_mtl]` | 4 |
+| RCFD Trans+CTD SC0/1/2/3 | `trans_rcfd_ctd[_supcon/2/3_mtl]` | 4 |
 
-**What to import from `model_utils.py`:**
-```python
-from model_utils import (
-    build_neighbor_curve_stack,   # for cosine/attn_recon spatial models
-    reconstruct_curves_cosine,
-    set_global_determinism,
-    CurveResampler,
-    _remap_global_splits,         # reuse split remapping helper
-)
-```
+RCFD naming: `{seq_encoder}_rcfd_{dual_backbone}` where `seq_encoder ∈ {gru, trans}` and `dual_backbone ∈ {cgd=CNN+GRU dual, ctd=CNN+Trans dual}`.
 
-**Model factories imported from existing utils:**
-```python
-# Standard models
-from model_utils import (
-    create_cnn_gru_dual_model,
-    create_cnn_gru_dual_cosine_recon_model,
-    create_cnn_gru_dual_attn_recon_model,
-)
-# SupCon models
-from model_utils_supcon import (
-    create_cnn_gru_dual_supcon_model,
-    create_cnn_gru_dual_cosine_recon_supcon_model,
-    create_cnn_gru_dual_attn_recon_supcon_model,
-    create_cnn_gru_dual_supcon2_model,
-    create_cnn_gru_dual_cosine_recon_supcon2_model,
-    create_cnn_gru_dual_attn_recon_supcon2_model,
-    create_cnn_gru_dual_supcon3_model,
-    create_cnn_gru_dual_cosine_recon_supcon3_model,
-    create_cnn_gru_dual_attn_recon_supcon3_model,
-)
-# RCFD models
-from model_utils_rcfd import (
-    create_gru_rcfd_cgd_model,
-    create_gru_rcfd_cgd_supcon_mtl_model,
-    create_gru_rcfd_cgd_supcon2_mtl_model,
-    create_gru_rcfd_cgd_supcon3_mtl_model,
-    RCFDModel, RCFDSupConMTLModel,
-)
-```
+### 7f. Result schema
+
+`evaluate_outlier_filters_ml()` writes to `results_dict[outlier_filter]` (flat, no Native/Reference nesting):
+
+| Key | Type | Description |
+|---|---|---|
+| `y_trues_` | `list[(N_test, n_targets) int8]` | Ground-truth binary arrays per fold |
+| `y_preds_<m>_` | `list[(N_test, n_targets) int8]` | Thresholded binary predictions per fold |
+| `y_probs_<m>_` | `list[(N_test, n_targets) float32]` | Raw sigmoid scores per fold |
+| `classes_<m>_` | `list[np.ndarray[str]]` | Target names per fold (always `all_targets`) |
+| `y_reg_preds_<m>_` | `list[(N_test,) float]` | RCFD-only: predicted concentrations |
+| `y_reg_trues_<m>_` | `list[(N_test,) float]` | RCFD-only: true concentrations (sentinel-masked) |
+| `mask_count` | `int` | N used after outlier filter application |
+| `y_true_count` | `int` | N after rare-combination drop |
+
+Key pattern: `y_preds_{model_key}_` (no `AC_` prefix — the multiplex result file is separate from main/).
 
 ---
 
 ## 8. `03_main_training.py`
 
-**Purpose:** CLI driver for multi-label training. Mirrors `main/03_main_training.py` structure exactly, including argparse defaults.
-
-**What to reuse:**
-```python
-import sys, os
-sys.path.insert(0, parent)
-from safe_io import safe_joblib_dump
-from pipeline_utils import get_exp_paths, check_task_id
-from model_utils import set_global_determinism
-```
-
-**What differs from `main/03`:**
-- Loads `curve_for_training_ml.joblib` (`y_binary`, `labels`, `all_targets` already present)
-- Calls `evaluate_outlier_filters_ml()` from `multiplex/utils/model_training/model_utils_multilabel.py`
-- No `LabelEncoder` call (binarization already in joblib)
-- No `--lbl_conc` (LC label consolidation not applicable for multi-label)
-- No `--mtl` toggle (RCFD always has concentration regression head; standard models always use sigmoid cls head)
-- No `--supcon_jaccard_threshold` flag (continuous Jaccard has no threshold parameter)
-- Result file: `classification_performances_ml.joblib`
-
-**Argparse — same flags and same defaults as `main/03_main_training.py`:**
+**Argparse (actual implementation):**
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
-| `--task_id` | int | `0` | same |
-| `--exp_folder` | str | `multiplex/config.LAB_MULTIPLEX_FOLDER` | overrides base default |
-| `--n_splits` | int | `1` | **same as main/03** (not 5) |
+| `--task_id` | int | `0` | same as main/03 |
+| `--exp_folder` | str | `config.LAB_MULTIPLEX_FOLDER` | — |
+| `--n_splits` | int | `1` | 1 = StratifiedShuffleSplit; >1 = StratifiedKFold |
 | `--force_rerun` | flag | off | same |
-| `--training_mode` | nargs+ | `["native"]` | same |
-| `--curve_type` | nargs+ | `["ori_curve","ori_curve_avg","ori_curve_wavelet_sym8"]` | same |
 | `--fast_mode` | flag | off | same |
-| `--k_neighbors` | int | `24` | same |
-| `--supcon` | int choices[0-3] | `0` | **same as main/03** — `0`=standard, `1/2/3`=SupCon SC1/2/3 |
-| `--condreg` | flag | off | **same as main/03** — enables RCFD (`gru_rcfd_cgd*`) models |
-| `--rerun_models` | nargs+ | `None` | same |
-_(no `--supcon_jaccard_threshold` — continuous Jaccard has no threshold)_
+| `--supcon` | int [0-3] | `0` | same as main/03 |
+| `--condreg` | flag | off | same as main/03 |
+| `--threshold` | float | `0.5` | sigmoid → binary prediction threshold |
+| `--rerun_models` | nargs+ | None | restrict `--force_rerun` scope |
 
-**How `--supcon` and `--condreg` select models (same logic as `main/03`):**
+**Flags intentionally absent (not applicable for flat CSV):**
+- `--training_mode` / `--curve_type` — only `ori_curves` exists; no reference/native split
+- `--k_neighbors` — no cosine_recon/attn_recon (no spatial coords)
+- `--mtl`, `--lbl_conc`, `--supcon_staged` — not applicable
 
+**`mode_name = _mode` is a cosmetic log label only.** Examples: `"ML"`, `"ML SC1"`, `"RCFD SC0"`. Unlike main/03's `"Native"` / `"Reference"` (which are structural result-dict keys), `_mode` in multiplex/03 is only printed to the console. Results are keyed only by `outlier_filter` (flat structure).
+
+**Model group selection (`_rcfd_by_sc`):**
+
+```python
+# ST (non-RCFD)
+--supcon 0: ['cnn', 'gru', 'transformer', 'cnn_gru_dual', 'cnn_trans_dual']
+--supcon 1: ['cnn_supcon', 'gru_supcon', 'transformer_supcon',
+             'cnn_gru_dual_supcon', 'cnn_trans_dual_supcon']
+--supcon 2: ['cnn_gru_dual_supcon2', 'cnn_trans_dual_supcon2']
+--supcon 3: ['cnn_gru_dual_supcon3', 'cnn_trans_dual_supcon3']
+
+# RCFD (--condreg flag)
+--condreg --supcon 0: ['gru_rcfd_cgd',  'gru_rcfd_ctd',  'trans_rcfd_cgd',  'trans_rcfd_ctd']
+--condreg --supcon 1: ['gru_rcfd_cgd_supcon_mtl',  'gru_rcfd_ctd_supcon_mtl',
+                       'trans_rcfd_cgd_supcon_mtl',  'trans_rcfd_ctd_supcon_mtl']
+--condreg --supcon 2: [... supcon2_mtl variants ...]
+--condreg --supcon 3: [... supcon3_mtl variants ...]
 ```
---supcon 0  (no flag): train cnn_gru_dual, cnn_gru_dual_cosine_recon, cnn_gru_dual_attn_recon
---supcon 1:            train cnn_gru_dual_supcon, ..._cosine_recon_supcon, ..._attn_recon_supcon
---supcon 2:            train cnn_gru_dual_supcon2, ..._cosine_recon_supcon2, ..._attn_recon_supcon2
---supcon 3:            train cnn_gru_dual_supcon3, ..._cosine_recon_supcon3, ..._attn_recon_supcon3
---condreg:             train gru_rcfd_cgd, gru_rcfd_cgd_supcon_mtl (depending on --supcon value)
+
+**Checkpoint semantics** (mirrors `make_checkpoint_fn` in main/03):
+```python
+def checkpoint_fn(current_results):   # current_results = full results_dict
+    cached_results.update(current_results)
+    safe_joblib_dump(cached_results, results_path, compress=3)
 ```
 
-All results merge into the same `classification_performances_ml.joblib` (same checkpoint pattern as `main/03`).
+**Result structure:** `cached_results = {outlier_filter: res_entry}` — flat, no Native/Reference nesting. All runs with different `--supcon` / `--condreg` combinations accumulate into the same file (same checkpoint pattern as main/03).
 
 ---
 
 ## 9. `06_model_prediction_report.py`
 
-**Purpose:** HTML prediction report for multi-label results. Reuses `main/06` rendering infrastructure.
+**Loads:** `classification_performances_ml.joblib` (or `_10fold.joblib` when `--n_splits > 1`).
 
-**What to reuse:**
-```python
-from html_utils import _fig_to_buf, _buf_to_img_html, _panel, build_tabbed_html
-# Import the split recreation helper from main/06:
-import importlib
-_06 = importlib.import_module('..06_model_prediction_report')  # or direct import path
-compute_filtered_splits = _06.compute_filtered_splits
-```
+**Split reconstruction:** `compute_ml_filtered_splits(y_binary, y_combo_int, features_df, outlier_filter, n_splits)` — defined locally (not imported from main/06) because it uses `y_combo_int` for stratification whereas main/06 uses 1D `y_encoded`.
 
-**What differs:**
-- Loads `classification_performances_ml.joblib`
-- `y_trues_` and `y_preds_*` are 2D binary arrays → needs threshold/binarization display
-- **Confusion matrix** → replaced with per-label confusion matrices (one per target gene)
-- **Per-label F1/precision/recall** table (not multi-class confusion)
-- **ROC curve** → per-label AUC (one curve per target)
-- **Accuracy overview bar** → shows exact-match accuracy + hamming loss side-by-side
-- **Multi-label distribution plot** → combination frequency barchart (how often each combination appears in train/test)
-- Prediction display: probabilities shown as (KPC=0.82, NDM=0.11, VIM=0.97) format
+**Report tabs (8 total):**
+
+| # | Tab ID | Content |
+|---|---|---|
+| 1 | `overview` | Exact-match accuracy bar + F1-macro bar + per-fold stability strip chart |
+| 2 | `combo_freq` | Grouped bar: per-combination sample count in train vs test (avg across folds) |
+| 3 | `curves` | Correct vs wrong signal plots per label combination |
+| 4 | `cm` | Per-label 2×2 confusion matrix (one per gene: KPC, NDM, VIM) |
+| 5 | `metrics` | Per-label P/R/F1 table + macro/micro/samples aggregates |
+| 6 | `conf` | Max sigmoid score histogram: exact-match vs wrong |
+| 7 | `roc` | Per-label ROC + PR curves |
+| 8 | `regression` | RCFD scatter + metrics table (auto-detected, tab absent for non-RCFD) |
+
+**Argparse:** `--task_id`, `--exp_folder`, `--n_splits` (must match the 03 run), `--force_rerun`, `--outlier_filter` (nargs*, default `config.OUTLIER_FILTERS`; pass `'None'` string for baseline).
 
 ---
 
 ## 10. Critical Multi-Label Algorithmic Considerations
 
-### 10a. SupCon Contrastive Loss with Multi-Label Targets — Continuous Jaccard
+### 10a. SupCon Contrastive Loss — Continuous Jaccard
 
-The original SupCon loss identifies positive pairs by integer class equality: `pos_mask[i,j] = float(y[i] == y[j])` — a binary 0/1 matrix. For multi-label this is too coarse: `VIM` and `VIM_NDM` share a real biological signal yet form pure negative pairs.
+Binary `pos_mask[i,j] = (y[i] == y[j])` is too coarse for multi-label: `VIM` and `VIM_NDM` share real biological signal yet form pure negative pairs.
 
-**Decision: continuous Jaccard weight matrix — no threshold.**
-
-Instead of binary, `pos_mask[i,j]` becomes a continuous float:
-
-```
-J(a, b) = |a ∩ b| / |a ∪ b|
-         = dot(a, b) / (sum(a) + sum(b) - dot(a, b))
-```
-
-All values stay in `[0, 1]` with no threshold. This is a strict generalisation of binary SupCon: for disjoint single-target pairs `J=0` (pure negative), for identical pairs `J=1` (pure positive), for partial overlaps a fractional pull.
-
-**Semantic geometry:** a `VIM_NDM` sample is pulled toward `VIM` with 50% force and toward `NDM` with 50% force (J = 1/3 each under VIM/NDM/VIM_NDM), placing its embedding between the two single-target clusters. Exactly what we want for multi-label representation.
-
-**Why no threshold:** A threshold re-introduces a hard binary decision. The continuous form lets the loss gradient scale smoothly by overlap degree — logarithms in the Khosla equation handle the weighting naturally.
-
-**Implementation:**
+**Decision: continuous Jaccard — no threshold.**
 
 ```python
 def _jaccard_weight_matrix(y_binary):
-    """Continuous pairwise Jaccard similarity for SupCon positive weighting.
-    
-    Returns (B, B) float matrix in [0, 1]. Self-pairs excluded (diagonal = 0).
-    For identical labels → 1.0 (full pull).
-    For partial overlap → fractional pull proportional to Jaccard.
-    For disjoint labels → 0.0 (pure negative, no pull).
-    """
-    y = tf.cast(y_binary, tf.float32)           # (B, n_targets)
-    intersection = tf.matmul(y, y, transpose_b=True)   # (B, B)
-    sum_labels = tf.reduce_sum(y, axis=1)
-    union = (tf.expand_dims(sum_labels, 1)
-             + tf.expand_dims(sum_labels, 0)
-             - intersection)                     # (B, B)
-    jaccard = intersection / (union + 1e-8)      # (B, B), safe div
-    # Zero out self-pairs
-    not_self = 1.0 - tf.eye(tf.shape(y)[0])
-    return jaccard * not_self                    # continuous pos_mask
+    y            = tf.cast(y_binary, tf.float32)
+    intersection = tf.matmul(y, y, transpose_b=True)
+    row_sums     = tf.reduce_sum(y, axis=1)
+    union        = (tf.expand_dims(row_sums, 1) + tf.expand_dims(row_sums, 0) - intersection)
+    return (intersection / (union + 1e-8)) * (1.0 - tf.eye(tf.shape(y)[0]))
 ```
 
-**Loss modification inside `MultiLabelSupConSTModel.train_step`:**
+Semantics: identical combos → J=1.0 (full pull); partial overlap → fractional; disjoint → J=0.0 (pure negative). No new hyperparameter; no `--supcon_jaccard_threshold` flag.
 
+**Weighted loss:**
 ```python
-# Old (binary):
-# pos_mask = tf.cast(same_label & not_self, tf.float32)  # 0 or 1
-# mean_log_prob_pos = tf.reduce_sum(log_prob * pos_mask, axis=1) / tf.reduce_sum(pos_mask, axis=1)
-
-# New (continuous Jaccard):
-pos_mask = _jaccard_weight_matrix(y_binary)          # floats in [0, 1]
-mean_log_prob_pos = (tf.reduce_sum(log_prob * pos_mask, axis=1)
-                     / (tf.reduce_sum(pos_mask, axis=1) + 1e-8))
+def _supcon_loss_jaccard(embeddings, pos_mask, temp=SUPCON_TEMP):
+    # Standard Khosla denominator (all non-self pairs)
+    # Numerator weighted by continuous pos_mask instead of binary
+    pos_sum     = tf.reduce_sum(pos_mask, axis=1)
+    has_pos     = tf.cast(pos_sum > 0, tf.float32)
+    per_anchor  = -tf.reduce_sum(log_prob * pos_mask, axis=1) / (pos_sum + 1e-8)
+    return tf.reduce_mean(per_anchor * has_pos)
 ```
-
-The rest of the Khosla equation (temperature scaling, log-sum-exp denominator) is unchanged.
-
-**Applicability check:**
-- ✅ Our embeddings are 96-dim floats (CNN+GRU dual backbone) — continuous weighting works
-- ✅ Batch contains all 7 label combinations — full range of Jaccard values appear in each batch
-- ✅ Single-target samples (`VIM`, `KPC`, `NDM`) have J=0 with disjoint targets → pure negatives preserved
-- ✅ `VIM_NDM_KPC` has J>0 with all other combinations — smoothly pulled to centre of space
-- ✅ No new hyperparameter introduced (threshold removed entirely)
-
-**No `--supcon_jaccard_threshold` arg needed.** Remove it from `03_main_training.py` argparse.
-
-**Implementation location:** `multiplex/utils/model_training/model_utils_multilabel.py` — the `MultiLabelSupCon*` subclasses only. Original `SupConSTModel` in `main/` is not touched.
 
 ### 10b. RCFD with Multi-Label
 
-`gru_rcfd_cgd` has:
-- Early encoder: GRU → scalar concentration prediction
-- Dual backbone: CNN+GRU → 96-dim embedding
-- FiLM conditioning: concentration modulates embedding
-- Classification head: `Dense(n_classes, softmax)` → change to `Dense(n_targets, sigmoid)`
-- Regression head: `Dense(1, linear)` → unchanged
+`_build_rcfd_backbone(inputs, enc_type, dual_type)` is unchanged (imported from `main/`):
+- `enc_type`: `'gru'` or `'transformer'` (early regression encoder architecture)
+- `dual_type`: `'cgd'` (CNN+GRU dual) or `'ctd'` (CNN+Trans dual)
 
-In `evaluate_outlier_filters_ml`, for RCFD models:
-- Pass `y_concentration` as usual (concentration regression target stays the same)
-- Multi-label only affects the classification output/loss
-- Combined loss: `cls_weight * binary_crossentropy(y_binary) + reg_weight * mse(y_conc)`
+The classification head is replaced with sigmoid in `_ml_cls_head(z, n_targets)`. Regression head (concentration MSE) is unchanged. Combined loss uses UW-SO (Uncertainty Weighting Single Output) balancing BCE + MSE.
 
-The `RCFDModel` and `RCFDSupConMTLModel` subclasses will need thin multi-label overrides in `model_utils_multilabel.py`:
-
-```python
-class MultiLabelRCFDModel(RCFDModel):
-    """RCFD with sigmoid multi-label output instead of softmax."""
-    # Override _build_cls_head to output sigmoid(n_targets)
-    # Override train_step to use binary_crossentropy for classification loss
-```
+All 16 RCFD variants: `{gru,trans}_rcfd_{cgd,ctd}[_supcon{,2,3}_mtl]`.
 
 ### 10c. Rare Combination Handling
 
-Some combinations have very low counts (e.g., `VIM_NDM¸` = 1 sample after cleaning merges into `VIM_NDM` = 1535). The existing `rare_classes` filter (drops classes with < 2 samples) operates on `y_combo_int`. For multiplex, all cleaned combinations have > 1000 samples, so this is not a concern in practice. The rare-class logic is still kept for safety.
+`evaluate_outlier_filters_ml` drops combinations with fewer than 2 samples before splitting (same guard as main/02 for rare classes). With the current dataset all 7 combinations have >1500 samples — the guard is a safety net only.
 
-### 10d. Model Checkpoint / XAI
+### 10d. Concentration Sentinel Masking
 
-- `save_model_dir` in `evaluate_outlier_filters_ml` saves `.keras` files for XAI
-- Multi-label models saved with multi-label head can be loaded normally for saliency analysis
-- XAI (script 07) is **not** in the multiplex scope for this phase
+When `--condreg` is passed, missing or zero-concentration samples are set to `_REG_SENTINEL = -1.0` before encoding (mirrors main/03 MTL handling):
+```python
+y_concentration = np.where(
+    np.isnan(_float_arr) | (_float_arr == 0.0),
+    _REG_SENTINEL, _float_arr)
+```
+The regression MSE loss only accumulates over samples where `y_reg != REG_SENTINEL`.
 
 ---
 
-## 11. File-by-File Implementation Checklist
+## 11. Implementation Checklist
 
-### `multiplex/config.py`
-- [ ] Import base config with `from config import *`
-- [ ] Define `LAB_MULTIPLEX_FOLDER`, `FILE_MAPPING`, `FILE_CONC`, `FILE_TARGET`, `MULTIPLEX_SEPARATOR`
-- [ ] Define `TRAINING_DATA_PATH`, `TRAINING_RESULT_PATH`, `TRAINING_10FOLD_RESULT_PATH` with `_ml` suffix
-- [ ] Define `OUTLIER_FILTERS` (4 entries)
-- [ ] Define `MULTIPLEX_MODELS` list (16 model keys)
-- [ ] Add `MODEL_KEY_MAP` entries for multiplex (inherit from base + reuse existing keys)
+### `multiplex/config.py` ✅
+- [x] `from config import *` — inherits base constants
+- [x] `LAB_MULTIPLEX_FOLDER`, `FILE_MAPPING`, `FILE_CONC`, `FILE_TARGET`
+- [x] `MULTIPLEX_SEPARATOR = '_'` (string, not dict)
+- [x] `TRAINING_DATA_PATH`, `TRAINING_RESULT_PATH`, `TRAINING_10FOLD_RESULT_PATH`
+- [x] `OUTLIER_FILTERS` (4 entries; spatial listed but inert for flat-CSV lab data)
+- [x] `MULTIPLEX_MODELS` (30 entries)
 
-### Pre-implementation: fix CSV
+### Pre-implementation: CSV fix
 - [ ] Edit `LAB_Multiplex/01_ACA_qdPCR/dPCR_Dataset_Multiplex.csv`: change `VIM_NDM¸` → `VIM_NDM`
 
-### `multiplex/01b_lab_curve_preprocessing.py`
-- [ ] Import curve-reading helpers from `main/01b` (via sys.path + direct import)
-- [ ] Import `sigmoid_fitting`, `safe_io`, `pywt` from parent
-- [ ] Implement `parse_multilabel(raw_labels, separator)` — no artifact cleaning (CSV already clean)
-- [ ] Implement `binarize_labels(label_lists)` using `MultiLabelBinarizer`
-- [ ] Use `multiplex/config.FILE_MAPPING/FILE_CONC/FILE_TARGET/MULTIPLEX_SEPARATOR`
-- [ ] Output `curve_for_training_ml.joblib` with extra keys: `labels`, `all_targets`, `label_binarized`
-- [ ] Same wavelet / ori_curve / ori_curve_avg preprocessing as `main/01b`
-- [ ] Argparse defaults same as `main/01b`: `--task_id=0`, `--exp_folder=LAB_MULTIPLEX_FOLDER`
+### `multiplex/01b_lab_curve_preprocessing.py` ✅
+- [x] `parse_multilabel_column(raw_labels, separator)` — splits combo strings to lists
+- [x] Saves `label_lists`, `all_targets`, `well_labels` to joblib (no `label_binarized` — computed on demand)
+- [x] Argparse: `--task_id=0`, `--exp_folder=LAB_MULTIPLEX_FOLDER`
 
-### `multiplex/02_outlier_detection_pipeline.py`
-- [ ] Import LSTM-AE pipeline from `main/utils/02_outlier_detection/`
-- [ ] Import spatial pipelines (call but expect graceful no-op for lab data)
-- [ ] Load `curve_for_training_ml.joblib`
-- [ ] Extract kinetic features using functions imported from `main/02`
-- [ ] Run only `lstm_ae_glb` + spatial (4 filter slots, 3 non-None)
-- [ ] Save updated `curve_for_training_ml.joblib` with outlier columns appended
+### `multiplex/02_outlier_detection_pipeline.py` ✅
+- [x] `ALL_FILTERS = {"lstm_ae", "spatial_knn", "spatial_grid"}`, `_DEFAULT_FILTERS = {"lstm_ae"}`
+- [x] `--filters nargs="*", choices=sorted(ALL_FILTERS), default=[]` — omitting = no pipelines
+- [x] `per_well=False`, `has_spatial=False` (flat lab CSV)
+- [x] `--fast_mode`, `--force_rerun` flags
 
-### `multiplex/utils/model_training/model_utils_multilabel.py`
-- [ ] `_jaccard_weight_matrix(y_binary)` — continuous pairwise Jaccard float matrix (no threshold)
-- [ ] `encode_multilabel_for_training()` — returns `(y_binary, y_combo_int, encoder)`
-- [ ] `adapt_for_multilabel(base_model, n_targets)` — replaces softmax head with sigmoid
-- [ ] `MultiLabelSupConSTModel`, `MultiLabelSupConBranch2STModel`, `MultiLabelSupConBranch3STModel` — continuous Jaccard pos_mask + `binary_crossentropy` cls loss + sigmoid head
-- [ ] `MultiLabelRCFDModel`, `MultiLabelRCFDSupConMTLModel`, `MultiLabelRCFDBranch2MTLModel`, `MultiLabelRCFDBranch3MTLModel` — RCFD variants with sigmoid cls head; continuous Jaccard for SupCon variants
-- [ ] `multilabel_metrics(y_true, y_pred, y_proba, target_names)` — returns metric dict
-- [ ] `evaluate_outlier_filters_ml(...)` — the main training loop (see Section 7d)
-- [ ] `plot_ml_results_ml(...)` — adapted for multi-label metrics display
+### `multiplex/utils/model_training/model_utils_multilabel.py` ✅
+- [x] `_jaccard_weight_matrix(y_binary)` — continuous Jaccard float matrix
+- [x] `_supcon_loss_jaccard(embeddings, pos_mask)` — weighted SupCon loss
+- [x] `encode_multilabel_for_training()` — returns `(y_binary, y_combo_int, mlb, combo_enc)`
+- [x] `_StandardMultiLabelModel` — functional model wrapper with BCE train/test steps
+- [x] `adapt_for_multilabel(model, n_targets)` — replaces softmax with sigmoid, returns `_StandardMultiLabelModel`
+- [x] `MultiLabelSupConModel`, `MultiLabelSupConBranch2STModel`, `MultiLabelSupConBranch3STModel`
+- [x] `MultiLabelMTLModel`, `MultiLabelRCFDModel`, `MultiLabelRCFDSupConMTLModel`, `MultiLabelRCFDBranch2MTLModel`, `MultiLabelRCFDBranch3MTLModel`
+- [x] `multilabel_metrics(y_true_binary, y_pred_binary, target_names)` — metric dict
+- [x] `evaluate_outlier_filters_ml(...)` — full training loop with checkpoint
+- [x] `print_ml_results_summary(...)` — console text summary (replaces `plot_ml_results_ml`)
+- [x] `ML_FACTORIES` (30 entries), `_RCFD_ML_KEYS` (16), `_SUPCON_ML_KEYS` (21)
+- [x] `ML_MODEL_KEY_MAP` — `{m: (f'y_preds_{m}_', f'y_probs_{m}_', f'classes_{m}_')}` for all 30
+- [x] `ML_MODEL_PRINT_MAP` — display names for all 30 models
 
-### `multiplex/03_main_training.py`
-- [ ] Argparse with same flags and defaults as `main/03` (no `--supcon_jaccard_threshold`)
-- [ ] `--supcon` and `--condreg` select model subsets (same logic as `main/03`)
-- [ ] Load `curve_for_training_ml.joblib`
-- [ ] Call `encode_multilabel_for_training()` to get `y_binary`, `y_combo_int`
-- [ ] Call `evaluate_outlier_filters_ml()` for each curve type
-- [ ] Checkpoint into `classification_performances_ml.joblib`
+### `multiplex/03_main_training.py` ✅
+- [x] Argparse: `--task_id`, `--exp_folder`, `--n_splits`, `--force_rerun`, `--fast_mode`, `--supcon`, `--condreg`, `--threshold`, `--rerun_models`
+- [x] Inapplicable flags omitted: `--training_mode`, `--curve_type`, `--k_neighbors`, `--mtl`, `--lbl_conc`
+- [x] `--rerun_models` nullified without `--force_rerun`
+- [x] Concentration masking with `_REG_SENTINEL` scoped to `--condreg` only
+- [x] `_rcfd_by_sc` dict: 4 models per SC level (all 4 RCFD families)
+- [x] `checkpoint_fn`: `cached_results.update(current_results)` then `safe_joblib_dump`
+- [x] Flat result structure: `{outlier_filter: res_entry}` (no Native/Reference nesting)
 
-### `multiplex/06_model_prediction_report.py`
-- [ ] Load `classification_performances_ml.joblib`
-- [ ] Per-label ROC curves + AUC table
-- [ ] Per-label confusion matrices (3 separate 2×2 matrices: KPC, NDM, VIM)
-- [ ] Exact-match accuracy + hamming loss overview
-- [ ] Combination frequency chart
-- [ ] Reuse `build_tabbed_html` from `html_utils`
+### `multiplex/06_model_prediction_report.py` ✅
+- [x] `compute_ml_filtered_splits()` — mirrors training split logic exactly with `y_combo_int`
+- [x] 8 tabs: Overview, Combo Freq, Curves, Label CMs, Label Metrics, Confidence, ROC/PR, Regression
+- [x] Per-fold stability chart (`fold_accs` already in %; no double-multiply)
+- [x] Combination frequency chart (`render_ml_combination_freq_chart`)
+- [x] RCFD regression tab auto-detected from result keys
+- [x] `--outlier_filter` converts `'None'` string → Python `None`
+
+### `multiplex/_slurm_jobs/lab_multiplex_training.sh` ✅
+- [x] `--array=0` (single task, one dataset)
+- [x] `02` call has NO `--filters` arg (= `default=[]` = no filter pipelines at training time)
+- [x] ST loop: `--supcon 0/1/2/3` (4 runs)
+- [x] RCFD loop: `--condreg --supcon 0/1/2/3` (4 runs)
 
 ---
 
 ## 12. Open Questions / Risks
 
-1. **Spatial outlier filters on lab data**: `spatial_knn_label_elbow` and `spatial_grid_label_elbow` require `row`/`col` coordinates from chip data. For flat-CSV lab data these don't exist. The pipelines produce no column; the training loop skips missing filter columns with a warning. Listed in `OUTLIER_FILTERS` for structural consistency.
+1. **Spatial outlier filters on lab data** (by design): `spatial_knn_label_elbow` and `spatial_grid_label_elbow` produce no column for flat-CSV data. Training gracefully skips absent columns. Listed in `OUTLIER_FILTERS` for structural consistency with main/.
 
-2. **Continuous Jaccard for SupCon** (resolved): Uses `_jaccard_weight_matrix()` — no threshold, no CLI flag. `J=1.0` for identical combinations, `J=0.0` for disjoint, fractional for partial overlap. This is the decided approach.
+2. **Continuous Jaccard for SupCon** (resolved): `_jaccard_weight_matrix()` — no threshold, no CLI flag. J=1.0 for identical combos, J=0.0 for disjoint, fractional for partial overlap.
 
-3. **Multi-label sigmoid threshold**: Default 0.5 for sigmoid → binary prediction in `03`. **Per-class threshold optimization can be done post-training in a notebook** — load `classification_performances_ml.joblib`, iterate `y_probs_*` arrays (already cached), sweep thresholds per class, and pick the threshold that maximises per-class F1. No retraining required.
+3. **Sigmoid threshold** (configurable): Default 0.5 via `--threshold`. Per-class threshold optimization can be done post-training in a notebook: load `classification_performances_ml.joblib`, sweep `y_probs_*` arrays per class, pick F1-maximising thresholds. No retraining required.
 
-4. **Concentration regression in RCFD for multi-label**: All droplets have a scalar concentration regardless of how many targets are present. The regression head is unchanged; FiLM conditioning by concentration remains semantically correct.
+4. **RCFD concentration for multi-label** (unchanged): Concentration is a scalar per droplet regardless of how many targets are present. The regression head and FiLM conditioning are semantically identical to the single-label case.
 
-5. **`iterstrat` dependency**: Not needed — 7 unique combinations with `StratifiedKFold` on `y_combo_int` is sufficient. Adopt `MultilabelStratifiedKFold` if a future dataset has 20+ sparse combinations.
+5. **`iterstrat` dependency**: Not needed — 7 unique combinations with StratifiedKFold on `y_combo_int` is sufficient. Adopt `MultilabelStratifiedKFold` if a future dataset has 20+ sparse combinations.
 
-6. **`plot_ml_results` compatibility**: The existing `plot_ml_results()` assumes 1D int `y_trues_`. Multi-label needs its own `plot_ml_results_ml()` in `model_utils_multilabel.py`. Do not reuse the original.
+6. **`plot_ml_results_ml`** (resolved as `print_ml_results_summary`): Console summary is sufficient; full HTML visualisation is in 06.
 
 ---
 
@@ -663,41 +497,52 @@ Some combinations have very low counts (e.g., `VIM_NDM¸` = 1 sample after clean
 
 ```
 multiplex/config.py
-    ← main/config.py (from config import *)
+    ← main/config.py  (from config import *)
 
 multiplex/01b_lab_curve_preprocessing.py
     ← main/sigmoid_fitting.py
     ← main/safe_io.py
     ← main/config.py  (shared constants)
-    ← multiplex/config.py  (FILE_MAPPING, FILE_TARGET, etc.)
-    NEW: sklearn.preprocessing.MultiLabelBinarizer, pywt, numpy, pandas
+    ← multiplex/config.py  (FILE_MAPPING, FILE_TARGET, MULTIPLEX_SEPARATOR, …)
+    NEW: sklearn.preprocessing.MultiLabelBinarizer, numpy, pandas
 
 multiplex/02_outlier_detection_pipeline.py
     ← main/utils/02_outlier_detection/lstm_autoencoder_outlier.py
     ← main/utils/02_outlier_detection/spatial_consistency_outlier.py
-    ← main/utils/pipeline_utils.py
     ← main/safe_io.py
     ← main/sigmoid_fitting.py
+    ← main/utils/model_training/model_utils.py  (set_global_determinism)
     ← multiplex/config.py
 
 multiplex/utils/model_training/model_utils_multilabel.py
-    ← main/utils/model_training/model_utils.py  (build_neighbor_curve_stack, set_global_determinism, CurveResampler, _remap_global_splits)
-    ← main/utils/model_training/model_utils_supcon.py  (SupCon model subclasses + factory functions)
-    ← main/utils/model_training/model_utils_rcfd.py  (RCFD model factories: gru_rcfd_cgd family, RCFDModel base)
-    ← main/safe_io.py
-    NEW: sklearn.metrics.f1_score, hamming_loss; sklearn.model_selection.StratifiedKFold
+    ← main/utils/model_training/model_utils.py
+        (create_cnn_model, create_gru_model, create_transformer_model,
+         create_cnn_gru_dual_model, create_cnn_transformer_dual_model)
+    ← main/utils/model_training/model_utils_mtl.py
+        (MTLModel, REG_SENTINEL, _normalize_concentration, _inverse_normalize_concentration,
+         _build_cnn_backbone_mtl, _build_gru_backbone_mtl, _build_transformer_backbone_mtl,
+         _build_cnn_gru_dual_branches_mtl, _build_cnn_trans_dual_branches_mtl)
+    ← main/utils/model_training/model_utils_supcon.py
+        (SUPCON_TEMP, SUPCON_LAMBDA, _proj_head)
+    ← main/utils/model_training/model_utils_rcfd.py
+        (_build_rcfd_backbone)
+    ← main/safe_io.py  (safe_keras_save)
+    NEW: sklearn.metrics.*, sklearn.model_selection.StratifiedKFold/ShuffleSplit
 
 multiplex/03_main_training.py
     ← multiplex/config.py
     ← multiplex/utils/model_training/model_utils_multilabel.py
-    ← main/utils/pipeline_utils.py
     ← main/safe_io.py
     ← main/utils/model_training/model_utils.py  (set_global_determinism)
+    ← main/utils/model_training/model_utils_mtl.py  (REG_SENTINEL)
 
 multiplex/06_model_prediction_report.py
-    ← main/utils/html_utils.py
+    ← main/utils/html_utils.py  (build_tabbed_html, _panel, _fig_to_buf, _buf_to_img_html)
+    ← main/utils/model_training/model_utils_mtl.py  (REG_SENTINEL)
     ← multiplex/config.py
-    ← multiplex/utils/model_training/model_utils_multilabel.py  (multilabel_metrics)
+    ← multiplex/utils/model_training/model_utils_multilabel.py
+        (ML_MODEL_KEY_MAP, ML_MODEL_PRINT_MAP, encode_multilabel_for_training)
+    NEW: sklearn.metrics.*, scipy.stats, matplotlib
 ```
 
 ---
@@ -708,33 +553,43 @@ After implementation, verify end-to-end with the single `01_ACA_qdPCR` dataset:
 
 0. **CSV fix** (one-time): confirm `dPCR_Dataset_Multiplex.csv` has no `VIM_NDM¸` rows
 
-1. **01b**: `python multiplex/01b_lab_curve_preprocessing.py --task_id 0`
-   - Check: `curve_for_training_ml.joblib` exists, has `labels`, `all_targets=['KPC','NDM','VIM']`, `label_binarized.shape == (26571, 3)`
-
-2. **02**: `python multiplex/02_outlier_detection_pipeline.py --task_id 0`
-   - Check: `kinetic_features` DataFrame in updated joblib has `lstm_ae_glb_ds1_label_elbow` column
-
-3. **03** (smoke: 1 model, default `--n_splits 1`):
+1. **01b:**
    ```bash
-   python multiplex/03_main_training.py --task_id 0 --rerun_models cnn_gru_dual
+   cd main/multiplex
+   python 01b_lab_curve_preprocessing.py --task_id 0
    ```
-   - Check: `classification_performances_ml.joblib` with `y_trues_` as list of 2D binary arrays
+   Check: `curve_for_training_ml.joblib` has `label_lists`, `all_targets=['KPC','NDM','VIM']`, `well_labels` (combo strings), and `curves['ori_curves'].shape == (N, T)`.
 
-4. **03 SupCon variant**:
+2. **02:**
    ```bash
-   python multiplex/03_main_training.py --task_id 0 --supcon 1 --rerun_models cnn_gru_dual_supcon
+   python 02_outlier_detection_pipeline.py --task_id 0 --filters lstm_ae
    ```
-   - Check: results merged into same joblib; `y_preds_AC_cnn_gru_dual_supcon_` is 2D binary
+   Check: `kinetic_features['01_ACA_qdPCR']` has `lstm_ae_glb_ds1_label_elbow` column.
 
-5. **03 RCFD**:
+3. **03 (smoke — 1 model, default n_splits=1):**
    ```bash
-   python multiplex/03_main_training.py --task_id 0 --condreg --rerun_models gru_rcfd_cgd
+   python 03_main_training.py --task_id 0 --rerun_models cnn_gru_dual
    ```
-   - Check: RCFD model trained with regression head intact
+   Check: `classification_performances_ml.joblib` with `{None: {'y_trues_': [2D array], 'y_preds_cnn_gru_dual_': [2D array], …}}`.
 
-6. **06**: `python multiplex/06_model_prediction_report.py`
-   - Check: HTML report renders with per-label ROC curves and per-label confusion matrices
+4. **03 (SupCon variant):**
+   ```bash
+   python 03_main_training.py --task_id 0 --supcon 1 --rerun_models cnn_gru_dual_supcon
+   ```
+   Check: `y_preds_cnn_gru_dual_supcon_` merged into same joblib; shape `(N_test, 3)`.
+
+5. **03 (RCFD):**
+   ```bash
+   python 03_main_training.py --task_id 0 --condreg --rerun_models gru_rcfd_cgd
+   ```
+   Check: `y_reg_preds_gru_rcfd_cgd_` and `y_reg_trues_gru_rcfd_cgd_` in result entry.
+
+6. **06:**
+   ```bash
+   python 06_model_prediction_report.py --task_id 0
+   ```
+   Check: HTML at `model_performance_viz/ml_report__none__nsplits1.html` with 8 tabs including "Combo Freq" and per-label CMs.
 
 ---
 
-*End of brainstorming document. Implementation proceeds from this plan.*
+*End of implementation reference. Code is the ground truth; update this document when the code changes.*

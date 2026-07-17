@@ -32,9 +32,7 @@ sys.path.insert(0, str(_MAIN_DIR / "utils" / "02_outlier_detection"))
 sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
 sys.path.insert(0, str(_MULTIPLEX_DIR))
 
-import config as _base_config
-sys.path.insert(0, str(_MULTIPLEX_DIR))
-import config
+import config_multiplex as config
 
 from safe_io import safe_joblib_dump
 import sigmoid_fitting as sp

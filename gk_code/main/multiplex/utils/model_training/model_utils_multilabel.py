@@ -139,7 +139,8 @@ def adapt_for_multilabel(model, n_targets):
                 and layer.activation.__name__ == 'softmax'):
             new_out = tf.keras.layers.Dense(
                 n_targets, activation='sigmoid', name='cls_out')(layer.input)
-            return _StandardMultiLabelModel(inputs=model.inputs, outputs=new_out)
+            return _StandardMultiLabelModel(inputs=model.inputs, outputs=new_out,
+                                            name='standard_ml_model')
     raise ValueError("No softmax output layer found to replace")
 
 
@@ -909,8 +910,11 @@ def evaluate_outlier_filters_ml(
             if preds_key in res_entry and m not in rerun_models:
                 accs = [accuracy_score(yt, yp)
                         for yt, yp in zip(res_entry['y_trues_'], res_entry[preds_key])]
+                hls  = [hamming_loss(yt, yp)
+                        for yt, yp in zip(res_entry['y_trues_'], res_entry[preds_key])]
                 print(f"     [CACHE] {m} | "
-                      f"exact_acc={np.mean(accs)*100:.2f}%+-{np.std(accs)*100:.2f}%")
+                      f"exact_acc={np.mean(accs)*100:.2f}%+-{np.std(accs)*100:.2f}% | "
+                      f"hamming={np.mean(hls):.4f}")
                 continue
 
             is_rcfd = m in _RCFD_ML_KEYS
@@ -1013,11 +1017,17 @@ def evaluate_outlier_filters_ml(
             hls  = [hamming_loss(yt, yp)   for yt, yp in zip(res_entry['y_trues_'], preds_folds)]
             f1s  = [f1_score(yt, yp, average='samples', zero_division=0)
                     for yt, yp in zip(res_entry['y_trues_'], preds_folds)]
+            rmse_str = ""
+            if reg_preds_folds and reg_trues_folds:
+                rmse_str = _ml_mean_rmse(reg_preds_folds, reg_trues_folds)
+            hh, mm, ss = int(duration)//3600, int(duration)%3600//60, int(duration)%60
             print(f"     [+] {mode_name}/{dataset_name}/{filter_name[:25]} | "
                   f"{ml_model_print_map.get(m, m):<20} | "
                   f"exact={np.mean(accs)*100:.2f}% | "
                   f"hamming={np.mean(hls):.4f} | "
-                  f"f1_samp={np.mean(f1s):.4f} | {duration:.1f}s")
+                  f"f1_samp={np.mean(f1s):.4f}"
+                  + (f" | rmse={rmse_str}" if rmse_str else "")
+                  + f" | {hh:02d}:{mm:02d}:{ss:02d}")
 
             if checkpoint_fn is not None:
                 checkpoint_fn(results_dict)   # mirrors main/model_utils.py: pass full dict
@@ -1031,15 +1041,26 @@ def evaluate_outlier_filters_ml(
 # CONSOLE SUMMARY (full HTML report is in 06_model_prediction_report.py)
 # ======================================================================
 
+def _ml_mean_rmse(reg_preds_folds, reg_trues_folds):
+    """Mean RMSE across folds, ignoring REG_SENTINEL entries. Returns '' if no valid data."""
+    rmses = []
+    for rp, rt in zip(reg_preds_folds, reg_trues_folds):
+        rp, rt = np.asarray(rp), np.asarray(rt)
+        valid = rt != REG_SENTINEL
+        if valid.any():
+            rmses.append(np.sqrt(np.mean((rp[valid] - rt[valid]) ** 2)))
+    return f"{np.mean(rmses):.4f}" if rmses else ""
+
+
 def print_ml_results_summary(results_dict, outlier_filters, dataset_name, mode_name,
                               ml_model_key_map, ml_model_print_map):
-    """Print a text summary of multi-label results per filter."""
-    print(f"\n[Results] {mode_name} -- {dataset_name}")
+    """Ranked leaderboard of multi-label results, sorted by exact-match accuracy."""
+    rows = []
     for f in outlier_filters:
         res = results_dict.get(f)
         if not res or 'y_trues_' not in res:
             continue
-        filter_name = f if f else 'None (Baseline)'
+        filter_name = str(f) if f is not None else 'None (Baseline)'
         for m, (preds_key, _, _) in ml_model_key_map.items():
             if preds_key not in res:
                 continue
@@ -1047,5 +1068,26 @@ def print_ml_results_summary(results_dict, outlier_filters, dataset_name, mode_n
                     for yt, yp in zip(res['y_trues_'], res[preds_key])]
             hls  = [hamming_loss(yt, yp)
                     for yt, yp in zip(res['y_trues_'], res[preds_key])]
-            print(f"  {filter_name:30} | {ml_model_print_map.get(m, m):20} | "
-                  f"exact={np.mean(accs)*100:.2f}% | hamming={np.mean(hls):.4f}")
+            f1s  = [f1_score(yt, yp, average='samples', zero_division=0)
+                    for yt, yp in zip(res['y_trues_'], res[preds_key])]
+            rmse_str = _ml_mean_rmse(
+                res.get(f'y_reg_preds_{m}_', []),
+                res.get(f'y_reg_trues_{m}_', []),
+            )
+            rows.append((np.mean(accs) * 100, np.std(accs) * 100,
+                         np.mean(hls), np.mean(f1s), rmse_str,
+                         ml_model_print_map.get(m, m), filter_name))
+
+    rows.sort(key=lambda x: x[0], reverse=True)
+
+    has_rmse = any(r[4] for r in rows)
+    W = 120 if has_rmse else 105
+    print(f"\n  \U0001f3c6 Leaderboard [{mode_name}] {dataset_name}")
+    print("  " + "-" * W)
+    for i, (acc, std, hl, f1, rmse_str, method, filt) in enumerate(rows):
+        rmse_col = f" | rmse={rmse_str:<10}" if has_rmse else ""
+        print(f"  {i+1:2d}.  {acc:6.2f}% ± {std:5.2f}%"
+              f" | hamming={hl:.4f} | f1_samp={f1:.4f}"
+              + rmse_col
+              + f" | Model: {method[:25]:<25} | Filter: {filt[:30]}")
+    print("  " + "-" * W + "\n")

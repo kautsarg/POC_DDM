@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import joblib
+from joblib import Parallel, delayed
 
 _THIS         = Path(__file__).resolve()
 _MULTIPLEX_DIR = _THIS.parent
@@ -20,11 +21,9 @@ _MAIN_DIR     = _MULTIPLEX_DIR.parent
 sys.path.insert(0, str(_MAIN_DIR))
 sys.path.insert(0, str(_MAIN_DIR / "utils"))
 sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
-
-import config as _base_config
-# Shadow with multiplex config
 sys.path.insert(0, str(_MULTIPLEX_DIR))
-import config
+
+import config_multiplex as config
 
 from safe_io import safe_joblib_dump
 import sigmoid_fitting as sp
@@ -37,6 +36,36 @@ import sigmoid_fitting as sp
 def _get_numeric_sort_key(col):
     m = re.search(r'[\d.]+', str(col))
     return float(m.group()) if m else 0.0
+
+
+def _fit_single_curve(y_row, x_time, start_idx=0):
+    try:
+        y_num = np.asanyarray(y_row, dtype=np.float64)
+        x_num = np.asanyarray(x_time, dtype=np.float64)
+        y_fit = y_num[start_idx:]
+        x_fit = x_num[start_idx:]
+        params, _ = sp.fit_5p(x_fit, y_fit, normalize=True)
+        fitted_full      = sp.sigmoid_5p(x_num, *params)
+        fitted_segment   = sp.sigmoid_5p(x_fit, *params)
+        old_x = np.linspace(0, 1, len(fitted_segment))
+        new_x = np.linspace(0, 1, len(x_num))
+        fitted_stretched = np.interp(new_x, old_x, fitted_segment)
+        rmse = np.sqrt(np.nanmean(np.square(fitted_segment - y_fit)))
+        return fitted_full, fitted_stretched, params, rmse
+    except Exception:
+        nan_arr = np.full_like(x_time, np.nan, dtype=np.float64)
+        return nan_arr, nan_arr, np.full(5, np.nan), np.nan
+
+
+def sigmoid_fitting_5p(curves, ori_timestamps, starting_idxs=None):
+    if starting_idxs is None:
+        starting_idxs = np.zeros(len(curves), dtype=int)
+    results = Parallel(n_jobs=-1, backend="loky", batch_size='auto')(
+        delayed(_fit_single_curve)(y, ori_timestamps, t)
+        for y, t in zip(curves, starting_idxs)
+    )
+    curves_full, curves_stretched, params_out, rmse_out = zip(*results)
+    return np.array(curves_full), np.array(curves_stretched), np.array(params_out), np.array(rmse_out)
 
 
 def parse_multilabel_column(raw_labels, separator=config.MULTIPLEX_SEPARATOR):
@@ -165,7 +194,7 @@ if __name__ == "__main__":
                   if len(valid_conc) > 0 else "  -> No valid concentration values.")
 
         print(f"  -> Fitting 5-parameter sigmoid ({len(curves)} curves)...")
-        sigmoid_results = sp.sigmoid_fitting_5p(curves, timestamps)
+        sigmoid_results = sigmoid_fitting_5p(curves, timestamps)
 
         save_multiplex_experiment_data(save_path, curves, timestamps, label_lists,
                                        sigmoid_results, concentration)

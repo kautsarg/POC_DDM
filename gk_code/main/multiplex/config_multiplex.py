@@ -35,8 +35,8 @@ MULTIPLEX_TARGETS = ['KPC', 'NDM', 'VIM']
 # RESULT FILE PATHS (separate from main/ to avoid collisions)
 # ==========================================
 
-TRAINING_DATA_PATH         = 'curve_for_training_ml.joblib'
-TRAINING_RESULT_PATH       = 'classification_performances_ml.joblib'
+TRAINING_DATA_PATH          = 'curve_for_training_ml.joblib'
+TRAINING_RESULT_PATH        = 'classification_performances_ml.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_ml_10fold.joblib'
 
 # ==========================================
@@ -53,9 +53,9 @@ OUTLIER_FILTERS = [
 ]
 
 # ==========================================
-# MULTIPLEX MODEL KEYS
-# 12 standard + SupCon ST variants (no spatial coords → cosine_recon/attn_recon skipped at runtime)
-# 4 RCFD variants (gru_rcfd_cgd family with concentration regression head)
+# MULTIPLEX MODEL KEYS (30 total)
+# ML_MODEL_KEY_MAP and ML_MODEL_PRINT_MAP are defined in
+# utils/model_training/model_utils_multilabel.py — import from there.
 # ==========================================
 
 MULTIPLEX_MODELS = [
@@ -82,6 +82,3 @@ MULTIPLEX_MODELS = [
     'trans_rcfd_ctd',
     'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
 ]
-
-# ML_MODEL_KEY_MAP and ML_MODEL_PRINT_MAP are defined in
-# utils/model_training/model_utils_multilabel.py — import from there.
