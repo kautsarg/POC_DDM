@@ -134,6 +134,46 @@ done
 
 ---
 
+### CRF structured output (`crf` group) — `--crf`
+
+Two structured output variants that model label correlations at training time.
+Neither uses `--supcon`; both replace the sigmoid head with a structured loss.
+
+**Option A — CRF-MRF** (`cnn_gru_dual_crf_mrf`, `cnn_trans_dual_crf_mrf`):
+`Dense(8)` output head over all 2³ joint label states; NLL = `logsumexp(logits) − logit[true_state]`.
+Inference: `predict_binary()` = argmax over states; `predict_marginals()` = `softmax(logits) @ decode_mat`.
+State imbalance: multi-target combos (~6% each) are ~4× under-represented — pass `state_weights`
+via `compute_crf_state_weights(y_binary)` to compensate.
+
+**Option B — CRF-chain** (`cnn_gru_dual_crf_chain`, `cnn_trans_dual_crf_chain`):
+Emission logits `(batch, 3, 2)` + learned shared `(2,2)` transition matrix; NLL via forward
+algorithm; Viterbi for binary prediction; forward-backward for marginals.
+Label order is fixed (index 0 = KPC, 1 = NDM, 2 = VIM).
+
+Both variants expose `predict_marginals()` returning per-label `[0,1]` scores — fully compatible
+with `lab_threshold_search.ipynb` for per-label threshold tuning.
+
+Each variant trains at SC0–SC3 with `--supcon`:
+
+| SC level | Loss |
+|---|---|
+| 0 | CRF NLL only |
+| 1 | NLL + λ · SupCon(fused) |
+| 2 | NLL + λ · (SupCon(CNN) + SupCon(seq)) |
+| 3 | NLL + λ · (SupCon(CNN) + SupCon(seq) + SupCon(fused)) |
+
+λ values follow RCFD precedent (additive, not weighted-complement): SC1 λ=0.1, SC2/3 λ_each=0.05/0.033.
+
+```bash
+for SC in 0 1 2 3; do
+    python -u 03_main_training.py ... --crf --supcon "$SC"
+done
+```
+
+**Result file:** `classification_performances_ml_crf[_10fold].joblib`
+
+---
+
 ## All model families at a glance
 
 | Flag(s) | Group | # models (SC0–3) | Result file suffix |
@@ -144,7 +184,8 @@ done
 | `--cross_attn_auxdet` | `auxdet` | 4 | `_auxdet` |
 | `--cross_attn_quercon` | `quercon` | 4 | `_quercon` |
 | `--condreg` | `condreg` | 16 | `_condreg` |
-| **Total** | | **62** | |
+| `--crf` | `crf` | 16 | `_crf` |
+| **Total** | | **78** | |
 
 ---
 
@@ -160,6 +201,7 @@ classification_performances_ml_cattn_v2.joblib      ← --cross_attn_v2
 classification_performances_ml_auxdet.joblib        ← --cross_attn_auxdet
 classification_performances_ml_quercon.joblib       ← --cross_attn_quercon
 classification_performances_ml_condreg.joblib       ← --condreg
+classification_performances_ml_crf.joblib           ← --crf
 ```
 
 Append `_10fold` before `.joblib` when `--n_splits > 1`.
@@ -207,6 +249,8 @@ vectorised per-label sigmoid threshold grid search (21³ = 9 261 combos, < 5 s f
 - `20260717-CROSS-ATTN-IMPROVEMENTS.md` — root-cause analysis + v2 ablation design
 - `20260717-OTHER-ML-APPROACHES.md` — broader multi-label ML landscape
 - `20260717-PER-GROUP-RESULT-FILES.md` — race-condition fix design notes
+- `20260718-AUX-CT-CRF-IMPLEMENTATION.md` — implementation guide for Auxiliary Ct Head (6a) and Structured Output CRF (1c)
+- `20260718-SOURCE-SEPARATION-PRETRAINING.md` — Compositional / source-separation pretraining design (Blind Source Separation for co-amplification)
 
 ---
 

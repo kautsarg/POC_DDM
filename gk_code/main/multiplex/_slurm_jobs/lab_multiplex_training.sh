@@ -71,6 +71,12 @@ for SC in 0 1 2 3; do
     run_train --cross_attn_quercon --supcon "$SC"
 done
 
+# CRF structured-output variants (MRF + chain): SC 0-3
+for SC in 0 1 2 3; do
+    SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+    run_train --crf "${SARG[@]}"
+done
+
 # python -u 06_model_prediction_report.py \
 #     --task_id $SLURM_ARRAY_TASK_ID \
 #     --exp_folder "$EXP_FOLDER" \

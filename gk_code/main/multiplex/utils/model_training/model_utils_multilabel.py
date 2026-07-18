@@ -682,6 +682,379 @@ class MultiLabelRCFDBranch3MTLModel(MultiLabelMTLModel):
 
 
 # ======================================================================
+# CRF MODEL CLASSES
+# ======================================================================
+
+def compute_crf_state_weights(y_binary, n_targets=3):
+    """Inverse-frequency weights for 2^n_targets states to address label-combo imbalance."""
+    powers  = np.array([2**j for j in range(n_targets)], dtype=np.int32)
+    y_idx   = (y_binary.astype(np.int32) @ powers)
+    counts  = np.bincount(y_idx, minlength=2**n_targets).astype(np.float32)
+    counts  = np.where(counts == 0, 1.0, counts)
+    weights = 1.0 / counts
+    return (weights / weights.sum() * len(weights)).tolist()
+
+
+# ── Option A: Full-state MRF ─────────────────────────────────────────────────
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_mrf')
+class MultiLabelCRFMRFModel(tf.keras.Model):
+    """Option A base — Full-state MRF: 2^n_targets joint states, NLL via logsumexp.
+
+    INVARIANT: call() returns raw (batch, n_states) logits, or (logits, proj...) for SC subclasses.
+    SC subclasses override only _get_crf_output(); predict_binary/predict_marginals use it.
+    """
+    def __init__(self, *args, n_targets=3, state_weights=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_targets    = n_targets
+        self.n_states     = 2 ** n_targets
+        self.decode_mat   = tf.constant(
+            [[int((i >> j) & 1) for j in range(n_targets)]
+             for i in range(2 ** n_targets)], dtype=tf.float32)   # (n_states, n_targets)
+        self.powers       = tf.constant([2 ** j for j in range(n_targets)], dtype=tf.int32)
+        self.state_weights = (tf.constant(state_weights, dtype=tf.float32)
+                              if state_weights is not None else None)
+
+    def _get_crf_output(self, x):
+        """Return (batch, n_states) logits. SC subclasses override to unpack tuple."""
+        return self(x, training=False)
+
+    def _nll(self, state_logits, y_dict):
+        """NLL loss given pre-extracted state logits."""
+        y_bin      = tf.cast(y_dict['cls_out'], tf.int32)
+        y_idx      = tf.reduce_sum(y_bin * self.powers, axis=-1)
+        log_Z      = tf.reduce_logsumexp(state_logits, axis=-1)
+        per_sample = log_Z - tf.gather(state_logits, y_idx, batch_dims=1)
+        if self.state_weights is not None:
+            w = tf.gather(self.state_weights, y_idx)
+            return tf.reduce_sum(w * per_sample) / tf.reduce_sum(w)
+        return tf.reduce_mean(per_sample)
+
+    def _step(self, x, y_dict, training):
+        return self._nll(self(x, training=training), y_dict)
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        return {'loss': self._step(x, y_dict, training=False)}
+
+    def predict_binary(self, x):
+        """Argmax over joint states → (batch, n_targets) int32."""
+        logits     = self._get_crf_output(x)
+        pred_state = tf.argmax(logits, axis=-1)
+        return tf.gather(tf.cast(self.decode_mat, tf.int32), pred_state).numpy()
+
+    def predict_marginals(self, x):
+        """Softmax marginals → (batch, n_targets) float32 in [0,1]."""
+        state_probs = tf.nn.softmax(self._get_crf_output(x), axis=-1)
+        return (state_probs @ self.decode_mat).numpy()
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_mrf_sc1')
+class MultiLabelCRFMRFSC1Model(MultiLabelCRFMRFModel):
+    """CRF-MRF + fused-embedding Jaccard SupCon (SC1). Loss: NLL + λ·SC."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp   = supcon_temp
+        self.supcon_lambda = supcon_lambda
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        state_logits, proj_norm = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_norm, pos_mask, self.supcon_temp)
+        return nll + self.supcon_lambda * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_mrf_sc2')
+class MultiLabelCRFMRFSC2Model(MultiLabelCRFMRFModel):
+    """CRF-MRF + CNN+seq branch Jaccard SupCon (SC2). Loss: NLL + λ·(SC_cnn + SC_seq)."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.05, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        state_logits, cnn_proj, seq_proj = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_mrf_sc3')
+class MultiLabelCRFMRFSC3Model(MultiLabelCRFMRFModel):
+    """CRF-MRF + CNN+seq+fused Jaccard SupCon (SC3). Loss: NLL + λ·(SC_cnn + SC_seq + SC_fused)."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.033, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        state_logits, cnn_proj, seq_proj, fused_proj = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(fused_proj, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+# ── Option B: Linear-chain CRF ───────────────────────────────────────────────
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_chain')
+class MultiLabelCRFChainModel(tf.keras.Model):
+    """Option B base — Linear-chain CRF: n_targets positions × 2 states, shared (2,2) transition.
+
+    INVARIANT: call() returns emission logits (batch, n_targets, 2), or (emit, proj...) for SC.
+    SC subclasses override only _get_emit(); predict_binary/predict_marginals use it.
+    Label order is fixed (e.g. KPC=0, NDM=1, VIM=2).
+    """
+    def __init__(self, *args, n_targets=3, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_targets  = n_targets
+        self.transition = self.add_weight(
+            name='crf_transition', shape=(2, 2),
+            initializer='zeros', trainable=True)  # transition[from_state, to_state]
+
+    def _get_emit(self, x):
+        """Return (batch, n_targets, 2) emissions. SC subclasses override to unpack tuple."""
+        return self(x, training=False)
+
+    def _log_forward(self, emit):
+        """Forward algorithm. emit: (batch, n_targets, 2). Returns (log_Z, alphas list)."""
+        alphas = [emit[:, 0, :]]                                      # (batch, 2) at position 0
+        for t in range(1, self.n_targets):
+            a_exp  = alphas[-1][:, :, tf.newaxis]                    # (batch, from, 1)
+            scores = a_exp + self.transition[tf.newaxis, :, :]       # (batch, from, to)
+            alphas.append(
+                tf.reduce_logsumexp(scores, axis=1) + emit[:, t, :])  # (batch, to)
+        log_Z = tf.reduce_logsumexp(alphas[-1], axis=-1)              # (batch,)
+        return log_Z, alphas
+
+    def _true_score(self, emit, y_int):
+        """Score of ground-truth label sequence. y_int: (batch, n_targets) int32 {0,1}."""
+        oh    = tf.one_hot(y_int, 2, dtype=tf.float32)               # (batch, n_targets, 2)
+        e_sum = tf.reduce_sum(emit * oh, axis=[1, 2])                 # (batch,)
+        t_sum = tf.zeros_like(e_sum)
+        for t in range(self.n_targets - 1):
+            idx   = tf.stack([y_int[:, t], y_int[:, t + 1]], axis=1)  # (batch, 2)
+            t_sum = t_sum + tf.gather_nd(self.transition, idx)
+        return e_sum + t_sum
+
+    def _nll(self, emit, y_dict):
+        """Forward-algorithm NLL given pre-extracted emission logits."""
+        y_int = tf.cast(y_dict['cls_out'], tf.int32)
+        log_Z, _ = self._log_forward(emit)
+        return tf.reduce_mean(log_Z - self._true_score(emit, y_int))
+
+    def _step(self, x, y_dict, training):
+        return self._nll(self(x, training=training), y_dict)
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        return {'loss': self._step(x, y_dict, training=False)}
+
+    def predict_binary(self, x):
+        """Viterbi decoding → (batch, n_targets) int32."""
+        emit   = self._get_emit(x)
+        vit    = emit[:, 0, :]                                        # (batch, 2)
+        btrack = []
+        for t in range(1, self.n_targets):
+            scores = vit[:, :, tf.newaxis] + self.transition[tf.newaxis, :, :]  # (batch, from, to)
+            btrack.append(tf.argmax(scores, axis=1, output_type=tf.int32))
+            vit = tf.reduce_max(scores, axis=1) + emit[:, t, :]
+        pred = [tf.argmax(vit, axis=-1, output_type=tf.int32)]
+        for bp in reversed(btrack):
+            batch_idx = tf.range(tf.shape(pred[-1])[0])
+            pred.append(tf.gather_nd(bp, tf.stack([batch_idx, pred[-1]], axis=1)))
+        return tf.stack(list(reversed(pred)), axis=1).numpy()
+
+    def predict_marginals(self, x):
+        """Forward-backward marginals → (batch, n_targets) float32 in [0,1]."""
+        emit          = self._get_emit(x)
+        log_Z, alphas = self._log_forward(emit)
+        betas = [tf.zeros_like(alphas[-1])]                           # log 1 at final position
+        for t in range(self.n_targets - 2, -1, -1):
+            b_exp  = betas[0][:, tf.newaxis, :]                      # (batch, 1, to)
+            e_exp  = emit[:, t + 1, tf.newaxis, :]                   # (batch, 1, to)
+            scores = self.transition[tf.newaxis, :, :] + e_exp + b_exp  # (batch, from, to)
+            betas.insert(0, tf.reduce_logsumexp(scores, axis=2))
+        marginals = [tf.exp(alphas[t][:, 1] + betas[t][:, 1] - log_Z)
+                     for t in range(self.n_targets)]
+        return tf.stack(marginals, axis=1).numpy()
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_chain_sc1')
+class MultiLabelCRFChainSC1Model(MultiLabelCRFChainModel):
+    """CRF-chain + fused-embedding Jaccard SupCon (SC1). Loss: NLL + λ·SC."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp   = supcon_temp
+        self.supcon_lambda = supcon_lambda
+
+    def _get_emit(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        emit, proj_norm = self(x, training=training)
+        nll      = self._nll(emit, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_norm, pos_mask, self.supcon_temp)
+        return nll + self.supcon_lambda * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_chain_sc2')
+class MultiLabelCRFChainSC2Model(MultiLabelCRFChainModel):
+    """CRF-chain + CNN+seq branch Jaccard SupCon (SC2). Loss: NLL + λ·(SC_cnn + SC_seq)."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.05, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_emit(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        emit, cnn_proj, seq_proj = self(x, training=training)
+        nll      = self._nll(emit, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+@tf.keras.utils.register_keras_serializable(package='ml_crf_chain_sc3')
+class MultiLabelCRFChainSC3Model(MultiLabelCRFChainModel):
+    """CRF-chain + CNN+seq+fused Jaccard SupCon (SC3). Loss: NLL + λ·(SC_cnn + SC_seq + SC_fused)."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.033, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_emit(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
+        emit, cnn_proj, seq_proj, fused_proj = self(x, training=training)
+        nll      = self._nll(emit, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(cnn_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(seq_proj,   pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(fused_proj, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+# ======================================================================
 # MODEL FACTORY FUNCTIONS
 # ======================================================================
 
@@ -1540,6 +1913,171 @@ def create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon3_model(T, n_targets):
         inputs=inputs, outputs=[cls_out, q_norm, cnn_proj, seq_proj, fused_proj])
 
 
+
+# ── CRF-MRF factories (Option A: full-state 2^n_targets NLL) ────────────────
+
+def create_ml_cnn_gru_dual_crf_mrf_model(T, n_targets):
+    """CNN+GRU dual + full-state MRF SC0."""
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z            = _build_cnn_gru_dual_branches_mtl(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=state_logits, n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_mrf_supcon_model(T, n_targets):
+    """CNN+GRU dual + full-state MRF SC1 (fused SupCon)."""
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z            = _build_cnn_gru_dual_branches_mtl(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    proj_norm    = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[state_logits, proj_norm], n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_mrf_supcon2_model(T, n_targets):
+    """CNN+GRU dual + full-state MRF SC2 (CNN+seq SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    state_logits         = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[state_logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_mrf_supcon3_model(T, n_targets):
+    """CNN+GRU dual + full-state MRF SC3 (CNN+seq+fused SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    state_logits         = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    fused_proj           = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[state_logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_mrf_model(T, n_targets):
+    """CNN+Trans dual + full-state MRF SC0."""
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z            = _build_cnn_trans_dual_branches_mtl(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=state_logits, n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_mrf_supcon_model(T, n_targets):
+    """CNN+Trans dual + full-state MRF SC1 (fused SupCon)."""
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z            = _build_cnn_trans_dual_branches_mtl(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    proj_norm    = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[state_logits, proj_norm], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_mrf_supcon2_model(T, n_targets):
+    """CNN+Trans dual + full-state MRF SC2 (CNN+seq SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_trans_dual_branches_mtl(inputs, return_branches=True)
+    state_logits         = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[state_logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_mrf_supcon3_model(T, n_targets):
+    """CNN+Trans dual + full-state MRF SC3 (CNN+seq+fused SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_trans_dual_branches_mtl(inputs, return_branches=True)
+    state_logits         = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    fused_proj           = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[state_logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# ── CRF-chain factories (Option B: linear-chain, Viterbi/forward-backward) ──
+
+def create_ml_cnn_gru_dual_crf_chain_model(T, n_targets):
+    """CNN+GRU dual + linear-chain CRF SC0."""
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z         = _build_cnn_gru_dual_branches_mtl(inputs)
+    emit_flat = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit      = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    return MultiLabelCRFChainModel(inputs=inputs, outputs=emit, n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_chain_supcon_model(T, n_targets):
+    """CNN+GRU dual + linear-chain CRF SC1 (fused SupCon)."""
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z         = _build_cnn_gru_dual_branches_mtl(inputs)
+    emit_flat = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit      = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelCRFChainSC1Model(inputs=inputs, outputs=[emit, proj_norm], n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_chain_supcon2_model(T, n_targets):
+    """CNN+GRU dual + linear-chain CRF SC2 (CNN+seq SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    emit_flat            = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit                 = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    return MultiLabelCRFChainSC2Model(inputs=inputs, outputs=[emit, cnn_proj, seq_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_gru_dual_crf_chain_supcon3_model(T, n_targets):
+    """CNN+GRU dual + linear-chain CRF SC3 (CNN+seq+fused SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_gru_dual_branches_mtl(inputs, return_branches=True)
+    emit_flat            = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit                 = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    fused_proj           = _proj_head(z, 'fused')
+    return MultiLabelCRFChainSC3Model(inputs=inputs, outputs=[emit, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_chain_model(T, n_targets):
+    """CNN+Trans dual + linear-chain CRF SC0."""
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z         = _build_cnn_trans_dual_branches_mtl(inputs)
+    emit_flat = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit      = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    return MultiLabelCRFChainModel(inputs=inputs, outputs=emit, n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_chain_supcon_model(T, n_targets):
+    """CNN+Trans dual + linear-chain CRF SC1 (fused SupCon)."""
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z         = _build_cnn_trans_dual_branches_mtl(inputs)
+    emit_flat = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit      = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelCRFChainSC1Model(inputs=inputs, outputs=[emit, proj_norm], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_chain_supcon2_model(T, n_targets):
+    """CNN+Trans dual + linear-chain CRF SC2 (CNN+seq SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_trans_dual_branches_mtl(inputs, return_branches=True)
+    emit_flat            = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit                 = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    return MultiLabelCRFChainSC2Model(inputs=inputs, outputs=[emit, cnn_proj, seq_proj], n_targets=n_targets)
+
+
+def create_ml_cnn_trans_dual_crf_chain_supcon3_model(T, n_targets):
+    """CNN+Trans dual + linear-chain CRF SC3 (CNN+seq+fused SupCon)."""
+    inputs               = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    cnn_emb, seq_emb, z = _build_cnn_trans_dual_branches_mtl(inputs, return_branches=True)
+    emit_flat            = tf.keras.layers.Dense(n_targets * 2, name='crf_emit')(z)
+    emit                 = tf.keras.layers.Reshape((n_targets, 2), name='crf_emit_r')(emit_flat)
+    cnn_proj             = _proj_head(cnn_emb, 'cnn')
+    seq_proj             = _proj_head(seq_emb, 'seq')
+    fused_proj           = _proj_head(z, 'fused')
+    return MultiLabelCRFChainSC3Model(inputs=inputs, outputs=[emit, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
 # -- factory dispatch --------------------------------------------------------
 
 ML_FACTORIES = {
@@ -1621,6 +2159,24 @@ ML_FACTORIES = {
     'trans_rcfd_ctd_supcon_mtl':      create_ml_trans_rcfd_ctd_supcon_mtl_model,
     'trans_rcfd_ctd_supcon2_mtl':     create_ml_trans_rcfd_ctd_supcon2_mtl_model,
     'trans_rcfd_ctd_supcon3_mtl':     create_ml_trans_rcfd_ctd_supcon3_mtl_model,
+    # CRF-MRF (Option A: full-state 8-class NLL) SC0-3
+    'cnn_gru_dual_crf_mrf':              create_ml_cnn_gru_dual_crf_mrf_model,
+    'cnn_gru_dual_crf_mrf_supcon':       create_ml_cnn_gru_dual_crf_mrf_supcon_model,
+    'cnn_gru_dual_crf_mrf_supcon2':      create_ml_cnn_gru_dual_crf_mrf_supcon2_model,
+    'cnn_gru_dual_crf_mrf_supcon3':      create_ml_cnn_gru_dual_crf_mrf_supcon3_model,
+    'cnn_trans_dual_crf_mrf':            create_ml_cnn_trans_dual_crf_mrf_model,
+    'cnn_trans_dual_crf_mrf_supcon':     create_ml_cnn_trans_dual_crf_mrf_supcon_model,
+    'cnn_trans_dual_crf_mrf_supcon2':    create_ml_cnn_trans_dual_crf_mrf_supcon2_model,
+    'cnn_trans_dual_crf_mrf_supcon3':    create_ml_cnn_trans_dual_crf_mrf_supcon3_model,
+    # CRF-chain (Option B: linear-chain with shared (2,2) transition) SC0-3
+    'cnn_gru_dual_crf_chain':            create_ml_cnn_gru_dual_crf_chain_model,
+    'cnn_gru_dual_crf_chain_supcon':     create_ml_cnn_gru_dual_crf_chain_supcon_model,
+    'cnn_gru_dual_crf_chain_supcon2':    create_ml_cnn_gru_dual_crf_chain_supcon2_model,
+    'cnn_gru_dual_crf_chain_supcon3':    create_ml_cnn_gru_dual_crf_chain_supcon3_model,
+    'cnn_trans_dual_crf_chain':          create_ml_cnn_trans_dual_crf_chain_model,
+    'cnn_trans_dual_crf_chain_supcon':   create_ml_cnn_trans_dual_crf_chain_supcon_model,
+    'cnn_trans_dual_crf_chain_supcon2':  create_ml_cnn_trans_dual_crf_chain_supcon2_model,
+    'cnn_trans_dual_crf_chain_supcon3':  create_ml_cnn_trans_dual_crf_chain_supcon3_model,
 }
 
 # Models that carry a concentration regression output
@@ -1629,6 +2185,14 @@ _RCFD_ML_KEYS = frozenset({
     'gru_rcfd_ctd',  'gru_rcfd_ctd_supcon_mtl',  'gru_rcfd_ctd_supcon2_mtl',  'gru_rcfd_ctd_supcon3_mtl',
     'trans_rcfd_cgd', 'trans_rcfd_cgd_supcon_mtl', 'trans_rcfd_cgd_supcon2_mtl', 'trans_rcfd_cgd_supcon3_mtl',
     'trans_rcfd_ctd', 'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
+})
+
+# Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
+_CRF_ML_KEYS = frozenset({
+    'cnn_gru_dual_crf_mrf',   'cnn_gru_dual_crf_mrf_supcon',   'cnn_gru_dual_crf_mrf_supcon2',   'cnn_gru_dual_crf_mrf_supcon3',
+    'cnn_trans_dual_crf_mrf', 'cnn_trans_dual_crf_mrf_supcon', 'cnn_trans_dual_crf_mrf_supcon2', 'cnn_trans_dual_crf_mrf_supcon3',
+    'cnn_gru_dual_crf_chain',   'cnn_gru_dual_crf_chain_supcon',   'cnn_gru_dual_crf_chain_supcon2',   'cnn_gru_dual_crf_chain_supcon3',
+    'cnn_trans_dual_crf_chain', 'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
 })
 
 # Models that output a projection head in addition to cls_out
@@ -1727,6 +2291,24 @@ ML_MODEL_PRINT_MAP = {
     'cnn_gru_dual_cross_attn_v2_quercon_supcon':   'CNN+GRU CAttn-V2 QuerCon SC1',
     'cnn_gru_dual_cross_attn_v2_quercon_supcon2':  'CNN+GRU CAttn-V2 QuerCon SC2',
     'cnn_gru_dual_cross_attn_v2_quercon_supcon3':  'CNN+GRU CAttn-V2 QuerCon SC3',
+    # CRF-MRF SC0-3
+    'cnn_gru_dual_crf_mrf':           'CNN+GRU CRF-MRF SC0',
+    'cnn_gru_dual_crf_mrf_supcon':    'CNN+GRU CRF-MRF SC1',
+    'cnn_gru_dual_crf_mrf_supcon2':   'CNN+GRU CRF-MRF SC2',
+    'cnn_gru_dual_crf_mrf_supcon3':   'CNN+GRU CRF-MRF SC3',
+    'cnn_trans_dual_crf_mrf':         'CNN+Tr CRF-MRF SC0',
+    'cnn_trans_dual_crf_mrf_supcon':  'CNN+Tr CRF-MRF SC1',
+    'cnn_trans_dual_crf_mrf_supcon2': 'CNN+Tr CRF-MRF SC2',
+    'cnn_trans_dual_crf_mrf_supcon3': 'CNN+Tr CRF-MRF SC3',
+    # CRF-chain SC0-3
+    'cnn_gru_dual_crf_chain':           'CNN+GRU CRF-chain SC0',
+    'cnn_gru_dual_crf_chain_supcon':    'CNN+GRU CRF-chain SC1',
+    'cnn_gru_dual_crf_chain_supcon2':   'CNN+GRU CRF-chain SC2',
+    'cnn_gru_dual_crf_chain_supcon3':   'CNN+GRU CRF-chain SC3',
+    'cnn_trans_dual_crf_chain':         'CNN+Tr CRF-chain SC0',
+    'cnn_trans_dual_crf_chain_supcon':  'CNN+Tr CRF-chain SC1',
+    'cnn_trans_dual_crf_chain_supcon2': 'CNN+Tr CRF-chain SC2',
+    'cnn_trans_dual_crf_chain_supcon3': 'CNN+Tr CRF-chain SC3',
 }
 
 
@@ -1886,6 +2468,7 @@ def evaluate_outlier_filters_ml(
                 continue
 
             is_rcfd = m in _RCFD_ML_KEYS
+            is_crf  = m in _CRF_ML_KEYS
 
             preds_folds, probs_folds, classes_folds = [], [], []
             reg_preds_folds, reg_trues_folds = [], []
@@ -1957,9 +2540,14 @@ def evaluate_outlier_filters_ml(
                     safe_keras_save(model,
                                     Path(save_model_dir) / f"{m}_{f}_{mode_name}.keras")
 
-                raw_out  = model.predict(X_test, verbose=0)
-                cls_prob = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
-                cls_pred = (cls_prob >= threshold).astype(np.int8)
+                raw_out = None
+                if is_crf:
+                    cls_prob = model.predict_marginals(X_test)
+                    cls_pred = model.predict_binary(X_test).astype(np.int8)
+                else:
+                    raw_out  = model.predict(X_test, verbose=0)
+                    cls_prob = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
+                    cls_pred = (cls_prob >= threshold).astype(np.int8)
 
                 preds_folds.append(cls_pred)
                 probs_folds.append(cls_prob)

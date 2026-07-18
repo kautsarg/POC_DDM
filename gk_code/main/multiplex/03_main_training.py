@@ -109,6 +109,10 @@ if __name__ == "__main__":
     parser.add_argument("--cross_attn_quercon", action="store_true",
                         help="Train v2 cross-attn with query contrastive loss (QuerCon). "
                              "Backbone SC variant added via --supcon (0=QuerCon only).")
+    parser.add_argument("--crf", action="store_true",
+                        help="Train CRF structured-output variants: "
+                             "CRF-MRF (full-state 8-class NLL) and CRF-chain (linear-chain). "
+                             "Scope to SC variant with --supcon.")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Sigmoid threshold for binary prediction (default 0.5)")
     parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
@@ -128,6 +132,7 @@ if __name__ == "__main__":
         "CATTN-V2"     if args.cross_attn_v2     else
         "CATTN-AUXDET" if args.cross_attn_auxdet else
         "CATTN-QUERCON" if args.cross_attn_quercon else
+        "CRF"          if args.crf              else
         "ML"
     ) + f" SC{args.supcon}"
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
@@ -152,6 +157,7 @@ if __name__ == "__main__":
         'auxdet'     if args.cross_attn_auxdet  else
         'quercon'    if args.cross_attn_quercon else
         'condreg'    if args.condreg            else
+        'crf'        if args.crf               else
         'default'
     )
     _fmap        = config.RESULT_10FOLD_FILE_BY_FLAG if args.n_splits > 1 else config.RESULT_FILE_BY_FLAG
@@ -244,6 +250,18 @@ if __name__ == "__main__":
             3: ['cnn_gru_dual_cross_attn_v2_quercon_supcon3'],
         }
         models = _quercon_by_sc[args.supcon]
+    elif args.crf:
+        _crf_by_sc = {
+            0: ['cnn_gru_dual_crf_mrf',        'cnn_trans_dual_crf_mrf',
+                'cnn_gru_dual_crf_chain',       'cnn_trans_dual_crf_chain'],
+            1: ['cnn_gru_dual_crf_mrf_supcon',  'cnn_trans_dual_crf_mrf_supcon',
+                'cnn_gru_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon'],
+            2: ['cnn_gru_dual_crf_mrf_supcon2',  'cnn_trans_dual_crf_mrf_supcon2',
+                'cnn_gru_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon2'],
+            3: ['cnn_gru_dual_crf_mrf_supcon3',  'cnn_trans_dual_crf_mrf_supcon3',
+                'cnn_gru_dual_crf_chain_supcon3', 'cnn_trans_dual_crf_chain_supcon3'],
+        }
+        models = _crf_by_sc[args.supcon]
     elif args.supcon == 0:
         models = ['cnn', 'gru', 'transformer', 'cnn_gru_dual', 'cnn_trans_dual']
     elif args.supcon == 1:

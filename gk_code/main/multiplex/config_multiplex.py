@@ -47,6 +47,7 @@ RESULT_FILE_BY_FLAG = {
     'auxdet':     'classification_performances_ml_auxdet.joblib',
     'quercon':    'classification_performances_ml_quercon.joblib',
     'condreg':    'classification_performances_ml_condreg.joblib',
+    'crf':        'classification_performances_ml_crf.joblib',
 }
 RESULT_10FOLD_FILE_BY_FLAG = {
     k: v.replace('.joblib', '_10fold.joblib')
@@ -120,10 +121,21 @@ MULTIPLEX_MODELS = [
     # RCFD — Transformer early encoder, CNN+Trans dual
     'trans_rcfd_ctd',
     'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
+    # CRF-MRF (Option A: full-state 8-class NLL) SC0-3
+    'cnn_gru_dual_crf_mrf',
+    'cnn_gru_dual_crf_mrf_supcon', 'cnn_gru_dual_crf_mrf_supcon2', 'cnn_gru_dual_crf_mrf_supcon3',
+    'cnn_trans_dual_crf_mrf',
+    'cnn_trans_dual_crf_mrf_supcon', 'cnn_trans_dual_crf_mrf_supcon2', 'cnn_trans_dual_crf_mrf_supcon3',
+    # CRF-chain (Option B: linear-chain) SC0-3
+    'cnn_gru_dual_crf_chain',
+    'cnn_gru_dual_crf_chain_supcon', 'cnn_gru_dual_crf_chain_supcon2', 'cnn_gru_dual_crf_chain_supcon3',
+    'cnn_trans_dual_crf_chain',
+    'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
 ]
 
 
 def _flag_for_model(key):
+    if 'crf'        in key: return 'crf'
     if 'quercon'    in key: return 'quercon'
     if 'auxdet'     in key: return 'auxdet'
     if any(x in key for x in ('deepkv', 'deephead', '_v2')): return 'cattn_v2'
