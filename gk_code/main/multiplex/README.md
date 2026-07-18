@@ -174,6 +174,64 @@ done
 
 ---
 
+### Source separation pretraining (`source_sep` group) — `--source_sep`
+
+Encoder–decoder pretraining that forces the network to learn per-target kinetic
+decomposition _before_ classification.  Two scripts in sequence:
+
+**Step 1 — Phase 1 pretraining** (`03b_source_sep_pretraining.py`)
+
+Trains a compact encoder + 3 parametric decoders jointly on all curves with:
+
+```
+L = L_absent  +  λ_cons · L_consist  +  λ_anch · Σ_j L_anchor_j
+```
+
+| Loss | What it enforces |
+|---|---|
+| `L_absent` | absent channels → zero decoded amplitude |
+| `L_consist` | Σ active decoded channels ≈ observed curve |
+| `L_anchor_j` | active channel j close to its k-NN reference curves |
+
+Anchor references = single-target-j curves from the dataset (no concentration needed).
+All losses are in rendered curve space using the 5-parameter sigmoid model
+(`Fm / (1 + exp(−Sc·(t−Cs)))^As + Fb`) that matches the preprocessing `sigmoid_5p`.
+
+Encoder architecture: `Conv1D(16,5)` → `Conv1D(16,3,stride=2)` → `BiGRU(32)` →
+`LayerNorm` → `Dense(d_shared + 3·d_target)`.  Bottleneck: 16 shared dims +
+3 × 10 per-target dims = 46 dims total.
+
+```bash
+python -u 03b_source_sep_pretraining.py \
+    --task_id 0 \
+    --exp_folder /vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex \
+    --d_shared 16 --d_target 10 \
+    --epochs_p1 200 --lambda_cons 1.0 --lambda_anch 0.5 --nn_k 5 \
+    --validate   # prints Spearman r(z_j[0], Ct) for each target
+```
+
+Outputs: `{exp_path}/source_sep_encoder_weights.weights.h5`
+
+**Step 2 — Phase 2 fine-tuning** (`03_main_training.py --source_sep`)
+
+Loads pretrained encoder, freezes its weights, trains a sigmoid classification
+head (`Dense(32,relu) → Dense(3,sigmoid)`).
+
+```bash
+for SC in 0 1; do
+    python -u 03_main_training.py ... --source_sep --supcon "$SC"
+done
+```
+
+| SC level | Model key |
+|---|---|
+| 0 | `cnn_gru_source_sep` |
+| 1 | `cnn_gru_source_sep_supcon` |
+
+**Result file:** `classification_performances_ml_source_sep[_10fold].joblib`
+
+---
+
 ## All model families at a glance
 
 | Flag(s) | Group | # models (SC0–3) | Result file suffix |
@@ -185,7 +243,8 @@ done
 | `--cross_attn_quercon` | `quercon` | 4 | `_quercon` |
 | `--condreg` | `condreg` | 16 | `_condreg` |
 | `--crf` | `crf` | 16 | `_crf` |
-| **Total** | | **78** | |
+| `--source_sep` | `source_sep` | 2 | `_source_sep` |
+| **Total** | | **80** | |
 
 ---
 
@@ -202,6 +261,7 @@ classification_performances_ml_auxdet.joblib        ← --cross_attn_auxdet
 classification_performances_ml_quercon.joblib       ← --cross_attn_quercon
 classification_performances_ml_condreg.joblib       ← --condreg
 classification_performances_ml_crf.joblib           ← --crf
+classification_performances_ml_source_sep.joblib    ← --source_sep
 ```
 
 Append `_10fold` before `.joblib` when `--n_splits > 1`.
@@ -237,6 +297,15 @@ sbatch --export=ALL lab_multiplex_training.sh   # auxdet / quercon loops
 
 Edit which `for SC in ...` loops are active before each submission.
 
+`_slurm_jobs/lab_multiplex_source_sep_training.sh` — runs Phase 1 pretraining then Phase 2 fine-tuning:
+
+```bash
+sbatch --export=ALL lab_multiplex_source_sep_training.sh
+```
+
+Phase 1 is skipped automatically if `source_sep_encoder_weights.weights.h5` already exists.
+Use `--force_rerun` inside the script to retrain from scratch.
+
 ---
 
 ## Post-training analysis
@@ -263,3 +332,12 @@ vectorised per-label sigmoid threshold grid search (21³ = 9 261 combos, < 5 s f
 | `--rerun_models KEY [KEY ...]` | Restricts `--force_rerun` to named model keys only |
 | `--fast_mode` | Disables strict TF op-determinism for faster training |
 | `--threshold FLOAT` | Sigmoid threshold for binary prediction (default 0.5) |
+
+`03b_source_sep_pretraining.py` extra flags:
+
+| Flag | Effect |
+|---|---|
+| `--validate` | After Phase 1, print Spearman r(z_j[0], Ct) for each target (gate: \|r\| > 0.65) |
+| `--force_rerun` | Retrain Phase 1 even if encoder weights already exist |
+| `--d_shared INT` | Shared latent dims (default 16) |
+| `--d_target INT` | Per-target latent dims (default 10; total bottleneck = d_shared + 3·d_target) |

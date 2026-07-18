@@ -76,23 +76,38 @@ This is the key insight: **each decoded component should look like a real single
 
 Concretely:
 
-1. **Concentration-prototype anchoring** (simplest): Group single-target-`j` curves by `log10(Conc)` bin (e.g., 5 bins). For a co-amplified well, find the bin that contains its `Conc`. Use the bin-mean single-target-`j` curve as a soft target for decoder channel `j`:
+**Chosen approach: nearest-neighbour anchoring (concentration-free)**
 
-   ```
-   prototype_j(Conc) = mean of all single-target-j curves in the Conc bin of this well
-   L_anchor_j = MSE(ŷ_j,  prototype_j(Conc))
-   ```
+For each decoded component `ŷ_j`, find the `k` nearest single-target-`j` curves in
+curve space (L2 distance on rendered curves), and minimise the average distance:
 
-2. **Nearest-neighbour anchoring** (stronger): For each decoded component `ŷ_j`, find the `k` nearest single-target-`j` curves in parameter space (Ct, slope), and minimise the average distance:
+```
+refs_j = k nearest single-target-j curves to ŷ_j (by curve-space L2)
+L_anchor_j = MSE(ŷ_j,  mean(refs_j))
+```
 
-   ```
-   refs_j = k nearest single-target-j curves to ŷ_j (by sigmoid param similarity)
-   L_anchor_j = mean_k  MSE(ŷ_j,  refs_j[k])
-   ```
+Stop-gradient on `refs_j` — gradients flow only through `ŷ_j`. The reference bank
+is a `tf.constant` of all single-target-j curves, built once from `X_curves` + `y_binary`
+(no concentration needed). `k=5` default.
 
-   This is differentiable if refs are pre-selected (stop-gradient on references) or via a soft nearest-neighbour with a temperature. It directly asks: "does the decoded KPC component actually look like real KPC curves?"
+```python
+diffs   = tf.expand_dims(rendered_j, 1) - ref_bank_j   # (batch, N_ref, T)
+dists   = tf.reduce_sum(diffs ** 2, axis=-1)            # (batch, N_ref)
+_, idx  = tf.math.top_k(-dists, k=k)
+anchor  = tf.reduce_mean(tf.gather(ref_bank_j, idx), axis=1)  # (batch, T)
+L_anchor_j = tf.reduce_mean((rendered_j - anchor) ** 2)
+```
 
-Both approaches are viable. Concentration-prototype is simpler and requires no per-forward-pass lookup. Nearest-neighbour is more expressive but requires maintaining a reference bank during training.
+**Why not concentration-prototype:** prototype anchoring requires per-well concentration
+at training time (to select the bin). NN anchoring is concentration-free — the reference
+is selected by shape similarity to the decoded output, making it applicable regardless of
+whether concentration is available.
+
+| | Prototype | NN (chosen) |
+|---|---|---|
+| Requires `concentration` at training time? | Yes | **No** |
+| Reference selection | `bin(log10(Conc))` | k-NN by curve L2 |
+| Circularity risk | None | Present (stop-gradient mitigates) |
 
 **Combined Phase 1 loss**:
 
@@ -186,11 +201,18 @@ This function is on the gradient path for L_consist and L_anchor. Using NumPy si
 
 ```python
 def render_sigmoid(params, T=45):
-    # params: (batch, 5)  [Fm, Fb, Sc, Ct, shape]
+    # params: (batch, 5) — [Fm, Fb, Sc, Ct, shape]  (matches sigmoid_5p convention)
     Fm, Fb, Sc, Ct, sh = [params[:, i:i+1] for i in range(5)]
-    t = tf.cast(tf.range(T), tf.float32)[tf.newaxis, :]  # (1, T)
-    return Fb + Fm / (1.0 + tf.exp(-Sc * (t - Ct)))     # (batch, T)
+    t = tf.cast(tf.range(T), tf.float32)[tf.newaxis, :]   # (1, T)
+    return Fb + Fm / (1.0 + tf.exp(-Sc * (t - Ct))) ** sh  # (batch, T)
 ```
+
+`sigmoid_5p` in `main/utils/sigmoid_fitting.py` uses the 5-parameter logistic with a
+shape/asymmetry exponent. The `** sh` term is required — omitting it produces a 4PL curve
+that does not match stored `params`, making `L_anchor` meaningless.
+
+Stored params path: `data['sigmoid_curves']['original']['params']` (shape `(N, 5)`).
+Note the `'original'` level — `data['sigmoid_curves']['params']` does not exist.
 
 Broadcasting: `params[:, i:i+1]` has shape `(batch, 1)`; `t` has shape `(1, T)` → output `(batch, T)`. This is a pure TF op and differentiable everywhere.
 
@@ -301,11 +323,13 @@ Each fold requires a complete Phase 1 run. Phase 1 cannot share weights across f
 - `build_source_sep_classifier(encoder, d_shared, d_target, n_targets)` → Phase 2+3 head
 - `render_sigmoid(params, T=45)` — **pure TF ops only** (no NumPy): `Fb + Fm / (1 + exp(-Sc*(t-Ct)))`, returns `(batch, T)`; on the gradient path for both L_consist and L_anchor, so must build a differentiable computational graph
 
-### 6.2 New file: `main/multiplex/utils/data/prototype_bank.py`
+### 6.2 New file: `main/multiplex/utils/model_training/nn_anchor_bank.py`
 
-- `ConcentrationPrototypeBank`: precomputes per-target prototype curves by binning single-target wells on `log10(Conc)`. Used as reference for `L_anchor`.
-- `build_prototype_bank(curves, labels, params, conc, n_bins=6)` — returns `(n_targets, n_bins, T)` prototype array and bin edges.
-- Used in the Phase 1 training loop (not a neural module — just a precomputed NumPy array passed to the custom `train_step`).
+- `build_nn_anchor_bank(X_curves, y_binary, n_targets=3)` — extracts all single-target-j
+  curves for each target j. Returns a list of n_targets arrays, each `(N_single_j, T)`.
+- No concentration needed. Pure NumPy; called once before training.
+- Result is passed to `MultiLabelSourceSepPhase1Model` as a list of `tf.constant` tensors.
+- Placed in `utils/model_training/` (no new directory needed — `utils/data/` does not exist).
 
 No `synthetic_augmentation.py` needed.
 
@@ -321,7 +345,7 @@ Standalone Phase 1 training. Outputs `source_sep_encoder_weights.h5` per experim
 --epochs_p1    default=150
 --lambda_cons  default=1.0
 --lambda_anch  default=0.5
---n_bins       default=6    (Conc bins for prototype bank)
+--nn_k         default=5    (k nearest neighbours for L_anchor)
 --validate     flag: print per-channel Ct Spearman r after Phase 1
 ```
 

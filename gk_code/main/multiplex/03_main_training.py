@@ -113,6 +113,10 @@ if __name__ == "__main__":
                         help="Train CRF structured-output variants: "
                              "CRF-MRF (full-state 8-class NLL) and CRF-chain (linear-chain). "
                              "Scope to SC variant with --supcon.")
+    parser.add_argument("--source_sep", action="store_true",
+                        help="Train source-separation pretrained classifier (Phase 2). "
+                             "Requires 03b_source_sep_pretraining.py to have been run first. "
+                             "SC0=cnn_gru_source_sep, SC1=cnn_gru_source_sep_supcon.")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Sigmoid threshold for binary prediction (default 0.5)")
     parser.add_argument("--rerun_models", type=str, nargs="+", default=None,
@@ -133,6 +137,7 @@ if __name__ == "__main__":
         "CATTN-AUXDET" if args.cross_attn_auxdet else
         "CATTN-QUERCON" if args.cross_attn_quercon else
         "CRF"          if args.crf              else
+        "SS"           if args.source_sep        else
         "ML"
     ) + f" SC{args.supcon}"
     print(f"\n{'='*70}\n[RUNNING] {os.path.basename(__file__)}  [{_mode}]\n{'='*70}\n")
@@ -158,6 +163,7 @@ if __name__ == "__main__":
         'quercon'    if args.cross_attn_quercon else
         'condreg'    if args.condreg            else
         'crf'        if args.crf               else
+        'source_sep' if args.source_sep         else
         'default'
     )
     _fmap        = config.RESULT_10FOLD_FILE_BY_FLAG if args.n_splits > 1 else config.RESULT_FILE_BY_FLAG
@@ -262,6 +268,12 @@ if __name__ == "__main__":
                 'cnn_gru_dual_crf_chain_supcon3', 'cnn_trans_dual_crf_chain_supcon3'],
         }
         models = _crf_by_sc[args.supcon]
+    elif args.source_sep:
+        _ss_by_sc = {
+            0: ['cnn_gru_source_sep'],
+            1: ['cnn_gru_source_sep_supcon'],
+        }
+        models = _ss_by_sc.get(args.supcon, _ss_by_sc[0])
     elif args.supcon == 0:
         models = ['cnn', 'gru', 'transformer', 'cnn_gru_dual', 'cnn_trans_dual']
     elif args.supcon == 1:
@@ -314,26 +326,36 @@ if __name__ == "__main__":
         cached_results.update(current_results)
         safe_joblib_dump(cached_results, results_path, compress=3)
 
+    # ── Source sep: locate pretrained encoder weights (Phase 2) ────────
+    _encoder_weights_path = None
+    if args.source_sep:
+        _encoder_weights_path = os.path.join(exp_path, 'source_sep_encoder_weights.weights.h5')
+        if not os.path.exists(_encoder_weights_path):
+            print(f"  [WARNING] Encoder weights not found: {_encoder_weights_path}")
+            print(f"            Run 03b_source_sep_pretraining.py first.")
+            print(f"            Training source_sep models from scratch (random init).")
+
     # ── Train ──────────────────────────────────────────────────────────
     results = evaluate_outlier_filters_ml(
-        X_curves           = curves,
-        features_df        = features_df,
-        y_binary           = y_binary,
-        y_combo_int        = y_combo_int,
-        all_targets        = all_targets,
+        X_curves              = curves,
+        features_df           = features_df,
+        y_binary              = y_binary,
+        y_combo_int           = y_combo_int,
+        all_targets           = all_targets,
         # outlier_filters    = config.OUTLIER_FILTERS,
-        outlier_filters    = [None],
-        dataset_name       = folder,
-        mode_name          = _mode,
-        ml_model_key_map   = ML_MODEL_KEY_MAP,
-        ml_model_print_map = ML_MODEL_PRINT_MAP,
-        cached_results     = cached_results,
-        models             = models,
-        n_splits           = args.n_splits,
-        checkpoint_fn      = checkpoint_fn,
-        y_concentration    = y_concentration,
-        threshold          = args.threshold,
-        rerun_models       = args.rerun_models,
+        outlier_filters       = [None],
+        dataset_name          = folder,
+        mode_name             = _mode,
+        ml_model_key_map      = ML_MODEL_KEY_MAP,
+        ml_model_print_map    = ML_MODEL_PRINT_MAP,
+        cached_results        = cached_results,
+        models                = models,
+        n_splits              = args.n_splits,
+        checkpoint_fn         = checkpoint_fn,
+        y_concentration       = y_concentration,
+        threshold             = args.threshold,
+        rerun_models          = args.rerun_models,
+        encoder_weights_path  = _encoder_weights_path,
     )
 
     cached_results.update(results)

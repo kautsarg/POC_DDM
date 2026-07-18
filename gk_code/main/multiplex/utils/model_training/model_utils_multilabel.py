@@ -44,6 +44,10 @@ from model_utils import (
     create_cnn_gru_dual_model, create_cnn_transformer_dual_model,
 )
 from safe_io import safe_keras_save
+from model_utils_source_sep import build_source_sep_encoder, build_source_sep_classifier
+
+_SS_D_SHARED = 16
+_SS_D_TARGET  = 10
 
 
 # ======================================================================
@@ -2078,6 +2082,22 @@ def create_ml_cnn_trans_dual_crf_chain_supcon3_model(T, n_targets):
     return MultiLabelCRFChainSC3Model(inputs=inputs, outputs=[emit, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
 
 
+# -- source separation factories -----------------------------------------------
+
+def create_ml_cnn_gru_source_sep_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    cls = build_source_sep_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return _StandardMultiLabelModel(inputs=cls.inputs, outputs=cls.outputs,
+                                    name='source_sep_classifier')
+
+
+def create_ml_cnn_gru_source_sep_supcon_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    cls = build_source_sep_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return _StandardMultiLabelModel(inputs=cls.inputs, outputs=cls.outputs,
+                                    name='source_sep_classifier')
+
+
 # -- factory dispatch --------------------------------------------------------
 
 ML_FACTORIES = {
@@ -2177,6 +2197,9 @@ ML_FACTORIES = {
     'cnn_trans_dual_crf_chain_supcon':   create_ml_cnn_trans_dual_crf_chain_supcon_model,
     'cnn_trans_dual_crf_chain_supcon2':  create_ml_cnn_trans_dual_crf_chain_supcon2_model,
     'cnn_trans_dual_crf_chain_supcon3':  create_ml_cnn_trans_dual_crf_chain_supcon3_model,
+    # Source separation pretrained classifier SC0-1
+    'cnn_gru_source_sep':               create_ml_cnn_gru_source_sep_model,
+    'cnn_gru_source_sep_supcon':        create_ml_cnn_gru_source_sep_supcon_model,
 }
 
 # Models that carry a concentration regression output
@@ -2186,6 +2209,9 @@ _RCFD_ML_KEYS = frozenset({
     'trans_rcfd_cgd', 'trans_rcfd_cgd_supcon_mtl', 'trans_rcfd_cgd_supcon2_mtl', 'trans_rcfd_cgd_supcon3_mtl',
     'trans_rcfd_ctd', 'trans_rcfd_ctd_supcon_mtl', 'trans_rcfd_ctd_supcon2_mtl', 'trans_rcfd_ctd_supcon3_mtl',
 })
+
+# Source separation models — evaluate loop loads pretrained encoder weights before training
+_SS_ML_KEYS = frozenset({'cnn_gru_source_sep', 'cnn_gru_source_sep_supcon'})
 
 # Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
 _CRF_ML_KEYS = frozenset({
@@ -2309,6 +2335,9 @@ ML_MODEL_PRINT_MAP = {
     'cnn_trans_dual_crf_chain_supcon':  'CNN+Tr CRF-chain SC1',
     'cnn_trans_dual_crf_chain_supcon2': 'CNN+Tr CRF-chain SC2',
     'cnn_trans_dual_crf_chain_supcon3': 'CNN+Tr CRF-chain SC3',
+    # Source separation SC0-1
+    'cnn_gru_source_sep':              'SrcSep SC0',
+    'cnn_gru_source_sep_supcon':       'SrcSep SC1',
 }
 
 
@@ -2354,6 +2383,7 @@ def evaluate_outlier_filters_ml(
     y_concentration=None,
     threshold=0.5,
     rerun_models=None,
+    encoder_weights_path=None,
 ):
     """Train and evaluate multi-label models across outlier filters.
 
@@ -2493,6 +2523,12 @@ def evaluate_outlier_filters_ml(
                 T_steps = X_train.shape[1]
                 tf.keras.backend.clear_session()
                 model = ML_FACTORIES[m](T_steps, n_targets)
+                if (m in _SS_ML_KEYS
+                        and encoder_weights_path
+                        and os.path.exists(encoder_weights_path)):
+                    _enc = model.get_layer('source_sep_encoder')
+                    _enc.load_weights(encoder_weights_path)
+                    _enc.trainable = False
                 model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0))
 
                 if is_rcfd:

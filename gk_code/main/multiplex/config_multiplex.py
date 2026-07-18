@@ -48,6 +48,7 @@ RESULT_FILE_BY_FLAG = {
     'quercon':    'classification_performances_ml_quercon.joblib',
     'condreg':    'classification_performances_ml_condreg.joblib',
     'crf':        'classification_performances_ml_crf.joblib',
+    'source_sep': 'classification_performances_ml_source_sep.joblib',
 }
 RESULT_10FOLD_FILE_BY_FLAG = {
     k: v.replace('.joblib', '_10fold.joblib')
@@ -131,10 +132,14 @@ MULTIPLEX_MODELS = [
     'cnn_gru_dual_crf_chain_supcon', 'cnn_gru_dual_crf_chain_supcon2', 'cnn_gru_dual_crf_chain_supcon3',
     'cnn_trans_dual_crf_chain',
     'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
+    # Source separation pretrained encoder classifier SC0-1
+    'cnn_gru_source_sep',
+    'cnn_gru_source_sep_supcon',
 ]
 
 
 def _flag_for_model(key):
+    if 'source_sep' in key: return 'source_sep'
     if 'crf'        in key: return 'crf'
     if 'quercon'    in key: return 'quercon'
     if 'auxdet'     in key: return 'auxdet'
