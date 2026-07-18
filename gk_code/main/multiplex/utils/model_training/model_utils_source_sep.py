@@ -2,13 +2,14 @@
 
 Phase 1 — Encoder + n_targets parametric decoders trained with:
   L = L_absent  +  λ_cons * L_consist  +  λ_anch * Σ L_anchor_j
+    + λ_var  * L_var
 
 All losses computed in rendered curve space.  No concentration required at
 training time — L_anchor uses a nearest-neighbour reference bank built from
 single-target curves only.
 
-Phase 2 / 3 — build_source_sep_classifier attaches a sigmoid classification
-head to the frozen (Phase 2) or unfrozen (Phase 3) encoder.
+Phase 2 / 3 — build_source_sep_classifier attaches a per-target sigmoid
+classification head to the frozen (Phase 2) or unfrozen (Phase 3) encoder.
 """
 
 import tensorflow as tf
@@ -50,9 +51,8 @@ def build_source_sep_encoder(T, d_shared, d_target, n_targets=3):
     """Encoder: Input(T,1) → structured bottleneck (d_shared + n_targets*d_target).
 
     Architecture: two causal Conv1D (stride-2 on second) → BiGRU(32) →
-    LayerNorm → Dense bottleneck.  No Dropout — avoids interference with
-    the Phase-2 frozen-encoder forward pass where training=True still
-    propagates into sub-models.
+    LayerNorm → Dense bottleneck (linear — no activation to prevent dying-ReLU
+    collapse in per-target dims).
 
     Layer names use stable name= kwargs for positional load_weights compatibility.
     """
@@ -65,7 +65,7 @@ def build_source_sep_encoder(T, d_shared, d_target, n_targets=3):
         tf.keras.layers.GRU(32), name='ss_bigru')(x)
     x = tf.keras.layers.LayerNormalization(name='ss_ln')(x)
     z = tf.keras.layers.Dense(
-        d_shared + n_targets * d_target, activation='relu', name='ss_bottleneck')(x)
+        d_shared + n_targets * d_target, name='ss_bottleneck')(x)  # linear — no relu
     return tf.keras.Model(inputs=inputs, outputs=z, name='source_sep_encoder')
 
 
@@ -118,6 +118,11 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     Wraps one encoder and n_targets parametric decoders.
     train_step / test_step compute:
         L = L_absent  +  λ_cons * L_consist  +  λ_anch * Σ_{j active} L_anchor_j
+          + λ_var  * L_var
+
+    L_var penalises low per-target-dim variance across the batch to prevent
+    representation collapse (needed because the linear bottleneck has no
+    activation that would otherwise bound the variance).
 
     Parameters
     ----------
@@ -128,13 +133,15 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     d_shared  : shared latent dims
     d_target  : per-target latent dims
     n_targets : number of targets
-    lambda_cons, lambda_anch : loss weights
+    lambda_cons, lambda_anch, lambda_var : loss weights
+    var_margin : minimum acceptable std for per-target dims (default 0.05)
     k         : k nearest neighbours for L_anchor
     """
 
     def __init__(self, encoder, decoders, nn_bank, T=45,
                  d_shared=16, d_target=10, n_targets=3,
-                 lambda_cons=1.0, lambda_anch=0.5, k=5, **kwargs):
+                 lambda_cons=1.0, lambda_anch=0.5, lambda_var=0.1,
+                 var_margin=0.05, k=5, **kwargs):
         super().__init__(**kwargs)
         self.encoder      = encoder
         self.decoders     = decoders
@@ -145,6 +152,8 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         self.n_targets    = n_targets
         self.lambda_cons  = lambda_cons
         self.lambda_anch  = lambda_anch
+        self.lambda_var   = lambda_var
+        self.var_margin   = var_margin
         self.k            = k
 
     def _split_z(self, z):
@@ -156,15 +165,16 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         ]
         return z_shared, z_parts
 
-    def _decode_all(self, x, training):
-        z         = self.encoder(x, training=training)
+    def _encode_and_decode(self, x, training):
+        """Run encoder + all decoders; returns (z_parts, rendered_list)."""
+        z                 = self.encoder(x, training=training)
         z_shared, z_parts = self._split_z(z)
-        rendered  = []
+        rendered          = []
         for j, dec in enumerate(self.decoders):
             dec_in   = tf.concat([z_shared, z_parts[j]], axis=-1)
             params_j = dec(dec_in, training=training)
             rendered.append(render_sigmoid(params_j, T=self.T))
-        return rendered
+        return z_parts, rendered
 
     def _nn_anchor_loss(self, rendered_j, ref_bank_j, active_mask):
         """L_anchor for channel j, masked to active samples.
@@ -173,7 +183,6 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         ref_bank_j  : (N_ref, T)  tf.constant
         active_mask : (batch,)  float — 1.0 where y_j == 1
         """
-        # Distance from each sample to each reference curve
         diffs = (tf.expand_dims(rendered_j, 1)
                  - tf.expand_dims(ref_bank_j, 0))          # (batch, N_ref, T)
         dists = tf.reduce_sum(diffs ** 2, axis=-1)          # (batch, N_ref)
@@ -187,7 +196,7 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     def _compute_losses(self, x, y_bin, training):
         x_curve  = tf.squeeze(x, axis=-1)          # (batch, T)
         y_f      = tf.cast(y_bin, tf.float32)       # (batch, n_targets)
-        rendered = self._decode_all(x, training)
+        z_parts, rendered = self._encode_and_decode(x, training)
 
         # L_absent: absent channels → zero rendered curve
         l_absent = tf.constant(0.0)
@@ -208,26 +217,38 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
             l_anchor = l_anchor + self._nn_anchor_loss(
                 rendered[j], self.nn_bank[j], y_f[:, j])
 
-        loss = l_absent + self.lambda_cons * l_consist + self.lambda_anch * l_anchor
-        return loss, l_absent, l_consist, l_anchor
+        # L_var: penalise low per-target-dim variance (prevents dead-dim collapse)
+        l_var = tf.constant(0.0)
+        for j in range(self.n_targets):
+            z_std = tf.math.reduce_std(z_parts[j], axis=0)  # (d_target,)
+            l_var = l_var + tf.reduce_mean(tf.nn.relu(self.var_margin - z_std))
+
+        loss = (l_absent
+                + self.lambda_cons  * l_consist
+                + self.lambda_anch  * l_anchor
+                + self.lambda_var   * l_var)
+        return loss, l_absent, l_consist, l_anchor, l_var
 
     def call(self, x, training=False):
-        return self._decode_all(x, training)
+        _, rendered = self._encode_and_decode(x, training)
+        return rendered
 
     def train_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'], tf.int32)
         with tf.GradientTape() as tape:
-            loss, l_ab, l_co, l_an = self._compute_losses(x, y_bin, training=True)
+            loss, l_ab, l_co, l_an, l_va = self._compute_losses(x, y_bin, training=True)
         self.optimizer.apply_gradients(
             zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
-        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co, 'l_anchor': l_an}
+        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
+                'l_anchor': l_an, 'l_var': l_va}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'], tf.int32)
-        loss, l_ab, l_co, l_an = self._compute_losses(x, y_bin, training=False)
-        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co, 'l_anchor': l_an}
+        loss, l_ab, l_co, l_an, l_va = self._compute_losses(x, y_bin, training=False)
+        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
+                'l_anchor': l_an, 'l_var': l_va}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,7 +256,11 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def build_source_sep_classifier(encoder, d_shared, d_target, n_targets=3):
-    """Attach a sigmoid classification head to the pretrained encoder.
+    """Attach a per-target sigmoid classification head to the pretrained encoder.
+
+    Each target j gets its own MLP head that sees [z_shared || z_j], matching
+    the pretraining decoder structure.  This ensures that the structured latent
+    decomposition is actually exploited at classification time.
 
     Parameters
     ----------
@@ -251,6 +276,22 @@ def build_source_sep_classifier(encoder, d_shared, d_target, n_targets=3):
     T      = encoder.input_shape[1]
     inputs = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
     z      = encoder(inputs)                                    # (batch, d_sh + n*d_t)
-    h      = tf.keras.layers.Dense(32, activation='relu', name='cls_feat')(z)
-    out    = tf.keras.layers.Dense(n_targets, activation='sigmoid', name='cls_out')(h)
+
+    # Slice shared dims — used by every per-target head
+    z_shared = tf.keras.layers.Lambda(
+        lambda t: t[:, :d_shared], name='cls_z_shared')(z)
+
+    outs = []
+    for j in range(n_targets):
+        s    = d_shared + j * d_target
+        e    = d_shared + (j + 1) * d_target
+        z_j  = tf.keras.layers.Lambda(
+            lambda t, _s=s, _e=e: t[:, _s:_e], name=f'cls_z{j}')(z)
+        h_j  = tf.keras.layers.Concatenate(name=f'cls_cat{j}')([z_shared, z_j])
+        h_j  = tf.keras.layers.Dense(
+            d_shared + d_target, activation='relu', name=f'cls_h{j}')(h_j)
+        out_j = tf.keras.layers.Dense(1, activation='sigmoid', name=f'cls_sig{j}')(h_j)
+        outs.append(out_j)
+
+    out = tf.keras.layers.Concatenate(name='cls_out')(outs)
     return tf.keras.Model(inputs=inputs, outputs=out, name='source_sep_classifier')

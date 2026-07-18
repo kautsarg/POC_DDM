@@ -18,6 +18,7 @@ set -e
 
 mkdir -p "logs/${SLURM_JOB_NAME}"
 
+export PYTHONIOENCODING=utf-8
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main/multiplex
@@ -27,7 +28,9 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 # Phase 1 — source separation pretraining
 # Trains encoder + 3 parametric decoders on all curves.
 # Saves: {exp_path}/source_sep_encoder_weights.weights.h5
-# Skipped automatically if weights already exist (use --force_rerun to retrain).
+#        {exp_path}/source_sep_decoder_{0,1,2}_weights.weights.h5
+# Skipped automatically if weights already exist.
+# Pass --force_rerun to retrain (needed once after architecture changes).
 python -u 03b_source_sep_pretraining.py \
     --task_id $SLURM_ARRAY_TASK_ID \
     --exp_folder "$EXP_FOLDER" \
@@ -36,7 +39,9 @@ python -u 03b_source_sep_pretraining.py \
     --epochs_p1 200 \
     --lambda_cons 1.0 \
     --lambda_anch 0.5 \
+    --lambda_var 0.1 \
     --nn_k 5 \
+    --force_rerun \
     --validate
 
 run_train() {
@@ -50,7 +55,9 @@ run_train() {
 # Phase 2 — frozen-encoder classification (SC0: base, SC1: SupCon backbone)
 # Loads pretrained encoder weights and freezes the encoder during training.
 # Writes to: classification_performances_ml_source_sep[_10fold].joblib
-run_train --source_sep --supcon 0
-run_train --source_sep --supcon 1
+# --force_rerun clears only source_sep keys in the source_sep result file;
+# it does NOT touch other group result files (crf, cattn_v2, etc.).
+run_train --source_sep --supcon 0 --force_rerun
+run_train --source_sep --supcon 1 --force_rerun
 
 deactivate

@@ -3,7 +3,7 @@
 Trains an Encoder + n_targets parametric decoders on all curves using:
   L = L_absent  +  λ_cons * L_consist  +  λ_anch * Σ L_anchor_j
 
-Saves encoder weights to {exp_path}/source_sep_encoder_weights.h5.
+Saves encoder weights to {exp_path}/source_sep_encoder_weights.weights.h5.
 Run this before 03_main_training.py --source_sep (Phase 2/3).
 
 All losses are in rendered curve space. L_anchor uses NN anchoring —
@@ -88,6 +88,8 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_anch",  type=float, default=0.5)
     parser.add_argument("--nn_k",         type=int,   default=5,
                         help="k nearest neighbours for L_anchor (default 5)")
+    parser.add_argument("--lambda_var",   type=float, default=0.1,
+                        help="Weight for variance regularisation loss L_var (default 0.1)")
     parser.add_argument("--batch_size",   type=int,   default=512)
     parser.add_argument("--fast_mode",    action="store_true")
     parser.add_argument("--validate",     action="store_true",
@@ -164,6 +166,7 @@ if __name__ == "__main__":
         n_targets    = n_targets,
         lambda_cons  = args.lambda_cons,
         lambda_anch  = args.lambda_anch,
+        lambda_var   = args.lambda_var,
         k            = args.nn_k,
     )
     model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0))
@@ -199,9 +202,13 @@ if __name__ == "__main__":
         callbacks  = callbacks,
     )
 
-    # ── Save encoder weights ───────────────────────────────────────────
+    # ── Save encoder weights + per-decoder weights (for decomposition viz) ──
     encoder.save_weights(out_path)
     print(f"\n  -> Encoder weights saved: {out_path}")
+    for j, dec in enumerate(decoders):
+        dec_path = os.path.join(exp_path, f'source_sep_decoder_{j}_weights.weights.h5')
+        dec.save_weights(dec_path)
+        print(f"  -> Decoder {j} ({all_targets[j]}) weights saved: {dec_path}")
 
     # ── Validation gate 2 (optional) ──────────────────────────────────
     if args.validate:
