@@ -132,9 +132,12 @@ MULTIPLEX_MODELS = [
     'cnn_gru_dual_crf_chain_supcon', 'cnn_gru_dual_crf_chain_supcon2', 'cnn_gru_dual_crf_chain_supcon3',
     'cnn_trans_dual_crf_chain',
     'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
-    # Source separation pretrained encoder classifier SC0-1
+    # Source separation pretrained encoder — independent sigmoid heads (SC0-1)
     'cnn_gru_source_sep',
     'cnn_gru_source_sep_supcon',
+    # Source separation pretrained encoder — joint-state CRF-MRF output (SC0-1)
+    'cnn_gru_source_sep_crf',
+    'cnn_gru_source_sep_crf_supcon',
 ]
 
 

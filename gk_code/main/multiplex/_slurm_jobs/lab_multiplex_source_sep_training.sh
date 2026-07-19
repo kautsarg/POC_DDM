@@ -31,6 +31,7 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 #        {exp_path}/source_sep_decoder_{0,1,2}_weights.weights.h5
 # Skipped automatically if weights already exist.
 # Pass --force_rerun to retrain (needed once after architecture changes).
+# --lambda_supcon 0.0 = SC0 encoder (no SupCon on z_j); set >0 for SC1-style encoder.
 python -u 03b_source_sep_pretraining.py \
     --task_id $SLURM_ARRAY_TASK_ID \
     --exp_folder "$EXP_FOLDER" \
@@ -40,6 +41,7 @@ python -u 03b_source_sep_pretraining.py \
     --lambda_cons 1.0 \
     --lambda_anch 0.5 \
     --lambda_var 0.1 \
+    --lambda_supcon 0.0 \
     --nn_k 5 \
     --force_rerun \
     --validate
@@ -52,8 +54,8 @@ run_train() {
         "$@"
 }
 
-# Phase 2 — frozen-encoder classification (SC0: base, SC1: SupCon backbone)
-# Loads pretrained encoder weights and freezes the encoder during training.
+# Phase 2+3 — frozen-encoder head training (Phase 2) then end-to-end fine-tune (Phase 3).
+# Loads pretrained encoder weights, freezes encoder for Phase 2, then unfreezes for Phase 3.
 # Writes to: classification_performances_ml_source_sep[_10fold].joblib
 # --force_rerun clears only source_sep keys in the source_sep result file;
 # it does NOT touch other group result files (crf, cattn_v2, etc.).

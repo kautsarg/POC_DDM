@@ -40,7 +40,9 @@ def render_sigmoid(params, T=45):
     Cs = params[:, 3:4]
     As = params[:, 4:5]
     t  = tf.cast(tf.range(T), tf.float32)[tf.newaxis, :]  # (1, T)
-    return Fm / (1.0 + tf.exp(-Sc * (t - Cs))) ** As + Fb  # (batch, T)
+    # Clip exponent to ±50 to prevent exp overflow (exp(50)≈5e21 is finite; beyond that is inf)
+    exponent = tf.clip_by_value(-Sc * (t - Cs), -50.0, 50.0)
+    return Fm / (1.0 + tf.exp(exponent)) ** As + Fb  # (batch, T)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -112,17 +114,51 @@ def build_parametric_decoder(d_shared, d_target, T_max=45, j=0):
 # Phase 1 model
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _per_target_supcon_loss(z_j, y_j, temp=0.07):
+    """SupCon loss on per-target latent z_j.
+
+    Positives for anchor i: all other wells where y_j == 1 AND anchor i also has y_j == 1.
+    z_j is L2-normalised before similarity computation.
+
+    Parameters
+    ----------
+    z_j : (batch, d_target) float32
+    y_j : (batch,)          int32 — binary label for target j
+    temp: float             — temperature (default 0.07)
+
+    Returns
+    -------
+    Scalar loss.  Returns 0.0 when no positive pairs exist in the batch.
+    """
+    z_norm   = tf.math.l2_normalize(z_j, axis=-1)                    # (B, d)
+    y        = tf.cast(y_j, tf.float32)[:, tf.newaxis]                # (B, 1)
+    not_self = 1.0 - tf.eye(tf.shape(z_norm)[0])
+    pos_mask = tf.matmul(y, y, transpose_b=True) * not_self           # (B, B)
+
+    sim      = tf.matmul(z_norm, z_norm, transpose_b=True) / temp     # (B, B)
+    sim_max  = tf.stop_gradient(tf.reduce_max(sim, axis=1, keepdims=True))
+    exp_sim  = tf.exp(sim - sim_max)
+    log_den  = tf.math.log(tf.reduce_sum(exp_sim * not_self, axis=1, keepdims=True) + 1e-8)
+    log_prob = (sim - sim_max) - log_den
+    pos_sum  = tf.reduce_sum(pos_mask, axis=1)
+    has_pos  = tf.cast(pos_sum > 0, tf.float32)
+    per_anc  = -tf.reduce_sum(log_prob * pos_mask, axis=1) / (pos_sum + 1e-8)
+    return tf.reduce_mean(per_anc * has_pos)
+
+
 class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     """Source separation pretraining model.
 
     Wraps one encoder and n_targets parametric decoders.
     train_step / test_step compute:
         L = L_absent  +  λ_cons * L_consist  +  λ_anch * Σ_{j active} L_anchor_j
-          + λ_var  * L_var
+          + λ_var  * L_var  +  λ_supcon * Σ_j SupCon(z_j, y_j)
 
     L_var penalises low per-target-dim variance across the batch to prevent
-    representation collapse (needed because the linear bottleneck has no
-    activation that would otherwise bound the variance).
+    representation collapse.
+    L_supcon (optional) pulls same-target per-target latents together; when
+    lambda_supcon=0 (default) it is a no-op and SC0 vs SC1 use the same
+    pretraining.
 
     Parameters
     ----------
@@ -133,15 +169,17 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     d_shared  : shared latent dims
     d_target  : per-target latent dims
     n_targets : number of targets
-    lambda_cons, lambda_anch, lambda_var : loss weights
-    var_margin : minimum acceptable std for per-target dims (default 0.05)
-    k         : k nearest neighbours for L_anchor
+    lambda_cons, lambda_anch, lambda_var, lambda_supcon : loss weights
+    var_margin  : minimum acceptable std for per-target dims (default 0.05)
+    supcon_temp : SupCon temperature (default 0.07)
+    k           : k nearest neighbours for L_anchor
     """
 
     def __init__(self, encoder, decoders, nn_bank, T=45,
                  d_shared=16, d_target=10, n_targets=3,
                  lambda_cons=1.0, lambda_anch=0.5, lambda_var=0.1,
-                 var_margin=0.05, k=5, **kwargs):
+                 var_margin=0.05, lambda_supcon=0.0, supcon_temp=0.07,
+                 k=5, **kwargs):
         super().__init__(**kwargs)
         self.encoder      = encoder
         self.decoders     = decoders
@@ -150,11 +188,13 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         self.d_shared     = d_shared
         self.d_target     = d_target
         self.n_targets    = n_targets
-        self.lambda_cons  = lambda_cons
-        self.lambda_anch  = lambda_anch
-        self.lambda_var   = lambda_var
-        self.var_margin   = var_margin
-        self.k            = k
+        self.lambda_cons   = lambda_cons
+        self.lambda_anch   = lambda_anch
+        self.lambda_var    = lambda_var
+        self.var_margin    = var_margin
+        self.lambda_supcon = lambda_supcon
+        self.supcon_temp   = supcon_temp
+        self.k             = k
 
     def _split_z(self, z):
         z_shared = z[:, :self.d_shared]
@@ -198,6 +238,10 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         y_f      = tf.cast(y_bin, tf.float32)       # (batch, n_targets)
         z_parts, rendered = self._encode_and_decode(x, training)
 
+        # Clip rendered curves to prevent float32 overflow in gradient computation.
+        # Valid PCR amplitudes are in [0, ~3]; ±10 is a safe generous bound.
+        rendered = [tf.clip_by_value(r, -10.0, 10.0) for r in rendered]
+
         # L_absent: absent channels → zero rendered curve
         l_absent = tf.constant(0.0)
         for j in range(self.n_targets):
@@ -217,17 +261,30 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
             l_anchor = l_anchor + self._nn_anchor_loss(
                 rendered[j], self.nn_bank[j], y_f[:, j])
 
-        # L_var: penalise low per-target-dim variance (prevents dead-dim collapse)
+        # L_var: penalise low per-target-dim variance (prevents dead-dim collapse).
+        # Use sqrt(var + eps) instead of reduce_std to avoid 0/0 gradient when std=0.
         l_var = tf.constant(0.0)
         for j in range(self.n_targets):
-            z_std = tf.math.reduce_std(z_parts[j], axis=0)  # (d_target,)
-            l_var = l_var + tf.reduce_mean(tf.nn.relu(self.var_margin - z_std))
+            mean_j = tf.reduce_mean(z_parts[j], axis=0)
+            var_j  = tf.reduce_mean((z_parts[j] - mean_j) ** 2, axis=0)
+            z_std  = tf.sqrt(var_j + 1e-8)          # (d_target,) — numerically safe
+            l_var  = l_var + tf.reduce_mean(tf.nn.relu(self.var_margin - z_std))
+
+        # L_supcon: supervised contrastive on per-target latent z_j.
+        # Pulls same-target latents together; no-op when lambda_supcon=0.
+        l_supcon = tf.constant(0.0)
+        if self.lambda_supcon > 0:
+            y_int = tf.cast(y_bin, tf.int32)
+            for j in range(self.n_targets):
+                l_supcon = l_supcon + _per_target_supcon_loss(
+                    z_parts[j], y_int[:, j], temp=self.supcon_temp)
 
         loss = (l_absent
-                + self.lambda_cons  * l_consist
-                + self.lambda_anch  * l_anchor
-                + self.lambda_var   * l_var)
-        return loss, l_absent, l_consist, l_anchor, l_var
+                + self.lambda_cons   * l_consist
+                + self.lambda_anch   * l_anchor
+                + self.lambda_var    * l_var
+                + self.lambda_supcon * l_supcon)
+        return loss, l_absent, l_consist, l_anchor, l_var, l_supcon
 
     def call(self, x, training=False):
         _, rendered = self._encode_and_decode(x, training)
@@ -237,18 +294,18 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'], tf.int32)
         with tf.GradientTape() as tape:
-            loss, l_ab, l_co, l_an, l_va = self._compute_losses(x, y_bin, training=True)
+            loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
         self.optimizer.apply_gradients(
             zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
         return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
-                'l_anchor': l_an, 'l_var': l_va}
+                'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'], tf.int32)
-        loss, l_ab, l_co, l_an, l_va = self._compute_losses(x, y_bin, training=False)
+        loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
         return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
-                'l_anchor': l_an, 'l_var': l_va}
+                'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

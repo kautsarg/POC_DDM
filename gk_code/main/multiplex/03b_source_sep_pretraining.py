@@ -90,6 +90,9 @@ if __name__ == "__main__":
                         help="k nearest neighbours for L_anchor (default 5)")
     parser.add_argument("--lambda_var",   type=float, default=0.1,
                         help="Weight for variance regularisation loss L_var (default 0.1)")
+    parser.add_argument("--lambda_supcon", type=float, default=0.0,
+                        help="Weight for per-target SupCon loss on z_j (default 0.0 = disabled). "
+                             "Use >0 to train SC1-style encoder with structured latent alignment.")
     parser.add_argument("--batch_size",   type=int,   default=512)
     parser.add_argument("--fast_mode",    action="store_true")
     parser.add_argument("--validate",     action="store_true",
@@ -157,17 +160,18 @@ if __name__ == "__main__":
                 for j in range(n_targets)]
 
     model = MultiLabelSourceSepPhase1Model(
-        encoder      = encoder,
-        decoders     = decoders,
-        nn_bank      = nn_bank,
-        T            = T,
-        d_shared     = args.d_shared,
-        d_target     = args.d_target,
-        n_targets    = n_targets,
-        lambda_cons  = args.lambda_cons,
-        lambda_anch  = args.lambda_anch,
-        lambda_var   = args.lambda_var,
-        k            = args.nn_k,
+        encoder        = encoder,
+        decoders       = decoders,
+        nn_bank        = nn_bank,
+        T              = T,
+        d_shared       = args.d_shared,
+        d_target       = args.d_target,
+        n_targets      = n_targets,
+        lambda_cons    = args.lambda_cons,
+        lambda_anch    = args.lambda_anch,
+        lambda_var     = args.lambda_var,
+        lambda_supcon  = args.lambda_supcon,
+        k              = args.nn_k,
     )
     model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0))
 
@@ -188,7 +192,8 @@ if __name__ == "__main__":
         tf.keras.callbacks.EarlyStopping(
             monitor='val_loss', patience=30, restore_best_weights=True),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.5, patience=15, min_lr=1e-5),
+            monitor='val_loss', factor=0.3, patience=15, min_lr=1e-5),
+        tf.keras.callbacks.TerminateOnNaN(),
     ]
 
     print(f"\n  Training Phase 1 ({args.epochs_p1} epochs max, early stopping patience=30)...")

@@ -2098,6 +2098,30 @@ def create_ml_cnn_gru_source_sep_supcon_model(T, n_targets):
                                     name='source_sep_classifier')
 
 
+def create_ml_cnn_gru_source_sep_crf_model(T, n_targets):
+    """Source sep encoder + full-state MRF (SC0).
+
+    Replaces independent per-target sigmoid heads with a joint 2^n_targets NLL
+    loss that captures label co-occurrence structure.  Phase 2+3 still applies:
+    Phase 2 freezes the encoder and trains only the CRF logit layer; Phase 3
+    unfreezes the encoder for end-to-end fine-tuning.
+    """
+    encoder      = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z            = encoder(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=state_logits, n_targets=n_targets)
+
+
+def create_ml_cnn_gru_source_sep_crf_supcon_model(T, n_targets):
+    """Source sep encoder + full-state MRF (SC1 — reserved for SupCon encoder variant)."""
+    encoder      = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z            = encoder(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=state_logits, n_targets=n_targets)
+
+
 # -- factory dispatch --------------------------------------------------------
 
 ML_FACTORIES = {
@@ -2200,6 +2224,8 @@ ML_FACTORIES = {
     # Source separation pretrained classifier SC0-1
     'cnn_gru_source_sep':               create_ml_cnn_gru_source_sep_model,
     'cnn_gru_source_sep_supcon':        create_ml_cnn_gru_source_sep_supcon_model,
+    'cnn_gru_source_sep_crf':           create_ml_cnn_gru_source_sep_crf_model,
+    'cnn_gru_source_sep_crf_supcon':    create_ml_cnn_gru_source_sep_crf_supcon_model,
 }
 
 # Models that carry a concentration regression output
@@ -2211,7 +2237,10 @@ _RCFD_ML_KEYS = frozenset({
 })
 
 # Source separation models — evaluate loop loads pretrained encoder weights before training
-_SS_ML_KEYS = frozenset({'cnn_gru_source_sep', 'cnn_gru_source_sep_supcon'})
+_SS_ML_KEYS = frozenset({
+    'cnn_gru_source_sep', 'cnn_gru_source_sep_supcon',
+    'cnn_gru_source_sep_crf', 'cnn_gru_source_sep_crf_supcon',
+})
 
 # Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
 _CRF_ML_KEYS = frozenset({
@@ -2219,6 +2248,8 @@ _CRF_ML_KEYS = frozenset({
     'cnn_trans_dual_crf_mrf', 'cnn_trans_dual_crf_mrf_supcon', 'cnn_trans_dual_crf_mrf_supcon2', 'cnn_trans_dual_crf_mrf_supcon3',
     'cnn_gru_dual_crf_chain',   'cnn_gru_dual_crf_chain_supcon',   'cnn_gru_dual_crf_chain_supcon2',   'cnn_gru_dual_crf_chain_supcon3',
     'cnn_trans_dual_crf_chain', 'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
+    # Source sep + CRF-MRF: pretrained encoder + joint-state structured output
+    'cnn_gru_source_sep_crf', 'cnn_gru_source_sep_crf_supcon',
 })
 
 # Models that output a projection head in addition to cls_out
@@ -2335,9 +2366,12 @@ ML_MODEL_PRINT_MAP = {
     'cnn_trans_dual_crf_chain_supcon':  'CNN+Tr CRF-chain SC1',
     'cnn_trans_dual_crf_chain_supcon2': 'CNN+Tr CRF-chain SC2',
     'cnn_trans_dual_crf_chain_supcon3': 'CNN+Tr CRF-chain SC3',
-    # Source separation SC0-1
+    # Source separation — independent sigmoid heads (SC0-1)
     'cnn_gru_source_sep':              'SrcSep SC0',
     'cnn_gru_source_sep_supcon':       'SrcSep SC1',
+    # Source separation — joint-state CRF-MRF output (SC0-1)
+    'cnn_gru_source_sep_crf':          'SrcSep CRF SC0',
+    'cnn_gru_source_sep_crf_supcon':   'SrcSep CRF SC1',
 }
 
 
@@ -2523,12 +2557,13 @@ def evaluate_outlier_filters_ml(
                 T_steps = X_train.shape[1]
                 tf.keras.backend.clear_session()
                 model = ML_FACTORIES[m](T_steps, n_targets)
+                _enc = None
                 if (m in _SS_ML_KEYS
                         and encoder_weights_path
                         and os.path.exists(encoder_weights_path)):
                     _enc = model.get_layer('source_sep_encoder')
                     _enc.load_weights(encoder_weights_path)
-                    _enc.trainable = False
+                    _enc.trainable = False  # Phase 2: frozen encoder
                 model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0))
 
                 if is_rcfd:
@@ -2571,6 +2606,22 @@ def evaluate_outlier_filters_ml(
                     model.fit(X_tr, y_tr_d, validation_data=(X_val, y_val_d), **fit_kw)
                 else:
                     model.fit(X_train, y_tr_d, **fit_kw)
+
+                # Phase 3: unfreeze encoder, fine-tune end-to-end at low LR
+                if _enc is not None:
+                    _enc.trainable = True
+                    model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0))
+                    p3_cbs = ([tf.keras.callbacks.EarlyStopping(
+                                   monitor='val_loss', patience=30,
+                                   restore_best_weights=True)]
+                              if _has_val else [])
+                    p3_kw = dict(epochs=100, batch_size=512, shuffle=True,
+                                 verbose=0, callbacks=p3_cbs)
+                    if _has_val:
+                        model.fit(X_tr, y_tr_d,
+                                  validation_data=(X_val, y_val_d), **p3_kw)
+                    else:
+                        model.fit(X_train, y_tr_d, **p3_kw)
 
                 if save_model_dir is not None and fold_idx == 0:
                     safe_keras_save(model,

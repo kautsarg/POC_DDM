@@ -270,8 +270,8 @@ if __name__ == "__main__":
         models = _crf_by_sc[args.supcon]
     elif args.source_sep:
         _ss_by_sc = {
-            0: ['cnn_gru_source_sep'],
-            1: ['cnn_gru_source_sep_supcon'],
+            0: ['cnn_gru_source_sep',        'cnn_gru_source_sep_crf'],
+            1: ['cnn_gru_source_sep_supcon',  'cnn_gru_source_sep_crf_supcon'],
         }
         models = _ss_by_sc.get(args.supcon, _ss_by_sc[0])
     elif args.supcon == 0:
@@ -336,6 +336,8 @@ if __name__ == "__main__":
             print(f"            Training source_sep models from scratch (random init).")
 
     # ── Train ──────────────────────────────────────────────────────────
+    _save_model_dir = os.path.join(exp_path, 'models')
+
     results = evaluate_outlier_filters_ml(
         X_curves              = curves,
         features_df           = features_df,
@@ -356,6 +358,7 @@ if __name__ == "__main__":
         threshold             = args.threshold,
         rerun_models          = args.rerun_models,
         encoder_weights_path  = _encoder_weights_path,
+        save_model_dir        = _save_model_dir,
     )
 
     cached_results.update(results)
