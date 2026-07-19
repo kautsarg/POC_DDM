@@ -259,13 +259,21 @@ if __name__ == "__main__":
     elif args.crf:
         _crf_by_sc = {
             0: ['cnn_gru_dual_crf_mrf',        'cnn_trans_dual_crf_mrf',
-                'cnn_gru_dual_crf_chain',       'cnn_trans_dual_crf_chain'],
+                'cnn_gru_dual_crf_chain',       'cnn_trans_dual_crf_chain',
+                'cnn_gru_dual_cross_attn_v2_crf_flat',     'cnn_gru_dual_cross_attn_v2_crf_factored',     'cnn_gru_dual_cross_attn_v2_crf_bilinear',
+                'cnn_trans_dual_cross_attn_v2_crf_flat',   'cnn_trans_dual_cross_attn_v2_crf_factored',   'cnn_trans_dual_cross_attn_v2_crf_bilinear'],
             1: ['cnn_gru_dual_crf_mrf_supcon',  'cnn_trans_dual_crf_mrf_supcon',
-                'cnn_gru_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon'],
+                'cnn_gru_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon',
+                'cnn_gru_dual_cross_attn_v2_crf_flat_supcon',     'cnn_gru_dual_cross_attn_v2_crf_factored_supcon',     'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon',
+                'cnn_trans_dual_cross_attn_v2_crf_flat_supcon',   'cnn_trans_dual_cross_attn_v2_crf_factored_supcon',   'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon'],
             2: ['cnn_gru_dual_crf_mrf_supcon2',  'cnn_trans_dual_crf_mrf_supcon2',
-                'cnn_gru_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon2'],
+                'cnn_gru_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon2',
+                'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2',    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon2',    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2',
+                'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2',  'cnn_trans_dual_cross_attn_v2_crf_factored_supcon2',  'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2'],
             3: ['cnn_gru_dual_crf_mrf_supcon3',  'cnn_trans_dual_crf_mrf_supcon3',
-                'cnn_gru_dual_crf_chain_supcon3', 'cnn_trans_dual_crf_chain_supcon3'],
+                'cnn_gru_dual_crf_chain_supcon3', 'cnn_trans_dual_crf_chain_supcon3',
+                'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3',    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon3',    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3',
+                'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3',  'cnn_trans_dual_cross_attn_v2_crf_factored_supcon3',  'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3'],
         }
         models = _crf_by_sc[args.supcon]
     elif args.source_sep:

@@ -138,6 +138,20 @@ MULTIPLEX_MODELS = [
     # Source separation pretrained encoder — joint-state CRF-MRF output (SC0-1)
     'cnn_gru_source_sep_crf',
     'cnn_gru_source_sep_crf_supcon',
+    # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CGD SC0-3
+    'cnn_gru_dual_cross_attn_v2_crf_flat',
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon', 'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3',
+    'cnn_gru_dual_cross_attn_v2_crf_factored',
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon', 'cnn_gru_dual_cross_attn_v2_crf_factored_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_factored_supcon3',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon', 'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3',
+    # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CTD SC0-3
+    'cnn_trans_dual_cross_attn_v2_crf_flat',
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon', 'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2', 'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3',
+    'cnn_trans_dual_cross_attn_v2_crf_factored',
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon', 'cnn_trans_dual_cross_attn_v2_crf_factored_supcon2', 'cnn_trans_dual_cross_attn_v2_crf_factored_supcon3',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon', 'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2', 'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3',
 ]
 
 

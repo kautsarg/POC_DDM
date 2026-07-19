@@ -1359,6 +1359,65 @@ class LabelQueryEmbedding(tf.keras.layers.Layer):
         return cfg
 
 
+class CRFFactoredHead(tf.keras.layers.Layer):
+    """Per-label emit Dense(1) + fixed decode_mat + learned state bias → (batch, n_states).
+
+    logits[b,s] = Σ_j emit[b,j] * decode_mat[s,j]  +  state_bias[s]
+    where decode_mat[s,j] = bit j of state s (0 or 1).
+    """
+    def __init__(self, n_targets, **kwargs):
+        super().__init__(**kwargs)
+        self.n_targets  = n_targets
+        self.n_states   = 2 ** n_targets
+        self.emit_dense = tf.keras.layers.Dense(1, name='crf_emit')
+
+    def build(self, input_shape):
+        self.state_bias = self.add_weight(
+            shape=(self.n_states,), initializer='zeros', trainable=True, name='state_bias')
+        self.decode_mat = tf.constant(
+            [[int((s >> j) & 1) for j in range(self.n_targets)]
+             for s in range(self.n_states)], dtype=tf.float32)   # (n_states, n_targets)
+        super().build(input_shape)
+
+    def call(self, queries):
+        emit   = tf.squeeze(self.emit_dense(queries), axis=-1)   # (batch, n_targets)
+        logits = tf.einsum('bj,sj->bs', emit, self.decode_mat)   # (batch, n_states)
+        return logits + self.state_bias
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({'n_targets': self.n_targets})
+        return cfg
+
+
+class CRFBilinearHead(tf.keras.layers.Layer):
+    """Per-label-per-state bilinear CRF head.
+
+    logits[b,s] = Σ_j  dot(queries[b,j], state_embs[s,j])
+                = einsum('bjd,sjd->bs', queries, state_embs)
+    state_embs: (n_states, n_targets, query_dim) trainable.
+    """
+    def __init__(self, n_targets, query_dim=64, **kwargs):
+        super().__init__(**kwargs)
+        self.n_targets = n_targets
+        self.n_states  = 2 ** n_targets
+        self.query_dim = query_dim
+
+    def build(self, input_shape):
+        self.state_embs = self.add_weight(
+            shape=(self.n_states, self.n_targets, self.query_dim),
+            initializer='glorot_uniform', trainable=True, name='state_embs')
+        super().build(input_shape)
+
+    def call(self, queries):
+        return tf.einsum('bjd,sjd->bs', queries, self.state_embs)
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({'n_targets': self.n_targets, 'query_dim': self.query_dim})
+        return cfg
+
+
 def _ml_cross_attn_head(kv_seq, ref_tensor, n_targets, query_dim=64, num_heads=4):
     """Label query cross-attention + inter-label self-attention cls head.
 
@@ -1626,6 +1685,84 @@ def _ml_cross_attn_deep_head_quercon(kv_seq, ref_tensor, n_targets, query_dim=64
     cls_out = tf.keras.layers.Activation('sigmoid', name='cls_out')(
         tf.keras.layers.Reshape((n_targets,), name='ca2_reshape')(logits))
     return cls_out, queries_norm
+
+
+def _ml_cross_attn_deep_head_crf_flat(kv_seq, ref_tensor, n_targets,
+                                       query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Cross-attn deep head + CRF flat projection: Flatten → Dense(2^n_targets) state logits.
+
+    Identical CA stack to _ml_cross_attn_deep_head; final Dense(1)→sigmoid replaced by
+    Flatten → Dense(n_states) → raw logits for MultiLabelCRFMRFModel NLL.
+    """
+    queries = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv      = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    flat         = tf.keras.layers.Flatten(name='crf_flat')(queries)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(flat)
+    return state_logits
+
+
+def _ml_cross_attn_deep_head_crf_factored(kv_seq, ref_tensor, n_targets,
+                                           query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Cross-attn deep head + CRF factored: per-label emit + decode_mat + state_bias.
+
+    logits[b,s] = Σ_j emit[b,j] * decode_mat[s,j] + state_bias[s]  (CRFFactoredHead)
+    """
+    queries = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv      = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    state_logits = CRFFactoredHead(n_targets, name='crf_factored')(queries)
+    return state_logits
+
+
+def _ml_cross_attn_deep_head_crf_bilinear(kv_seq, ref_tensor, n_targets,
+                                           query_dim=64, num_heads=4, n_ca_blocks=2):
+    """Cross-attn deep head + CRF bilinear: einsum('bjd,sjd->bs', queries, state_embs).
+
+    Per-label-per-state bilinear projection (CRFBilinearHead). No cross-label mixing
+    in the CRF head — all label interaction stays in the inter-label SA blocks.
+    """
+    queries = LabelQueryEmbedding(n_targets, query_dim, name='ca2_label_q_emb')(ref_tensor)
+    kv      = tf.keras.layers.Dense(query_dim, name='ca2_kv_proj')(kv_seq)
+    for i in range(n_ca_blocks):
+        ca      = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=query_dim // num_heads,
+            name=f'ca2_cross_attn_{i}')(query=queries, key=kv, value=kv)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ca_ln_{i}')(queries + ca)
+        sa      = tf.keras.layers.MultiHeadAttention(
+            num_heads=2, key_dim=query_dim // 2,
+            name=f'ca2_inter_sa_{i}')(queries, queries)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_sa_ln_{i}')(queries + sa)
+        ffn     = tf.keras.layers.Dense(
+            query_dim * 2, activation='relu', name=f'ca2_ffn1_{i}')(queries)
+        ffn     = tf.keras.layers.Dense(query_dim, name=f'ca2_ffn2_{i}')(ffn)
+        queries = tf.keras.layers.LayerNormalization(name=f'ca2_ffn_ln_{i}')(queries + ffn)
+    state_logits = CRFBilinearHead(n_targets, query_dim, name='crf_bilinear')(queries)
+    return state_logits
 
 
 # -- CNN+GRU dual cross-attn SC0-3 -------------------------------------------
@@ -1916,6 +2053,206 @@ def create_ml_cnn_gru_dual_cross_attn_v2_quercon_supcon3_model(T, n_targets):
     return MultiLabelQueryConSC3Model(
         inputs=inputs, outputs=[cls_out, q_norm, cnn_proj, seq_proj, fused_proj])
 
+
+
+# ── CAttn-V2 + CRF-MRF factories: flat / factored / bilinear × SC0-3 × CGD+CTD ──
+
+# -- CGD (CNN+GRU dual) × flat SC0-3 ----------------------------------------
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_flat(kv_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_flat(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_flat(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_flat(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# -- CGD × factored SC0-3 ----------------------------------------------------
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_factored(kv_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_factored(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_factored(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_factored(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# -- CGD × bilinear SC0-3 ----------------------------------------------------
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_bilinear(kv_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon_model(T, n_targets):
+    inputs    = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq = _build_gru_dual_deep_seq_backbone(inputs)
+    logits    = _ml_cross_attn_deep_head_crf_bilinear(kv_seq, inputs, n_targets)
+    proj_norm = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_bilinear(kv_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(gru_emb, 'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3_model(T, n_targets):
+    inputs                       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, kv_seq, cnn_emb, gru_emb = _build_gru_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_bilinear(kv_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(gru_emb, 'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# -- CTD (CNN+Trans dual) × flat SC0-3 ---------------------------------------
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_flat(trans_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_flat(trans_seq, inputs, n_targets)
+    proj_norm    = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon2_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_flat(trans_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(tr_emb,  'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon3_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_flat(trans_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(tr_emb,  'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# -- CTD × factored SC0-3 ----------------------------------------------------
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_factored(trans_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_factored(trans_seq, inputs, n_targets)
+    proj_norm    = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon2_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_factored(trans_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(tr_emb,  'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon3_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_factored(trans_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(tr_emb,  'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
+
+
+# -- CTD × bilinear SC0-3 ----------------------------------------------------
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_bilinear(trans_seq, inputs, n_targets)
+    return MultiLabelCRFMRFModel(inputs=inputs, outputs=logits, n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon_model(T, n_targets):
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq = _build_trans_dual_deep_seq_backbone(inputs)
+    logits       = _ml_cross_attn_deep_head_crf_bilinear(trans_seq, inputs, n_targets)
+    proj_norm    = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC1Model(inputs=inputs, outputs=[logits, proj_norm], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits   = _ml_cross_attn_deep_head_crf_bilinear(trans_seq, inputs, n_targets)
+    cnn_proj = _proj_head(cnn_emb, 'cnn')
+    seq_proj = _proj_head(tr_emb,  'seq')
+    return MultiLabelCRFMRFSC2Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj], n_targets=n_targets)
+
+def create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3_model(T, n_targets):
+    inputs                         = tf.keras.layers.Input(shape=(T, 1), name='curve_input')
+    z, trans_seq, cnn_emb, tr_emb  = _build_trans_dual_deep_seq_backbone(inputs, return_branches=True)
+    logits     = _ml_cross_attn_deep_head_crf_bilinear(trans_seq, inputs, n_targets)
+    cnn_proj   = _proj_head(cnn_emb, 'cnn')
+    seq_proj   = _proj_head(tr_emb,  'seq')
+    fused_proj = _proj_head(z, 'fused')
+    return MultiLabelCRFMRFSC3Model(inputs=inputs, outputs=[logits, cnn_proj, seq_proj, fused_proj], n_targets=n_targets)
 
 
 # ── CRF-MRF factories (Option A: full-state 2^n_targets NLL) ────────────────
@@ -2226,6 +2563,32 @@ ML_FACTORIES = {
     'cnn_gru_source_sep_supcon':        create_ml_cnn_gru_source_sep_supcon_model,
     'cnn_gru_source_sep_crf':           create_ml_cnn_gru_source_sep_crf_model,
     'cnn_gru_source_sep_crf_supcon':    create_ml_cnn_gru_source_sep_crf_supcon_model,
+    # CAttn-V2 + CRF-MRF: flat / factored / bilinear × CGD SC0-3
+    'cnn_gru_dual_cross_attn_v2_crf_flat':            create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_model,
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':     create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2':    create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3':    create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon3_model,
+    'cnn_gru_dual_cross_attn_v2_crf_factored':        create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_model,
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon': create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon2':create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon3':create_ml_cnn_gru_dual_cross_attn_v2_crf_factored_supcon3_model,
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear':        create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_model,
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon': create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon_model,
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2':create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2_model,
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3':create_ml_cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3_model,
+    # CAttn-V2 + CRF-MRF: flat / factored / bilinear × CTD SC0-3
+    'cnn_trans_dual_cross_attn_v2_crf_flat':            create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_model,
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon':     create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon_model,
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2':    create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon2_model,
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3':    create_ml_cnn_trans_dual_cross_attn_v2_crf_flat_supcon3_model,
+    'cnn_trans_dual_cross_attn_v2_crf_factored':        create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_model,
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon': create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon_model,
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon2':create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon2_model,
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon3':create_ml_cnn_trans_dual_cross_attn_v2_crf_factored_supcon3_model,
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear':        create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_model,
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon': create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon_model,
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2':create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2_model,
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3':create_ml_cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3_model,
 }
 
 # Models that carry a concentration regression output
@@ -2250,6 +2613,14 @@ _CRF_ML_KEYS = frozenset({
     'cnn_trans_dual_crf_chain', 'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
     # Source sep + CRF-MRF: pretrained encoder + joint-state structured output
     'cnn_gru_source_sep_crf', 'cnn_gru_source_sep_crf_supcon',
+    # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CGD SC0-3
+    'cnn_gru_dual_cross_attn_v2_crf_flat',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3',
+    'cnn_gru_dual_cross_attn_v2_crf_factored','cnn_gru_dual_cross_attn_v2_crf_factored_supcon','cnn_gru_dual_cross_attn_v2_crf_factored_supcon2','cnn_gru_dual_cross_attn_v2_crf_factored_supcon3',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear','cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon','cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2','cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3',
+    # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CTD SC0-3
+    'cnn_trans_dual_cross_attn_v2_crf_flat',    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon',    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2',    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3',
+    'cnn_trans_dual_cross_attn_v2_crf_factored','cnn_trans_dual_cross_attn_v2_crf_factored_supcon','cnn_trans_dual_cross_attn_v2_crf_factored_supcon2','cnn_trans_dual_cross_attn_v2_crf_factored_supcon3',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear','cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon','cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2','cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3',
 })
 
 # Models that output a projection head in addition to cls_out
@@ -2372,6 +2743,36 @@ ML_MODEL_PRINT_MAP = {
     # Source separation — joint-state CRF-MRF output (SC0-1)
     'cnn_gru_source_sep_crf':          'SrcSep CRF SC0',
     'cnn_gru_source_sep_crf_supcon':   'SrcSep CRF SC1',
+    # CAttn-V2 + CRF-MRF flat (CGD SC0-3)
+    'cnn_gru_dual_cross_attn_v2_crf_flat':          'CNN+GRU CAttn-V2 CRF-flat SC0',
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':   'CNN+GRU CAttn-V2 CRF-flat SC1',
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2':  'CNN+GRU CAttn-V2 CRF-flat SC2',
+    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3':  'CNN+GRU CAttn-V2 CRF-flat SC3',
+    # CAttn-V2 + CRF-MRF factored (CGD SC0-3)
+    'cnn_gru_dual_cross_attn_v2_crf_factored':          'CNN+GRU CAttn-V2 CRF-factored SC0',
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon':   'CNN+GRU CAttn-V2 CRF-factored SC1',
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon2':  'CNN+GRU CAttn-V2 CRF-factored SC2',
+    'cnn_gru_dual_cross_attn_v2_crf_factored_supcon3':  'CNN+GRU CAttn-V2 CRF-factored SC3',
+    # CAttn-V2 + CRF-MRF bilinear (CGD SC0-3)
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear':          'CNN+GRU CAttn-V2 CRF-bilinear SC0',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon':   'CNN+GRU CAttn-V2 CRF-bilinear SC1',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2':  'CNN+GRU CAttn-V2 CRF-bilinear SC2',
+    'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3':  'CNN+GRU CAttn-V2 CRF-bilinear SC3',
+    # CAttn-V2 + CRF-MRF flat (CTD SC0-3)
+    'cnn_trans_dual_cross_attn_v2_crf_flat':          'CNN+Tr CAttn-V2 CRF-flat SC0',
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon':   'CNN+Tr CAttn-V2 CRF-flat SC1',
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2':  'CNN+Tr CAttn-V2 CRF-flat SC2',
+    'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3':  'CNN+Tr CAttn-V2 CRF-flat SC3',
+    # CAttn-V2 + CRF-MRF factored (CTD SC0-3)
+    'cnn_trans_dual_cross_attn_v2_crf_factored':          'CNN+Tr CAttn-V2 CRF-factored SC0',
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon':   'CNN+Tr CAttn-V2 CRF-factored SC1',
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon2':  'CNN+Tr CAttn-V2 CRF-factored SC2',
+    'cnn_trans_dual_cross_attn_v2_crf_factored_supcon3':  'CNN+Tr CAttn-V2 CRF-factored SC3',
+    # CAttn-V2 + CRF-MRF bilinear (CTD SC0-3)
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear':          'CNN+Tr CAttn-V2 CRF-bilinear SC0',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon':   'CNN+Tr CAttn-V2 CRF-bilinear SC1',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2':  'CNN+Tr CAttn-V2 CRF-bilinear SC2',
+    'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3':  'CNN+Tr CAttn-V2 CRF-bilinear SC3',
 }
 
 
