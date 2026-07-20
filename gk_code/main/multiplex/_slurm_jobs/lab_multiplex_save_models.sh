@@ -2,7 +2,7 @@
 #SBATCH --job-name=lab_multiplex_save_models
 #SBATCH --time=16:00:00
 
-# One task per model family — all 7 families run in parallel.
+# One task per model family — all 8 families run in parallel.
 # Task → family mapping:
 #   0 = ST (default: cnn/gru/transformer/dual)
 #   1 = RCFD (concentration-conditioned dual)
@@ -10,8 +10,9 @@
 #   3 = Cross-attn v2 (deepkv/deephead/v2-CGD/CTD)
 #   4 = Cross-attn AuxDet
 #   5 = Cross-attn QuerCon
-#   6 = CRF (MRF + chain)
-#SBATCH --array=0-6
+#   6 = CRF (MRF + chain + CAttn+CRF flat/factored/bilinear)
+#   7 = Source separation (SC0-1 only; requires Phase 1 encoder weights)
+#SBATCH --array=0-7
 
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
@@ -70,13 +71,18 @@ case $SLURM_ARRAY_TASK_ID in
         for SC in 0 1 2 3; do
             run_train --cross_attn_quercon --supcon "$SC"
         done ;;
-    6)  # CRF (MRF full-state + chain): SC0-3
+    6)  # CRF (MRF + chain + CAttn+CRF flat/factored/bilinear): SC0-3
         for SC in 0 1 2 3; do
             SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
             run_train --crf "${SARG[@]}"
         done ;;
+    7)  # Source separation (requires Phase 1 encoder weights): SC0-1 only
+        for SC in 0 1; do
+            SARG=(); [ "$SC" -gt 0 ] && SARG=(--supcon "$SC")
+            run_train --source_sep "${SARG[@]}"
+        done ;;
     *)
-        echo "Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID (expected 0-6)" >&2
+        echo "Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID (expected 0-7)" >&2
         exit 1 ;;
 esac
 
