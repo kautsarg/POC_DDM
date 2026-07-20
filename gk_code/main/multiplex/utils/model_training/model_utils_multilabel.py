@@ -709,7 +709,7 @@ class MultiLabelCRFMRFModel(tf.keras.Model):
 
     def _nll(self, state_logits, y_dict):
         """NLL loss given pre-extracted state logits."""
-        y_bin      = tf.cast(y_dict['cls_out'], tf.int32)
+        y_bin      = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         y_idx      = tf.reduce_sum(y_bin * self.powers, axis=-1)
         log_Z      = tf.reduce_logsumexp(state_logits, axis=-1)
         per_sample = log_Z - tf.gather(state_logits, y_idx, batch_dims=1)
@@ -891,7 +891,7 @@ class MultiLabelCRFChainModel(tf.keras.Model):
 
     def _nll(self, emit, y_dict):
         """Forward-algorithm NLL given pre-extracted emission logits."""
-        y_int = tf.cast(y_dict['cls_out'], tf.int32)
+        y_int = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         log_Z, _ = self._log_forward(emit)
         return tf.reduce_mean(log_Z - self._true_score(emit, y_int))
 
@@ -2942,7 +2942,8 @@ def evaluate_outlier_filters_ml(
                 T_steps = X_train.shape[1]
                 tf.keras.backend.clear_session()
                 model = ML_FACTORIES[m](T_steps, n_targets)
-                _is_standard = isinstance(model, _StandardMultiLabelModel)
+                _is_standard  = isinstance(model, _StandardMultiLabelModel)
+                _is_crf_sc0   = is_crf and len(model.outputs) == 1
                 _enc = None
                 if (m in _SS_ML_KEYS
                         and encoder_weights_path
@@ -2975,15 +2976,20 @@ def evaluate_outlier_filters_ml(
                         y_tr_d  = {'cls_out': yb_train, 'reg_out': conc_tr_sc}
                         y_val_d = None
                 else:
+                    _plain_y = _is_standard or _is_crf_sc0
                     if _has_val:
-                        y_tr_d  = yb_tr    if _is_standard else {'cls_out': yb_tr}
-                        y_val_d = yb_val   if _is_standard else {'cls_out': yb_val}
+                        y_tr_d  = yb_tr    if _plain_y else {'cls_out': yb_tr}
+                        y_val_d = yb_val   if _plain_y else {'cls_out': yb_val}
                     else:
-                        y_tr_d  = yb_train if _is_standard else {'cls_out': yb_train}
+                        y_tr_d  = yb_train if _plain_y else {'cls_out': yb_train}
                         y_val_d = None
 
+                # CRF SC0: Keras 3 reports val_loss=0.0 for models compiled without loss=,
+                # so EarlyStopping would fire at epoch=patience with near-init weights.
+                # Fix: skip val-based callbacks and train on full training fold.
+                _use_val_cbs = _has_val and not _is_crf_sc0
                 cbs = []
-                if _has_val:
+                if _use_val_cbs:
                     cbs = [
                         tf.keras.callbacks.EarlyStopping(
                             monitor='val_loss', patience=100, restore_best_weights=True),
@@ -2992,10 +2998,12 @@ def evaluate_outlier_filters_ml(
                     ]
 
                 fit_kw = dict(epochs=500, batch_size=512, shuffle=True, verbose=0, callbacks=cbs)
-                if _has_val:
+                if _use_val_cbs:
                     model.fit(X_tr, y_tr_d, validation_data=(X_val, y_val_d), **fit_kw)
                 else:
-                    model.fit(X_train, y_tr_d, **fit_kw)
+                    # _is_crf_sc0 with _has_val: y_tr_d is the split subset (yb_tr),
+                    # but we skip val and train on the full fold — use yb_train.
+                    model.fit(X_train, yb_train if _is_crf_sc0 else y_tr_d, **fit_kw)
 
                 # Phase 3: unfreeze encoder, fine-tune end-to-end at low LR
                 if _enc is not None:
@@ -3005,17 +3013,18 @@ def evaluate_outlier_filters_ml(
                                       loss='binary_crossentropy')
                     else:
                         model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0))
+                    p3_use_val = _has_val and not _is_crf_sc0
                     p3_cbs = ([tf.keras.callbacks.EarlyStopping(
                                    monitor='val_loss', patience=30,
                                    restore_best_weights=True)]
-                              if _has_val else [])
+                              if p3_use_val else [])
                     p3_kw = dict(epochs=100, batch_size=512, shuffle=True,
                                  verbose=0, callbacks=p3_cbs)
-                    if _has_val:
+                    if p3_use_val:
                         model.fit(X_tr, y_tr_d,
                                   validation_data=(X_val, y_val_d), **p3_kw)
                     else:
-                        model.fit(X_train, y_tr_d, **p3_kw)
+                        model.fit(X_train, yb_train if _is_crf_sc0 else y_tr_d, **p3_kw)
 
                 if save_model_dir is not None and fold_idx == 0:
                     safe_keras_save(model,
