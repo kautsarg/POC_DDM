@@ -15,14 +15,18 @@ LAB_MULTIPLEX_FOLDER = os.path.join(BASE_FOLDER, "LAB_Multiplex")
 
 FILE_MAPPING = {
     '01_ACA_qdPCR': 'dPCR_Dataset_Multiplex.csv',
+    '02_ACA_qdPCR_balanced': 'dPCR_Dataset_Mixture.csv',
+
 }
 
 FILE_CONC = {
     '01_ACA_qdPCR': 'Conc',
+    '02_ACA_qdPCR_balanced': 'Conc',
 }
 
 FILE_TARGET = {
     '01_ACA_qdPCR': 'LoadedPanels',
+    '02_ACA_qdPCR_balanced': 'LoadedPanels',
 }
 
 # Separator used to split multi-target combination strings ("VIM_NDM" -> ["VIM","NDM"])
