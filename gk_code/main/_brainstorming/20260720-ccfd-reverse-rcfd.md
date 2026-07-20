@@ -17,133 +17,175 @@ This comparison lets us answer:
 
 ---
 
-## Architecture Comparison
+## Architecture Comparison (Updated: Dual-Backbone Design)
 
-### RCFD (existing)
+Both new RCFD and new CCFD use two **independent full dual backbones** of the same type.
+The early branch is a complete CNN+GRU or CNN+Trans backbone — not a lightweight encoder.
+
+### New CCFD (8 models)
 ```
 Input (N, T, 1)
-  ├─ Early Encoder (BiGRU-16) ──────────────────► reg_out (scalar, linear)
-  │                                                       │
-  └─ Dual Backbone (CNN+GRU or CNN+Trans) ─► z_raw ─► FiLM ─► z_cond ─► cls_head ─► cls_out (sigmoid × 3)
-                                                       ↑
-                                                  stop_gradient(reg_out)
+  ├─ Dual Backbone A (CGD or CTD, independent) ──────────────► cls_early (softmax × n_classes)
+  │                                                                    │ stop_gradient
+  └─ Dual Backbone B (same type, independent)  ─► z_raw ─► FiLM ─► z_cond ─► reg_head ─► reg_out
 ```
 
-- **FiLM input**: scalar concentration prediction  
-- **Main output**: `cls_out` (multi-label binary, 3 targets)  
-- **Auxiliary output**: `reg_out` (concentration)  
-- **Loss**: UW-SO(BCE_cls + MSE_reg)
+- **FiLM input**: n_classes-dim softmax probability vector (from early backbone A)
+- **Position 0 output**: `cls_early` (classification, auxiliary task)
+- **Position 1 output**: `reg_out` (concentration, primary task)
+- **FiLM prefix**: `cfilm` (γ/β conditioned on early class probs)
+- **Loss**: UW-SO(CE_cls_early + MSE_reg)
 
-### CCFD (proposed)
+### New RCFD (8 models)
 ```
 Input (N, T, 1)
-  ├─ Early Classifier (BiGRU-16) ──────────────► cls_early (sigmoid × n_targets)
-  │                                                       │
-  └─ Dual Backbone (CNN+GRU or CNN+Trans) ─► z_raw ─► FiLM ─► z_cond ─► reg_head ─► reg_out (scalar)
-                                                       ↑
-                                                  stop_gradient(cls_early)
+  ├─ Dual Backbone A (CGD or CTD, independent) ──────────────► early_reg (scalar, linear)
+  │                                                                    │ stop_gradient
+  └─ Dual Backbone B (same type, independent)  ─► z_raw ─► FiLM ─► z_cond ─► cls_head ─► cls_out
 ```
 
-- **FiLM input**: 3-dim label probability vector (from early classifier)  
-- **Main output**: `reg_out` (concentration)  
-- **Auxiliary output**: `cls_early` (multi-label binary, from early encoder)  
-- **Loss**: UW-SO(BCE_cls_early + MSE_reg) — identical loss function, reversed data flow
+- **FiLM input**: scalar concentration estimate (from early backbone A)
+- **Position 0 output**: `cls_out` (classification, primary task)
+- **Position 1 output**: `early_reg` (concentration, auxiliary task)
+- **FiLM prefix**: `film` (γ/β conditioned on early reg estimate)
+- **Loss**: UW-SO(CE_cls + MSE_early_reg)
+
+---
+
+## Initial RCFD (unchanged — still in `model_utils_rcfd.py`)
+
+The original 24 RCFD models use a **lightweight early encoder** (one of cnn/gru/trans BiGRU-16) 
+rather than a full dual backbone:
+
+```
+Input (N, T, 1)
+  ├─ Early Encoder (BiGRU-16) ──────────────────────────────► reg_out (scalar, linear)
+  │                                                                  │ stop_gradient
+  └─ Dual Backbone (CNN+GRU or CNN+Trans) ─► z_raw ─► FiLM ─► z_cond ─► cls_head ─► cls_out
+```
+
+These 24 models continue to live in `model_utils_rcfd.py` and are unchanged.
 
 ---
 
 ## Key Design Decisions
 
-### 1. FiLM input: 3-dim sigmoid vector
-The existing `_apply_film_scalar(c_pred, z_raw, emb_dim=96)` function works for any input shape — the Dense layers inside handle (batch, 3) just as they do (batch, 1). BatchNorm normalises per-feature over the batch. Reused with `name_prefix='cfilm'` to distinguish from RCFD FiLM layers.
+### 1. Symmetric dual backbones
+Both the early branch and the main branch now have the same expressive capacity.
+This eliminates architecture asymmetry as a confound when comparing RCFD vs CCFD.
 
-### 2. stop_gradient direction
-In RCFD, `stop_gradient` prevents the classification loss from reshaping the early encoder **through FiLM**. In CCFD, it prevents the regression loss from reshaping the early classifier **through FiLM**. Both early encoders still receive direct gradient from their own loss heads (MSE for RCFD, BCE for CCFD).
+The critical question becomes purely about **conditioning direction**, not backbone capacity.
 
-### 3. Classification output in CCFD
-`cls_early` comes from the early encoder, not from `z_cond`. When evaluating CCFD for classification:
-- Report both `cls_early` (auxiliary head) performance
-- Optionally probe `z_cond` with a linear classifier (frozen) for a fair single-head comparison
-- **Important**: CCFD's classification quality is expected to be lower than RCFD's because it is the secondary task
+### 2. Layer name safety (calling twice)
+Both `_build_cnn_gru_dual_branches_mtl` and `_build_cnn_trans_dual_branches_mtl` use
+fully anonymous layers (no `name=` arguments). Calling them twice in the same `functional.Model`
+is safe — Keras auto-numbers the instances (`conv1d`, `conv1d_1`, etc.).
 
-### 4. SupCon in CCFD
-SC variants use the same Jaccard label similarity (`_jaccard_weight_matrix`) to define positive pairs. In CCFD this clusters `z_cond` (concentration-conditioned embedding) by label similarity — encouraging the backbone to preserve label structure even after FiLM modulation.
+### 3. stop_gradient direction
+CCFD: prevents regression loss from reshaping the early classifier through FiLM.
+New RCFD: prevents classification loss from reshaping the early regressor through FiLM.
+Both early backbones still receive direct gradient from their own primary heads.
 
-**Alternative worth testing later**: SupCon with concentration-range buckets as positive pairs (e.g., samples within ±500 copies/µL). This would be more semantically aligned with CCFD's primary objective.
+### 4. FiLM conditioning with multi-dim input
+`_apply_film_scalar` (from `model_utils_rcfd`) works unchanged for any input shape.
+For CCFD, the input is `(batch, n_classes)` softmax probs — Dense layers handle any width.
+For new RCFD, the input is `(batch, 1)` scalar.
 
-### 5. Early encoder architecture
-Mirrors `_build_early_encoder` from `model_utils_rcfd.py` exactly (same depth/width), just replacing the final linear head with sigmoid.
-
-```
-BiGRU(16) → Dense(32, relu) → Dense(16, relu) → Dense(8, relu) → Dense(n_targets, sigmoid)
-```
-
----
-
-## Model Variants (16 total)
-
-| Key | Early encoder | Dual backbone | SC |
-|-----|--------------|---------------|----|
-| `gru_ccfd_cgd` | BiGRU | CNN+GRU | none |
-| `gru_ccfd_ctd` | BiGRU | CNN+Trans | none |
-| `trans_ccfd_cgd` | Transformer | CNN+GRU | none |
-| `trans_ccfd_ctd` | Transformer | CNN+Trans | none |
-| `*_supcon_mtl`  | same | same | SC1: SupCon on z_cond |
-| `*_supcon2_mtl` | same | same | SC2: SupCon on CNN+seq branches |
-| `*_supcon3_mtl` | same | same | SC3: SupCon on CNN+seq+z_cond |
-
-Mirrors the 16 RCFD variants in `classification_performances_ml_condreg.joblib` exactly.
+### 5. `return_branches=True` scope
+When `return_branches=True`, branches (cnn_emb, seq_emb) are returned from the **main** 
+(FiLM-conditioned) backbone only — not the early backbone. This ensures SupCon loss acts on 
+the representation that was shaped by conditioning.
 
 ---
 
-## Evaluation Plan
+## Model Variants
 
-| Metric | Where RCFD wins | Where CCFD wins |
-|--------|----------------|-----------------|
-| Classification accuracy (exact state match) | Higher — cls is main task | Lower — cls is auxiliary |
-| Auxiliary regression MSE | This IS the main task | Auxiliary only, may degrade |
-| Concentration regression MSE | Auxiliary | **Main task** — should win |
-| z_cond linear probe (cls) | Expected better | May still be competitive if label prior helps backbone |
+### New CCFD (8 models, dual-backbone early cls)
 
-**Comparison matrix to build:**
-```
-                  Classification acc   Reg MSE
-RCFD (sc0)           primary            auxiliary
-CCFD (sc0)           auxiliary (early)  primary
-Baseline (no cond)   from condreg exp   from condreg exp
-```
+| Key | Early backbone | Main backbone | SC |
+|-----|---------------|---------------|----|
+| `ccfd_cgd` | CNN+GRU | CNN+GRU | SC0 |
+| `ccfd_ctd` | CNN+Trans | CNN+Trans | SC0 |
+| `ccfd_cgd_supcon_mtl` | CNN+GRU | CNN+GRU | SC1: SupCon on z_cond |
+| `ccfd_ctd_supcon_mtl` | CNN+Trans | CNN+Trans | SC1 |
+| `ccfd_cgd_supcon2_mtl` | CNN+GRU | CNN+GRU | SC2: SupCon on CNN+seq branches |
+| `ccfd_ctd_supcon2_mtl` | CNN+Trans | CNN+Trans | SC2 |
+| `ccfd_cgd_supcon3_mtl` | CNN+GRU | CNN+GRU | SC3: SupCon on branches+z_cond |
+| `ccfd_ctd_supcon3_mtl` | CNN+Trans | CNN+Trans | SC3 |
+
+### New RCFD (8 models, dual-backbone early reg)
+
+Same 8 keys with `rcfd` substituted for `ccfd`:
+`rcfd_cgd`, `rcfd_ctd`, `rcfd_cgd_supcon_mtl`, ..., `rcfd_ctd_supcon3_mtl`
+
+### Initial RCFD (24 models, in `model_utils_rcfd.py`) — unchanged
+
+| Key prefix | Early encoder | Dual backbone | SC levels |
+|---|---|---|---|
+| `cnn_rcfd_{cgd,ctd}` | CNN | CGD or CTD | SC0–3 (6 keys) |
+| `gru_rcfd_{cgd,ctd}` | BiGRU | CGD or CTD | SC0–3 (6 keys) |
+| `trans_rcfd_{cgd,ctd}` | Transformer | CGD or CTD | SC0–3 (6 keys) |
+
+The absence of an `{enc_type}_` prefix in a key signals dual-backbone early branch (03d).
 
 ---
 
 ## Implementation
 
-Single file (no existing code modified):
+Single standalone file (no existing code modified):
 ```
-main/multiplex/utils/model_training/model_utils_ccfd.py
+main/03d_ccfd_training.py
 ```
+All 16 new models trained in one run. Results saved to the same joblib as initial RCFD
+(keys are distinct — no collision).
 
 **Imports reused:**
 - `_StopGradient`, `_apply_film_scalar` ← `model_utils_rcfd`
-- `_build_cnn_gru_dual_branches_mtl`, `_build_cnn_trans_dual_branches_mtl` ← `model_utils_mtl`
-- `MultiLabelMTLModel`, `_jaccard_weight_matrix`, `_supcon_loss_jaccard`, `SUPCON_TEMP` ← `model_utils_multilabel`
-- `_proj_head` ← `model_utils_supcon`
+- `MTLModel`, `_normalize_concentration`, `_inverse_normalize_concentration`,
+  `_build_cnn_gru_dual_branches_mtl`, `_build_cnn_trans_dual_branches_mtl` ← `model_utils_mtl`
+- `SupConMTLModel`, `SupConBranch2MTLModel`, `SupConBranch3MTLModel`, `_proj_head` ← `model_utils_supcon`
 
-**To plug into training pipeline (future PR):**
-- Add `from model_utils_ccfd import _CCFD_ALL_FACTORIES, ALL_CCFD_KEYS` to `model_utils_multilabel.py`
-- Register under `--ccfd` flag in `03_main_training.py`
-- Joblib key: `classification_performances_ml_ccfd.joblib`
+**SLURM:** `main/slurm_jobs/lab_ccfd_training.sh` — unchanged, calls 03d correctly.
+
+---
+
+## Evaluation Plan
+
+| Metric | Initial RCFD | New RCFD | New CCFD |
+|--------|-------------|---------|---------|
+| Classification acc | primary | primary | auxiliary (cls_early) |
+| Regression MSE | auxiliary | auxiliary (early_reg) | **primary** |
+| z_cond probe | — | expected best | may differ: conc-conditioned z_cond |
+
+**3-way comparison matrix:**
+```
+                      Classification acc    Regression MSE
+Initial RCFD (cnn/gru/trans)    primary        auxiliary
+New RCFD (dual-bb)              primary        auxiliary
+New CCFD (dual-bb)              auxiliary      primary
+```
+
+**Key questions to answer:**
+- Does a full dual-backbone early regressor (new RCFD) beat a lightweight one (initial RCFD)?
+- Does target identity conditioning (CCFD) help regression more than concentration conditioning (RCFD) helps classification?
+- Is the dual-backbone symmetry beneficial or is the capacity redundant?
 
 ---
 
 ## Expected Hypotheses
 
-**H1 — Concentration helps classification (RCFD wins):**  
-The physical delay from concentration is the primary confound. Removing it via regression-conditioned FiLM should yield a cleaner latent space for classification.
+**H1 — Concentration helps classification (RCFD variants win on cls):**
+The physical delay from concentration is the primary confound. Removing it first yields a cleaner
+latent space for classification.
 
-**H2 — Labels help concentration (CCFD wins on regression):**  
-Each target has a characteristic curve shape. Knowing which targets are present constrains which amplitude profile is physically plausible, giving the backbone a prior that reduces regression ambiguity.
+**H2 — Labels help concentration (CCFD wins on regression):**
+Each target has a characteristic curve shape. Knowing which targets are present constrains which
+amplitude profile is physically plausible.
 
-**H3 — Both help (symmetric):**  
-Concentration and target identity are mutually informative. Both conditioning directions improve their respective auxiliary tasks compared to an unconditioned baseline.
+**H3 — Dual backbone adds value (new RCFD > initial RCFD):**
+A more expressive early regressor provides a richer conditioning signal for FiLM,
+leading to better classification of the main branch.
 
-**H4 — Neither helps (FiLM ignored):**  
-The dual backbone is already powerful enough to jointly learn both tasks without explicit conditioning. FiLM degrades to identity (gamma≈1, beta≈0). In this case, the stop_gradient design means FiLM adds overhead with no benefit.
+**H4 — FiLM ignored (no difference across variants):**
+The dual backbone is already powerful enough without explicit conditioning. FiLM degrades to
+identity (γ≈1, β≈0). In this case stop_gradient adds overhead with no benefit.
