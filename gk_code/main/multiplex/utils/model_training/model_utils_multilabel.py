@@ -113,24 +113,8 @@ def _supcon_loss_jaccard(embeddings, pos_mask, temp=SUPCON_TEMP):
 
 @tf.keras.utils.register_keras_serializable(package='ml_standard')
 class _StandardMultiLabelModel(tf.keras.Model):
-    """Wraps a functional model with multi-label BCE train/test steps."""
-
-    def train_step(self, data):
-        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
-        with tf.GradientTape() as tape:
-            cls_out = self(x, training=True)
-            loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
-        self.optimizer.apply_gradients(
-            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
-        return {'loss': loss}
-
-    def test_step(self, data):
-        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_bin = tf.cast(y_dict['cls_out'], tf.float32)
-        cls_out = self(x, training=False)
-        loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
-        return {'loss': loss}
+    """Single-output sigmoid multi-label model; uses standard Keras BCE training."""
+    pass
 
 
 def adapt_for_multilabel(model, n_targets):
@@ -2958,6 +2942,7 @@ def evaluate_outlier_filters_ml(
                 T_steps = X_train.shape[1]
                 tf.keras.backend.clear_session()
                 model = ML_FACTORIES[m](T_steps, n_targets)
+                _is_standard = isinstance(model, _StandardMultiLabelModel)
                 _enc = None
                 if (m in _SS_ML_KEYS
                         and encoder_weights_path
@@ -2965,7 +2950,11 @@ def evaluate_outlier_filters_ml(
                     _enc = model.get_layer('source_sep_encoder')
                     _enc.load_weights(encoder_weights_path)
                     _enc.trainable = False  # Phase 2: frozen encoder
-                model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0))
+                if _is_standard:
+                    model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0),
+                                  loss='binary_crossentropy')
+                else:
+                    model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0))
 
                 if is_rcfd:
                     conc_tr_raw  = (y_conc_f[tr] if y_conc_f is not None
@@ -2987,10 +2976,10 @@ def evaluate_outlier_filters_ml(
                         y_val_d = None
                 else:
                     if _has_val:
-                        y_tr_d  = {'cls_out': yb_tr}
-                        y_val_d = {'cls_out': yb_val}
+                        y_tr_d  = yb_tr    if _is_standard else {'cls_out': yb_tr}
+                        y_val_d = yb_val   if _is_standard else {'cls_out': yb_val}
                     else:
-                        y_tr_d  = {'cls_out': yb_train}
+                        y_tr_d  = yb_train if _is_standard else {'cls_out': yb_train}
                         y_val_d = None
 
                 cbs = []
@@ -3011,7 +3000,11 @@ def evaluate_outlier_filters_ml(
                 # Phase 3: unfreeze encoder, fine-tune end-to-end at low LR
                 if _enc is not None:
                     _enc.trainable = True
-                    model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0))
+                    if _is_standard:
+                        model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0),
+                                      loss='binary_crossentropy')
+                    else:
+                        model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0))
                     p3_cbs = ([tf.keras.callbacks.EarlyStopping(
                                    monitor='val_loss', patience=30,
                                    restore_best_weights=True)]

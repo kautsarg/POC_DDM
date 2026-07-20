@@ -59,26 +59,7 @@ import tensorflow as tf
 @tf.keras.utils.register_keras_serializable(package='rc_poc_cls')
 class RCPocClsModel(tf.keras.Model):
     """Pure classification (CE only). Single output: cls_out."""
-    def train_step(self, data):
-        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_cls = y_dict['cls_out']
-        with tf.GradientTape() as tape:
-            cls_out = self(x, training=True)
-            loss = tf.reduce_mean(
-                tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.compiled_metrics.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
-
-    def test_step(self, data):
-        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_cls = y_dict['cls_out']
-        cls_out = self(x, training=False)
-        loss = tf.reduce_mean(
-            tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
-        self.compiled_metrics.update_state(y_cls, cls_out)
-        return {m.name: m.result() for m in self.metrics} | {'loss': loss}
+    pass
 
 
 @tf.keras.utils.register_keras_serializable(package='rc_poc_cls_sc1')
@@ -580,8 +561,9 @@ _CCFD_POC_BACKBONE_KEY = {
     'gru_ccfd_cgd_rc_poc_sc3': 'cgd_rc_poc_sc3',
 }
 
-_CLS_ONLY_KEYS = set(CLS_KEYS)
-_BOTH_KEYS     = set(MTL_KEYS + RCFD_KEYS)
+_CLS_ONLY_KEYS        = set(CLS_KEYS)
+_BOTH_KEYS            = set(MTL_KEYS + RCFD_KEYS)
+_STANDARD_COMPILE_KEYS = {'cgd_rc_poc'}  # single-output; Keras 3 needs std compile+plain-y
 
 
 # ======================================================================
@@ -802,17 +784,28 @@ def run_03e_training(
         t0 = time.perf_counter()
 
         for fold_idx, (tr_idx, te_idx) in enumerate(splits):
-            X_tr, _, _, fit_y, val_data, callbacks, scaler = _fold_data(
+            X_tr, y_tr, _, fit_y, val_data, callbacks, scaler = _fold_data(
                 X_f, y_f, conc_f, tr_idx)
 
             tf.keras.backend.clear_session()
             model = _PASS1_FACTORIES[m](T, n_cls)
-            model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                jit_compile=False)
-            model.fit(X_tr, fit_y,
-                      validation_data=val_data, callbacks=callbacks,
-                      epochs=500, batch_size=512, shuffle=True, verbose=0)
+            if m in _STANDARD_COMPILE_KEYS:
+                # Single-output CLS: use standard Keras training (identical to cnn_gru_dual)
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                    loss='sparse_categorical_crossentropy',
+                    jit_compile=False)
+                _val = (val_data[0], val_data[1]['cls_out']) if val_data else None
+                model.fit(X_tr, y_tr, validation_data=_val,
+                          callbacks=callbacks, epochs=500, batch_size=512,
+                          shuffle=True, verbose=0)
+            else:
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                    jit_compile=False)
+                model.fit(X_tr, fit_y,
+                          validation_data=val_data, callbacks=callbacks,
+                          epochs=500, batch_size=512, shuffle=True, verbose=0)
 
             # save at fold 0; CLS keras is required by CCFD-POC pass 2
             if fold_idx == 0:
