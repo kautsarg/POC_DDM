@@ -18,7 +18,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30
+#SBATCH --partition=a30,a40,a100
 
 #SBATCH --output=logs/%x/%A_%a.out
 #SBATCH --error=logs/%x/%A_%a.err
@@ -33,14 +33,23 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main/multiplex
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 
+TASK_ID=1
+
+# 01b: Preprocessing (run once; idempotent — skipped automatically if cached)
+python -u 01b_lab_curve_preprocessing.py --task_id $TASK_ID --exp_folder "$EXP_FOLDER"
+
+# 02: Outlier detection (LSTM-AE only; spatial gracefully skipped on flat-CSV lab data)
+python -u 02_outlier_detection_pipeline.py --task_id $TASK_ID --exp_folder "$EXP_FOLDER"
+
+
 # task_id=0: only one dataset (01_ACA_qdPCR).
 # n_splits=1: single 90/10 StratifiedShuffleSplit — fold_idx=0 triggers model save.
 # --save_models: writes {exp_path}/models/{key}_{filter}_{mode}.keras for each model.
 run_train() {
     python -u 03_main_training.py \
-        --task_id 0 \
+        --task_id $TASK_ID \
         --exp_folder "$EXP_FOLDER" \
-        --n_splits 1 \
+        --n_splits 5 \
         "$@"
 }
 

@@ -2834,7 +2834,7 @@ def evaluate_outlier_filters_ml(
         filter_name = f if f else 'None (Baseline)'
         print(f"  -> Filter [{idx+1}/{len(outlier_filters)}]: {filter_name}")
 
-        res_entry = results_dict.get(f, {})
+        res_entry = results_dict.setdefault(f, {})
 
         if f is None:
             mask = np.ones(len(y_combo_int), dtype=bool)
@@ -2942,8 +2942,11 @@ def evaluate_outlier_filters_ml(
                 T_steps = X_train.shape[1]
                 tf.keras.backend.clear_session()
                 model = ML_FACTORIES[m](T_steps, n_targets)
-                _is_standard  = isinstance(model, _StandardMultiLabelModel)
-                _is_crf_sc0   = is_crf and len(model.outputs) == 1
+                _is_standard   = isinstance(model, _StandardMultiLabelModel)
+                _is_crf_sc0    = is_crf and len(model.outputs) == 1
+                # AuxDet SC0 (base class only): test_step returns single {'loss'} metric →
+                # Keras 3 val_loss=0.0 bug. SC1/SC2/SC3 return 3 metrics → tracked fine.
+                _is_auxdet_sc0 = type(model) is MultiLabelAuxDetModel
                 _enc = None
                 if (m in _SS_ML_KEYS
                         and encoder_weights_path
@@ -2984,10 +2987,12 @@ def evaluate_outlier_filters_ml(
                         y_tr_d  = yb_train if _plain_y else {'cls_out': yb_train}
                         y_val_d = None
 
-                # CRF SC0: Keras 3 reports val_loss=0.0 for models compiled without loss=,
-                # so EarlyStopping would fire at epoch=patience with near-init weights.
+                # Keras 3 val_loss=0.0 bug: test_step returning only {'loss': scalar}
+                # is not tracked at epoch level → EarlyStopping fires at epoch=patience
+                # with near-init weights. Affected: CRF SC0, AuxDet SC0.
                 # Fix: skip val-based callbacks and train on full training fold.
-                _use_val_cbs = _has_val and not _is_crf_sc0
+                _skip_val_cbs = _is_crf_sc0 or _is_auxdet_sc0
+                _use_val_cbs  = _has_val and not _skip_val_cbs
                 cbs = []
                 if _use_val_cbs:
                     cbs = [
@@ -3001,9 +3006,15 @@ def evaluate_outlier_filters_ml(
                 if _use_val_cbs:
                     model.fit(X_tr, y_tr_d, validation_data=(X_val, y_val_d), **fit_kw)
                 else:
-                    # _is_crf_sc0 with _has_val: y_tr_d is the split subset (yb_tr),
-                    # but we skip val and train on the full fold — use yb_train.
-                    model.fit(X_train, yb_train if _is_crf_sc0 else y_tr_d, **fit_kw)
+                    # When _has_val=True, y_tr_d is the split subset (yb_tr); we need
+                    # the full-fold y to match X_train. Build it explicitly per model type.
+                    if _is_crf_sc0:
+                        _full_y = yb_train
+                    elif _is_auxdet_sc0:
+                        _full_y = {'cls_out': yb_train}
+                    else:
+                        _full_y = y_tr_d  # already full-fold when _has_val=False
+                    model.fit(X_train, _full_y, **fit_kw)
 
                 # Phase 3: unfreeze encoder, fine-tune end-to-end at low LR
                 if _enc is not None:
@@ -3013,7 +3024,7 @@ def evaluate_outlier_filters_ml(
                                       loss='binary_crossentropy')
                     else:
                         model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0))
-                    p3_use_val = _has_val and not _is_crf_sc0
+                    p3_use_val = _has_val and not _skip_val_cbs
                     p3_cbs = ([tf.keras.callbacks.EarlyStopping(
                                    monitor='val_loss', patience=30,
                                    restore_best_weights=True)]
@@ -3024,7 +3035,13 @@ def evaluate_outlier_filters_ml(
                         model.fit(X_tr, y_tr_d,
                                   validation_data=(X_val, y_val_d), **p3_kw)
                     else:
-                        model.fit(X_train, yb_train if _is_crf_sc0 else y_tr_d, **p3_kw)
+                        if _is_crf_sc0:
+                            _p3_full_y = yb_train
+                        elif _is_auxdet_sc0:
+                            _p3_full_y = {'cls_out': yb_train}
+                        else:
+                            _p3_full_y = y_tr_d
+                        model.fit(X_train, _p3_full_y, **p3_kw)
 
                 if save_model_dir is not None and fold_idx == 0:
                     safe_keras_save(model,
