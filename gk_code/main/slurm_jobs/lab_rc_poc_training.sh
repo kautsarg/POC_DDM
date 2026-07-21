@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30
-#SBATCH --array=0-1
+#SBATCH --partition=a30,a40,a100
+#SBATCH --array=0-2,9-12
 
 # Output and Error logs
 #SBATCH --output=logs/%x/%A_%a.out
