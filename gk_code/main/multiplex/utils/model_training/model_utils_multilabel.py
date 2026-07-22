@@ -2408,7 +2408,7 @@ def create_ml_cnn_trans_dual_crf_chain_supcon3_model(T, n_targets):
 # ── Source-sep Phase 2/3 SC model classes ────────────────────────────────────
 
 class MultiLabelSourceSepSC1Model(tf.keras.Model):
-    """Source-sep Phase 2/3 classifier SC1: BCE + 0.2*SC(proj_full)."""
+    """Source-sep Phase 2/3 classifier SC1: (1-λ)*BCE + λ*SC(proj_full). Matches MultiLabelSupConModel."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp   = supcon_temp
@@ -2420,7 +2420,8 @@ class MultiLabelSourceSepSC1Model(tf.keras.Model):
         bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
         pos_mask = _jaccard_weight_matrix(y_bin)
         sc       = _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp)
-        return bce + self.supcon_lambda * sc, bce, sc
+        loss     = (1.0 - self.supcon_lambda) * bce + self.supcon_lambda * sc
+        return loss, bce, sc
 
     def train_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -2437,7 +2438,7 @@ class MultiLabelSourceSepSC1Model(tf.keras.Model):
 
 
 class MultiLabelSourceSepSC2Model(tf.keras.Model):
-    """Source-sep Phase 2/3 classifier SC2: BCE + 0.1*(SC(proj_s)+SC(proj_t))."""
+    """Source-sep Phase 2/3 classifier SC2: (1-2λ)*BCE + λ*(SC(proj_cnn)+SC(proj_gru))."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp        = supcon_temp
@@ -2450,7 +2451,8 @@ class MultiLabelSourceSepSC2Model(tf.keras.Model):
         pos_mask = _jaccard_weight_matrix(y_bin)
         sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
                     + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp))
-        return bce + self.supcon_lambda_each * sc, bce, sc
+        loss     = (1.0 - 2 * self.supcon_lambda_each) * bce + self.supcon_lambda_each * sc
+        return loss, bce, sc
 
     def train_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -2467,7 +2469,7 @@ class MultiLabelSourceSepSC2Model(tf.keras.Model):
 
 
 class MultiLabelSourceSepSC3Model(tf.keras.Model):
-    """Source-sep Phase 2/3 classifier SC3: BCE + 0.1*(SC(proj_s)+SC(proj_t)+SC(proj_f))."""
+    """Source-sep Phase 2/3 classifier SC3: (1-3λ)*BCE + λ*(SC(proj_cnn)+SC(proj_gru)+SC(proj_full))."""
     def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp        = supcon_temp
@@ -2481,7 +2483,8 @@ class MultiLabelSourceSepSC3Model(tf.keras.Model):
         sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
                     + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp)
                     + _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp))
-        return bce + self.supcon_lambda_each * sc, bce, sc
+        loss     = (1.0 - 3 * self.supcon_lambda_each) * bce + self.supcon_lambda_each * sc
+        return loss, bce, sc
 
     def train_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -2498,8 +2501,8 @@ class MultiLabelSourceSepSC3Model(tf.keras.Model):
 
 
 class MultiLabelSourceSepCRFSC1Model(MultiLabelCRFMRFModel):
-    """Source-sep Phase 2/3 CRF SC1: NLL + 0.2*SC(proj_full). CRF y_dict isinstance guard."""
-    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
+    """Source-sep Phase 2/3 CRF SC1: NLL + 0.1*SC(proj_full). λ=0.1 matches CRF-MRF SC1 convention."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=0.1, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp   = supcon_temp
         self.supcon_lambda = supcon_lambda
@@ -2530,8 +2533,8 @@ class MultiLabelSourceSepCRFSC1Model(MultiLabelCRFMRFModel):
 
 
 class MultiLabelSourceSepCRFSC2Model(MultiLabelCRFMRFModel):
-    """Source-sep Phase 2/3 CRF SC2: NLL + 0.1*(SC(proj_s)+SC(proj_t))."""
-    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+    """Source-sep Phase 2/3 CRF SC2: NLL + 0.05*(SC(proj_s)+SC(proj_t)). λ=0.05 matches CRF-MRF SC2."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.05, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp        = supcon_temp
         self.supcon_lambda_each = supcon_lambda_each
@@ -2563,8 +2566,8 @@ class MultiLabelSourceSepCRFSC2Model(MultiLabelCRFMRFModel):
 
 
 class MultiLabelSourceSepCRFSC3Model(MultiLabelCRFMRFModel):
-    """Source-sep Phase 2/3 CRF SC3: NLL + 0.1*(SC(proj_s)+SC(proj_t)+SC(proj_f))."""
-    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+    """Source-sep Phase 2/3 CRF SC3: NLL + 0.033*(SC_s+SC_t+SC_f). λ=0.033 matches CRF-MRF SC3."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.033, **kwargs):
         super().__init__(*args, **kwargs)
         self.supcon_temp        = supcon_temp
         self.supcon_lambda_each = supcon_lambda_each
@@ -2616,8 +2619,24 @@ def _build_ss_cls_head(encoder, d_shared, d_target, n_targets):
     return inputs, z, z_shared, cls_out
 
 
+def _ss_branch_tensors(encoder, inputs):
+    """Return (z_cnn, z_gru) from dual-branch encoder given a functional inputs tensor.
+
+    z_cnn : (batch, 64)  — CNN branch (ss_cnn_emb layer output)
+    z_gru : (batch, 128) — GRU branch (ss_bigru BiGRU(64) output)
+    Shares encoder weights; creates one extra forward-pass node in the functional graph.
+    """
+    bm = tf.keras.Model(
+        inputs=encoder.input,
+        outputs=[encoder.get_layer('ss_cnn_emb').output,
+                 encoder.get_layer('ss_bigru').output],
+        name='_ss_branch_ext',
+    )
+    return bm(inputs)
+
+
 def build_source_sep_sc1_classifier(encoder, d_shared, d_target, n_targets):
-    """Source-sep classifier with SC1 projection head on z_full."""
+    """Source-sep SC1: project from fused bottleneck z."""
     inputs, z, _, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
     proj_f = _proj_head(z, 'proj_f')
     return MultiLabelSourceSepSC1Model(inputs=inputs, outputs=[cls_out, proj_f],
@@ -2625,28 +2644,28 @@ def build_source_sep_sc1_classifier(encoder, d_shared, d_target, n_targets):
 
 
 def build_source_sep_sc2_classifier(encoder, d_shared, d_target, n_targets):
-    """Source-sep classifier with SC2 projection heads on z_shared and z_target."""
-    inputs, z, z_shared, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
-    z_target = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='sc2_z_target')(z)
-    proj_s   = _proj_head(z_shared,  'proj_s')
-    proj_t   = _proj_head(z_target,  'proj_t')
-    return MultiLabelSourceSepSC2Model(inputs=inputs, outputs=[cls_out, proj_s, proj_t],
+    """Source-sep SC2: project from CNN branch (z_cnn) and GRU branch (z_gru)."""
+    inputs, z, _, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
+    z_cnn, z_gru = _ss_branch_tensors(encoder, inputs)
+    proj_c = _proj_head(z_cnn, 'proj_c')
+    proj_g = _proj_head(z_gru, 'proj_g')
+    return MultiLabelSourceSepSC2Model(inputs=inputs, outputs=[cls_out, proj_c, proj_g],
                                        name='source_sep_sc2_cls')
 
 
 def build_source_sep_sc3_classifier(encoder, d_shared, d_target, n_targets):
-    """Source-sep classifier with SC3 projection heads on z_shared, z_target, and z_full."""
-    inputs, z, z_shared, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
-    z_target = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='sc3_z_target')(z)
-    proj_s   = _proj_head(z_shared,  'proj_s')
-    proj_t   = _proj_head(z_target,  'proj_t')
-    proj_f   = _proj_head(z,         'proj_f')
-    return MultiLabelSourceSepSC3Model(inputs=inputs, outputs=[cls_out, proj_s, proj_t, proj_f],
+    """Source-sep SC3: project from CNN branch, GRU branch, and fused bottleneck z."""
+    inputs, z, _, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
+    z_cnn, z_gru = _ss_branch_tensors(encoder, inputs)
+    proj_c = _proj_head(z_cnn, 'proj_c')
+    proj_g = _proj_head(z_gru, 'proj_g')
+    proj_f = _proj_head(z,     'proj_f')
+    return MultiLabelSourceSepSC3Model(inputs=inputs, outputs=[cls_out, proj_c, proj_g, proj_f],
                                        name='source_sep_sc3_cls')
 
 
 def build_source_sep_crf_sc1(encoder, d_shared, d_target, n_targets):
-    """Source-sep CRF with SC1 projection head on z_full."""
+    """Source-sep CRF SC1: project from fused bottleneck z."""
     T            = encoder.input_shape[1]
     inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
     z            = encoder(inputs)
@@ -2657,31 +2676,29 @@ def build_source_sep_crf_sc1(encoder, d_shared, d_target, n_targets):
 
 
 def build_source_sep_crf_sc2(encoder, d_shared, d_target, n_targets):
-    """Source-sep CRF with SC2 projection heads on z_shared and z_target."""
+    """Source-sep CRF SC2: project from CNN branch (z_cnn) and GRU branch (z_gru)."""
     T            = encoder.input_shape[1]
     inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
     z            = encoder(inputs)
     state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
-    z_shared     = tf.keras.layers.Lambda(lambda t: t[:, :d_shared], name='crf_z_shared')(z)
-    z_target     = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='crf_z_target')(z)
-    proj_s       = _proj_head(z_shared, 'proj_s')
-    proj_t       = _proj_head(z_target, 'proj_t')
-    return MultiLabelSourceSepCRFSC2Model(inputs=inputs, outputs=[state_logits, proj_s, proj_t],
+    z_cnn, z_gru = _ss_branch_tensors(encoder, inputs)
+    proj_c       = _proj_head(z_cnn, 'proj_c')
+    proj_g       = _proj_head(z_gru, 'proj_g')
+    return MultiLabelSourceSepCRFSC2Model(inputs=inputs, outputs=[state_logits, proj_c, proj_g],
                                            n_targets=n_targets, name='source_sep_crf_sc2')
 
 
 def build_source_sep_crf_sc3(encoder, d_shared, d_target, n_targets):
-    """Source-sep CRF with SC3 projection heads on z_shared, z_target, and z_full."""
+    """Source-sep CRF SC3: project from CNN branch, GRU branch, and fused bottleneck z."""
     T            = encoder.input_shape[1]
     inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
     z            = encoder(inputs)
     state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
-    z_shared     = tf.keras.layers.Lambda(lambda t: t[:, :d_shared], name='crf_z_shared')(z)
-    z_target     = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='crf_z_target')(z)
-    proj_s       = _proj_head(z_shared, 'proj_s')
-    proj_t       = _proj_head(z_target, 'proj_t')
-    proj_f       = _proj_head(z,        'proj_f')
-    return MultiLabelSourceSepCRFSC3Model(inputs=inputs, outputs=[state_logits, proj_s, proj_t, proj_f],
+    z_cnn, z_gru = _ss_branch_tensors(encoder, inputs)
+    proj_c       = _proj_head(z_cnn, 'proj_c')
+    proj_g       = _proj_head(z_gru, 'proj_g')
+    proj_f       = _proj_head(z,     'proj_f')
+    return MultiLabelSourceSepCRFSC3Model(inputs=inputs, outputs=[state_logits, proj_c, proj_g, proj_f],
                                            n_targets=n_targets, name='source_sep_crf_sc3')
 
 

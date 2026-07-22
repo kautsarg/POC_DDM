@@ -103,7 +103,6 @@ def _run_validation(encoder, d_shared, d_target, n_targets, X, y_binary, sigmoid
         start = d_shared + j * d_target
         z_j0  = Z[mask_j, start]
         ct_j  = sigmoid_params[mask_j, 3]
-        from scipy.stats import spearmanr
         r, p  = spearmanr(z_j0, ct_j)
         status = "OK" if abs(r) >= 0.65 else "WARN <0.65"
         print(f"    {tgt}: r={r:.3f}  p={p:.3e}  n={mask_j.sum()}  [{status}]")
@@ -115,7 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder",   type=str,   default=config.LAB_MULTIPLEX_FOLDER)
     parser.add_argument("--d_shared",     type=int,   default=16)
     parser.add_argument("--d_target",     type=int,   default=10)
-    parser.add_argument("--epochs_p1",    type=int,   default=200)
+    parser.add_argument("--epochs_p1",    type=int,   default=400)
     parser.add_argument("--lambda_cons",  type=float, default=1.0)
     parser.add_argument("--lambda_anch",  type=float, default=0.5)
     parser.add_argument("--nn_k",         type=int,   default=5)
@@ -243,9 +242,9 @@ if __name__ == "__main__":
 
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss', patience=30, restore_best_weights=True),
+                monitor='val_l_consist', patience=30, restore_best_weights=True),
             tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss', factor=0.3, patience=15, min_lr=1e-5),
+                monitor='val_l_consist', factor=0.3, patience=15, min_lr=1e-5),
             tf.keras.callbacks.TerminateOnNaN(),
         ]
 

@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a40,a100
+#SBATCH --partition=a30,a40,a100
 #SBATCH --array=1
 
 # Output and Error logs
@@ -30,10 +30,10 @@ P1_ARGS=(
     --exp_folder "$EXP_FOLDER"
     --d_shared 16
     --d_target 10
-    --epochs_p1 200
-    --lambda_cons 1.0
-    --lambda_anch 0.5
-    --lambda_var 0.1
+    --epochs_p1 400
+    --lambda_cons 2.0
+    --lambda_anch 0.3
+    --lambda_var 0.05
     --lambda_supcon 0.0
     --nn_k 5
 )

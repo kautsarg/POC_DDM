@@ -50,24 +50,42 @@ def render_sigmoid(params, T=45):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def build_source_sep_encoder(T, d_shared, d_target, n_targets=3):
-    """Encoder: Input(T,1) → structured bottleneck (d_shared + n_targets*d_target).
+    """Dual-branch encoder: shared trunk → CNN branch + GRU branch → bottleneck.
 
-    Architecture: two causal Conv1D (stride-2 on second) → BiGRU(32) →
-    LayerNorm → Dense bottleneck (linear — no activation to prevent dying-ReLU
-    collapse in per-target dims).
+    CNN branch captures local sigmoid-rise features; GRU branch captures
+    temporal dynamics across the full curve. Merge before a linear bottleneck
+    (no activation — prevents dying-ReLU collapse in per-target dims).
 
-    Layer names use stable name= kwargs for positional load_weights compatibility.
+    ~50K params vs ~13K for the old serial encoder; empirically dual-branch
+    architectures outperform serial on single-modality PCR curves in this codebase.
+
+    Layer names use stable name= kwargs for load_weights compatibility.
     """
     inputs = tf.keras.layers.Input(shape=(T, 1), name='ss_input')
-    x = tf.keras.layers.Conv1D(
-        16, 5, activation='relu', padding='causal', name='ss_conv1')(inputs)
-    x = tf.keras.layers.Conv1D(
-        16, 3, activation='relu', padding='causal', strides=2, name='ss_conv2')(x)
-    x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.GRU(32), name='ss_bigru')(x)
-    x = tf.keras.layers.LayerNormalization(name='ss_ln')(x)
+
+    # Shared trunk: initial feature extraction from raw curve
+    trunk = tf.keras.layers.Conv1D(
+        32, 5, activation='relu', padding='causal', name='ss_trunk')(inputs)  # (T, 32)
+
+    # CNN branch: local patterns via deeper convolutions + global average pooling
+    cnn = tf.keras.layers.Conv1D(
+        32, 3, activation='relu', padding='causal', strides=2, name='ss_cnn1')(trunk)  # (T//2, 32)
+    cnn = tf.keras.layers.Conv1D(
+        32, 3, activation='relu', padding='causal', name='ss_cnn2')(cnn)               # (T//2, 32)
+    cnn = tf.keras.layers.GlobalAveragePooling1D(name='ss_cnn_gap')(cnn)               # (32,)
+    cnn = tf.keras.layers.Dense(64, activation='relu', name='ss_cnn_emb')(cnn)        # (64,)
+
+    # GRU branch: temporal dynamics via strided conv + BiGRU
+    gru = tf.keras.layers.Conv1D(
+        16, 3, activation='relu', padding='causal', strides=2, name='ss_gru_conv')(trunk)  # (T//2, 16)
+    gru = tf.keras.layers.Bidirectional(
+        tf.keras.layers.GRU(64), name='ss_bigru')(gru)                                     # (128,)
+
+    # Merge branches → LayerNorm → linear bottleneck
+    merged = tf.keras.layers.Concatenate(name='ss_merge')([cnn, gru])  # (192,)
+    merged = tf.keras.layers.LayerNormalization(name='ss_ln')(merged)
     z = tf.keras.layers.Dense(
-        d_shared + n_targets * d_target, name='ss_bottleneck')(x)  # linear — no relu
+        d_shared + n_targets * d_target, name='ss_bottleneck')(merged)  # linear — no relu
     return tf.keras.Model(inputs=inputs, outputs=z, name='source_sep_encoder')
 
 
@@ -88,7 +106,7 @@ def build_parametric_decoder(d_shared, d_target, T_max=45, j=0):
       Fb  → linear            (baseline, can be slightly negative)
     """
     inp = tf.keras.layers.Input(shape=(d_shared + d_target,), name=f'dec{j}_in')
-    h   = tf.keras.layers.Dense(32, activation='relu', name=f'dec{j}_hidden')(inp)
+    h   = tf.keras.layers.Dense(128, activation='relu', name=f'dec{j}_hidden')(inp)
 
     Fm = tf.keras.layers.Dense(1, name=f'dec{j}_Fm_lin')(h)
     Fm = tf.keras.layers.Activation(tf.math.softplus, name=f'dec{j}_Fm')(Fm)
@@ -292,7 +310,7 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
 
     def train_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_bin = tf.cast(y_dict['cls_out'], tf.int32)
+        y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         with tf.GradientTape() as tape:
             loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
         self.optimizer.apply_gradients(
@@ -302,7 +320,7 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
-        y_bin = tf.cast(y_dict['cls_out'], tf.int32)
+        y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
         return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
                 'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
@@ -347,8 +365,23 @@ def _proj_l2(dense, x, training):
     return tf.math.l2_normalize(dense(x, training=training), axis=-1)
 
 
+def _make_branch_extractor(encoder):
+    """Sub-model that returns (z_cnn, z_gru) from the dual-branch encoder.
+
+    z_cnn : (batch, 64)  — CNN branch output (ss_cnn_emb layer)
+    z_gru : (batch, 128) — GRU branch output (ss_bigru layer, BiGRU(64)→128)
+    Shares all weights with encoder; used by Phase 1 SC2/SC3 projection heads.
+    """
+    return tf.keras.Model(
+        inputs=encoder.input,
+        outputs=[encoder.get_layer('ss_cnn_emb').output,
+                 encoder.get_layer('ss_bigru').output],
+        name='ss_branch_extractor',
+    )
+
+
 class MultiLabelSourceSepPhase1SC1Model(MultiLabelSourceSepPhase1Model):
-    """Phase 1 + SC1: L_recon + 0.2 * SC(proj_full) where proj_full projects all z."""
+    """Phase 1 + SC1: L_recon + 0.2 * SC(proj_full) — projects fused bottleneck z."""
 
     def __init__(self, *args, **kwargs):
         kwargs.pop('lambda_supcon', None)
@@ -364,44 +397,58 @@ class MultiLabelSourceSepPhase1SC1Model(MultiLabelSourceSepPhase1Model):
 
 
 class MultiLabelSourceSepPhase1SC2Model(MultiLabelSourceSepPhase1Model):
-    """Phase 1 + SC2: L_recon + 0.1*(SC(proj_shared) + SC(proj_target))."""
+    """Phase 1 + SC2: L_recon + 0.1*(SC(proj_cnn) + SC(proj_gru)).
+
+    Projects from the CNN branch (z_cnn, 64-dim) and GRU branch (z_gru, 128-dim)
+    separately — not from arbitrary bottleneck slices.
+    """
 
     def __init__(self, *args, **kwargs):
         kwargs.pop('lambda_supcon', None)
         super().__init__(*args, lambda_supcon=0.0, **kwargs)
-        self._ps = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_ps')
-        self._pt = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_pt')
+        self._pc = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_pc')
+        self._pg = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_pg')
+        self._branch_ext = _make_branch_extractor(self.encoder)
 
     def _compute_losses(self, x, y_bin, training):
         loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
-        z_full = self.encoder(x, training=training)
-        z_s, z_t = z_full[:, :self.d_shared], z_full[:, self.d_shared:]
+        z_cnn, z_gru = self._branch_ext(x, training=training)
         pm     = _jaccard_pm(y_bin)
-        proj_s = _proj_l2(self._ps, z_s, training)
-        proj_t = _proj_l2(self._pt, z_t, training)
-        l_sc   = _sc_loss_p1(proj_s, pm) + _sc_loss_p1(proj_t, pm)
+        proj_c = _proj_l2(self._pc, z_cnn, training)
+        proj_g = _proj_l2(self._pg, z_gru, training)
+        l_sc   = _sc_loss_p1(proj_c, pm) + _sc_loss_p1(proj_g, pm)
         return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
 
 
 class MultiLabelSourceSepPhase1SC3Model(MultiLabelSourceSepPhase1Model):
-    """Phase 1 + SC3: L_recon + 0.1*(SC(proj_s) + SC(proj_t) + SC(proj_f))."""
+    """Phase 1 + SC3: L_recon + 0.1*(SC(proj_cnn) + SC(proj_gru) + SC(proj_full)).
+
+    Projects from CNN branch (z_cnn), GRU branch (z_gru), and fused bottleneck z_full.
+    """
 
     def __init__(self, *args, **kwargs):
         kwargs.pop('lambda_supcon', None)
         super().__init__(*args, lambda_supcon=0.0, **kwargs)
-        self._ps = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_ps')
-        self._pt = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pt')
+        self._pc = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pc')
+        self._pg = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pg')
         self._pf = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pf')
+        enc = self.encoder
+        self._branch_ext = tf.keras.Model(
+            inputs=enc.input,
+            outputs=[enc.get_layer('ss_cnn_emb').output,
+                     enc.get_layer('ss_bigru').output,
+                     enc.output],
+            name='ss_branch_extractor',
+        )
 
     def _compute_losses(self, x, y_bin, training):
         loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
-        z_full = self.encoder(x, training=training)
-        z_s, z_t = z_full[:, :self.d_shared], z_full[:, self.d_shared:]
+        z_cnn, z_gru, z_full = self._branch_ext(x, training=training)
         pm     = _jaccard_pm(y_bin)
-        proj_s = _proj_l2(self._ps, z_s, training)
-        proj_t = _proj_l2(self._pt, z_t, training)
+        proj_c = _proj_l2(self._pc, z_cnn, training)
+        proj_g = _proj_l2(self._pg, z_gru, training)
         proj_f = _proj_l2(self._pf, z_full, training)
-        l_sc   = _sc_loss_p1(proj_s, pm) + _sc_loss_p1(proj_t, pm) + _sc_loss_p1(proj_f, pm)
+        l_sc   = _sc_loss_p1(proj_c, pm) + _sc_loss_p1(proj_g, pm) + _sc_loss_p1(proj_f, pm)
         return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
 
 

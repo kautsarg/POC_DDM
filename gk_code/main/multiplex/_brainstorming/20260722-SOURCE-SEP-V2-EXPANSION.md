@@ -543,3 +543,208 @@ keeps the original reconstruction-only loss.
    argument to `train_and_evaluate_ml_models` (currently absent from its signature — confirmed at
    line 2805 of `model_utils_multilabel.py`). Alternative: pass a pre-built
    `{model_key: encoder_path}` dict instead. Resolve during implementation.
+
+---
+
+## Phase 1 Reconstruction Quality — Improvement Plan (V2 Follow-Up)
+
+### Problem statement
+
+Phase 1 standard (SC0) reconstruction on `02_ACA_qdPCR_balanced` converges to `val_loss ≈ 0.050`.
+Training converges fully (ReduceLR has fired multiple times by epoch 200). **More epochs will not
+help** — the model is at its capacity wall, not an optimisation issue.
+
+**On lambda_cons=2.0 (secondary attempt, log 264349):** Did not help for SC0. The precon SC1/2/3
+Phase 1 with lambda_cons=1.0 (same log) reaches `val_l_consist ≈ 0.0047` — but this is hidden
+inside `val_loss ≈ 0.53` due to the SupCon component dominating. The actual reconstruction
+quality IS better with precon training; the high val_loss is a measurement artefact, not a
+reconstruction problem.
+
+**Root cause 1 (standard SC0)**: encoder (Conv1D×2 + BiGRU(32), ~16K params) lacks capacity to
+disentangle overlapping sigmoid curves at the balanced mixture distribution.
+
+**Root cause 2 (Phase 1 SC models, bug)**: `EarlyStopping(monitor='val_loss')` in
+`03b_source_sep_pretraining.py` monitors the total Phase 1 loss, which for SC1/2/3 models
+includes a large noisy SupCon term (e.g. `0.2 × l_sc ≈ 0.48` for SC1). This makes val_loss
+an unreliable stopping signal — early stopping may fire on SupCon noise before reconstruction
+has truly converged. Fix: monitor `val_l_consist` for Phase 1.
+
+---
+
+### Architecture: serial vs dual branch
+
+**Context:** `cnn_gru_dual` empirically outperforms serial `cnn_gru` on single-task classification
+in this codebase (same single-modality input). The dual branch here is **not** two different input
+types — it is two different processing paths on the same amplification curve:
+- CNN branch: local short-range features (rise onset shape, inflection sharpness)
+- GRU branch: temporal context (how the curve evolves, plateau behaviour)
+
+This has direct relevance for source separation: identifying individual sigmoid components in an
+overlapping mixture benefits from both feature types simultaneously, not sequentially.
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **Serial bigger** (Conv1D×2→BiGRU(64)) | Simple change, bottleneck unchanged | Only increases sequential depth; doesn't add the dual-feature extraction that already wins in classification |
+| **Dual branch bigger** | Empirically proven architecture in this codebase; CNN + GRU independence may help decompose overlapping sigmoids better; more parameters from both branches | Larger architecture change in `build_source_sep_encoder`; longer Phase 1 training time |
+
+**Recommendation**: **dual branch + bigger capacity**. The dual branch MUST be bigger — a dual
+branch that doesn't increase total capacity just splits the existing ~16K encoder params into two
+~8K branches, each smaller than the current serial model, which is likely to perform worse.
+`cnn_gru_dual` wins in benchmarks because it has both dual feature extraction AND more total
+parameters. Target: each branch ~16-32K params, total encoder ~48-64K params.
+
+Serial bigger is the fallback if the architectural change creates risk before V2 evaluation.
+
+---
+
+### Primary change: dual branch + bigger capacity
+
+**Encoder** (in `build_source_sep_encoder`, `model_utils_source_sep.py`):
+
+Mirror the existing `cnn_gru_dual` structure — shared trunk, then split into CNN and GRU branches,
+merge before the bottleneck Dense. Bottleneck output dim stays `d_shared + n_targets * d_target = 46`.
+
+```python
+# Current (serial):
+Input(T,1) → Conv1D(16,5) → Conv1D(16,3,s=2) → BiGRU(32) → LayerNorm → Dense(46)
+
+# Proposed (dual branch):
+Input(T,1) → Conv1D(32, 5, causal, relu)          # shared trunk
+           → split:
+               Branch CNN: Conv1D(32,3,s=2,causal) → Conv1D(32,3,causal) → z_cnn (via Dense or GlobalPool)
+               Branch GRU: Conv1D(16,3,s=2,causal) → BiGRU(64) → z_gru
+           → Concat([z_cnn, z_gru]) → LayerNorm → Dense(46)
+```
+
+Exact branch widths TBD during implementation — target total params ~4–6× current encoder
+(~48-64K), while keeping the output dim at 46 (invariant). Check against existing
+`build_cnn_gru_dual_model` in `model_utils_cnn_gru.py` for layer naming conventions and merge
+pattern to follow.
+
+**Decoder** (in `build_parametric_decoder`, `model_utils_source_sep.py`):
+
+The decoder already has `Dense(32, relu, name=f'dec{j}_hidden')` as a single hidden layer
+before 5 separate `Dense(1)` heads with constrained activations (softplus, sigmoid×T, etc.).
+Increase the hidden layer width rather than adding a new layer:
+
+```python
+# Current:
+h = Dense(32, activation='relu', name=f'dec{j}_hidden')(inp)  # inp = (d_shared+d_target,)
+
+# Proposed:
+h = Dense(128, activation='relu', name=f'dec{j}_hidden')(inp)
+```
+
+This is the layer the 5 sigmoid param heads all branch off from — wider = more shared
+representation capacity for the parametric mapping.
+
+Gives the decoder more capacity to map the 26-dim slice to sigmoid parameters even when `z_shared`
+contains mixed information from multiple active targets.
+
+**Impact**: Phase 1 only. No Phase 2/3 interface changes — encoder output dim unchanged,
+`_SS_D_SHARED`/`_SS_D_TARGET` constants unchanged, layer name `source_sep_encoder` unchanged.
+All 22 model variants load by layer name and are unaffected by the internal body change.
+
+**Cost**: must retrain Phase 1 (all datasets) and all Phase 2+3 variants with
+`--force_rerun_phase23` since encoder weights change.
+
+---
+
+### Fallback: serial bigger (simpler, lower risk)
+
+If dual branch adds too much complexity before V2 evaluation:
+
+```python
+# Serial bigger:
+Conv1D(32, 5, ...) → Conv1D(32, 3, stride=2) → BiGRU(64) → LayerNorm → Dense(46)
+```
+
+Same cost as dual branch (full retrain), lower expected gain but zero architectural risk.
+
+---
+
+### Secondary change: loss weight tuning
+
+Can try before committing to architecture change (no retraining of Phase 2+3 needed for Phase 1
+hyperparameter tuning, just retrain Phase 1):
+
+| Hyperparameter | Current | Try | Effect |
+|---------------|---------|-----|--------|
+| `lambda_cons` | 1.0 | 2.0 | More weight on reconstruction vs anchor/variance |
+| `lambda_anch` | 0.5 | 0.3 | Less anchor pull (may help if anchor bank is too rigid) |
+| `lambda_var`  | 0.1 | 0.05 | Usually already 0 at convergence — minimal effect |
+| `nn_k` (anchor neighbours) | 5 | 3 or 10 | Tighter (3) or looser (10) reference matching |
+
+Expected impact from `lambda_cons 2.0`: small improvement (~0.005) since the model has already
+saturated its capacity. Worth trying as a low-cost first step.
+
+---
+
+### Epochs and callbacks
+
+**More epochs needed for the bigger model?** Yes — a 3-4× bigger dual encoder has more parameters
+and will converge more slowly. Change `--epochs_p1 200` → `--epochs_p1 400` when running with the
+new architecture.
+
+**Not because of lambda_cons amplification** — ReduceLROnPlateau handles that automatically
+(steeper gradient → bigger val_loss oscillations → LR drops sooner). lambda_cons doesn't require
+tuning the epoch count directly.
+
+**EarlyStopping fix (bug)** — `03b_source_sep_pretraining.py` currently does:
+```python
+EarlyStopping(monitor='val_loss', patience=30, ...)
+```
+For SC1/2/3 Phase 1 models, `val_loss` includes a large SupCon term (`0.2×l_sc ≈ 0.48` for SC1),
+making it a noisy stopping signal. The reconstruction component (`val_l_consist`) can still be
+improving while `val_loss` oscillates due to SupCon noise → early stopping may fire prematurely.
+
+Fix: use `val_l_consist` as the EarlyStopping monitor for all Phase 1 training:
+
+```python
+callbacks = [
+    tf.keras.callbacks.EarlyStopping(
+        monitor='val_l_consist', patience=30, restore_best_weights=True),  # was val_loss
+    tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_l_consist', factor=0.3, patience=15, min_lr=1e-5),   # was val_loss
+    tf.keras.callbacks.TerminateOnNaN(),
+]
+```
+
+This also applies to SC0 (where `val_loss == val_l_consist + other_recon_terms` so the direction
+is correct, though `val_loss` would also work for SC0 since no SupCon noise).
+
+**Hyperparameter changes that likely won't help for SC0 specifically:**
+- **More epochs** (SC0 already converged): model is at capacity wall, ReduceLR has fired — no headroom.
+- **Different LR schedule**: ReduceLROnPlateau already adapts adequately.
+
+---
+
+### Suggested experiment order
+
+1. **Fix EarlyStopping to monitor `val_l_consist`** in `03b_source_sep_pretraining.py` —
+   zero-cost change, applies immediately to all future runs.
+
+2. **Implement dual branch + bigger encoder (48-64K params) + wider decoder (Dense 32→128)**.
+   Run with `--epochs_p1 400`. Monitor `val_l_consist` for stopping (from fix in step 1).
+   Expect `val_l_consist` for SC0 standard to drop below 0.030 (better than current ~0.050).
+
+3. **If SC0 standard val_l_consist is still ≥ 0.040 after 400 epochs**: try `lambda_cons 2.0`
+   additionally. With a bigger model, the stronger gradient signal may help more.
+
+4. **Only if all above fail**: consider data augmentation (Gaussian noise, amplitude jitter)
+   to address the small balanced dataset size.
+
+---
+
+### Implementation scope
+
+Files to change:
+- `03b_source_sep_pretraining.py`: EarlyStopping + ReduceLR → monitor `val_l_consist`; bump
+  default `--epochs_p1` to 400
+- `model_utils_source_sep.py`: `build_source_sep_encoder` — replace serial body with dual branch
+  (shared trunk Conv1D(32,5) → split CNN branch + GRU branch → Concat → LayerNorm → Dense(46));
+  `build_parametric_decoder` — increase hidden layer `Dense(32)` → `Dense(128)`
+- Reference `build_cnn_gru_dual_model` in `model_utils_cnn_gru.py` for branch naming convention
+  and merge pattern to stay consistent with existing dual models
+- SLURM scripts: update `--epochs_p1 200` → `--epochs_p1 400`; bottleneck dims unchanged
+- Run `--force_rerun` on Phase 1 and `--force_rerun_phase23` on Phase 2+3 for all datasets
