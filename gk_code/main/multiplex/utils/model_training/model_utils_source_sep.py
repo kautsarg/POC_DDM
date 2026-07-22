@@ -309,6 +309,103 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Phase 1 SC1/2/3 extensions (Family B pretraining)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Mirrors SUPCON_TEMP / SUPCON_LAMBDA from model_utils_supcon; defined locally
+# to avoid circular import (model_utils_multilabel imports this module).
+_SC_TEMP       = 0.1   # SupCon temperature
+_SC_LAMBDA_SC1 = 0.2   # SC1: single head weight
+_SC_LAMBDA_SCN = 0.1   # SC2/SC3: per-head weight
+
+
+def _jaccard_pm(y_bin):
+    """Pairwise Jaccard pos mask (diagonal = 0) from int binary tensor."""
+    y     = tf.cast(y_bin, tf.float32)
+    inter = tf.matmul(y, y, transpose_b=True)
+    rs    = tf.reduce_sum(y, axis=1, keepdims=True)
+    union = rs + tf.transpose(rs) - inter
+    return (inter / (union + 1e-8)) * (1.0 - tf.eye(tf.shape(y)[0]))
+
+
+def _sc_loss_p1(proj_l2, pm):
+    """Jaccard-weighted SupCon on L2-normalised embeddings with given pos mask."""
+    not_self  = 1.0 - tf.eye(tf.shape(proj_l2)[0])
+    sim       = tf.matmul(proj_l2, proj_l2, transpose_b=True) / _SC_TEMP
+    sim_max   = tf.stop_gradient(tf.reduce_max(sim, axis=1, keepdims=True))
+    exp_sim   = tf.exp(sim - sim_max)
+    log_denom = tf.math.log(tf.reduce_sum(exp_sim * not_self, axis=1, keepdims=True) + 1e-8)
+    log_prob  = (sim - sim_max) - log_denom
+    pos_sum   = tf.reduce_sum(pm, axis=1)
+    has_pos   = tf.cast(pos_sum > 0, tf.float32)
+    per_anc   = -tf.reduce_sum(log_prob * pm, axis=1) / (pos_sum + 1e-8)
+    return tf.reduce_mean(per_anc * has_pos)
+
+
+def _proj_l2(dense, x, training):
+    """Dense(64, relu) → L2-normalise. dense is a pre-created tf.keras.layers.Dense."""
+    return tf.math.l2_normalize(dense(x, training=training), axis=-1)
+
+
+class MultiLabelSourceSepPhase1SC1Model(MultiLabelSourceSepPhase1Model):
+    """Phase 1 + SC1: L_recon + 0.2 * SC(proj_full) where proj_full projects all z."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('lambda_supcon', None)
+        super().__init__(*args, lambda_supcon=0.0, **kwargs)
+        self._pf = tf.keras.layers.Dense(64, activation='relu', name='p1sc1_pf')
+
+    def _compute_losses(self, x, y_bin, training):
+        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        z_full = self.encoder(x, training=training)
+        proj_f = _proj_l2(self._pf, z_full, training)
+        l_sc   = _sc_loss_p1(proj_f, _jaccard_pm(y_bin))
+        return loss + _SC_LAMBDA_SC1 * l_sc, l_ab, l_co, l_an, l_va, l_sc
+
+
+class MultiLabelSourceSepPhase1SC2Model(MultiLabelSourceSepPhase1Model):
+    """Phase 1 + SC2: L_recon + 0.1*(SC(proj_shared) + SC(proj_target))."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('lambda_supcon', None)
+        super().__init__(*args, lambda_supcon=0.0, **kwargs)
+        self._ps = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_ps')
+        self._pt = tf.keras.layers.Dense(64, activation='relu', name='p1sc2_pt')
+
+    def _compute_losses(self, x, y_bin, training):
+        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        z_full = self.encoder(x, training=training)
+        z_s, z_t = z_full[:, :self.d_shared], z_full[:, self.d_shared:]
+        pm     = _jaccard_pm(y_bin)
+        proj_s = _proj_l2(self._ps, z_s, training)
+        proj_t = _proj_l2(self._pt, z_t, training)
+        l_sc   = _sc_loss_p1(proj_s, pm) + _sc_loss_p1(proj_t, pm)
+        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
+
+
+class MultiLabelSourceSepPhase1SC3Model(MultiLabelSourceSepPhase1Model):
+    """Phase 1 + SC3: L_recon + 0.1*(SC(proj_s) + SC(proj_t) + SC(proj_f))."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('lambda_supcon', None)
+        super().__init__(*args, lambda_supcon=0.0, **kwargs)
+        self._ps = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_ps')
+        self._pt = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pt')
+        self._pf = tf.keras.layers.Dense(64, activation='relu', name='p1sc3_pf')
+
+    def _compute_losses(self, x, y_bin, training):
+        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        z_full = self.encoder(x, training=training)
+        z_s, z_t = z_full[:, :self.d_shared], z_full[:, self.d_shared:]
+        pm     = _jaccard_pm(y_bin)
+        proj_s = _proj_l2(self._ps, z_s, training)
+        proj_t = _proj_l2(self._pt, z_t, training)
+        proj_f = _proj_l2(self._pf, z_full, training)
+        l_sc   = _sc_loss_p1(proj_s, pm) + _sc_loss_p1(proj_t, pm) + _sc_loss_p1(proj_f, pm)
+        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Phase 2 / 3 classifier
 # ──────────────────────────────────────────────────────────────────────────────
 

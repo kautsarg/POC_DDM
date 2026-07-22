@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=lab_multiplex_source_sep
+#SBATCH --job-name=lab_multiplex_source_sep_precon
 #SBATCH --time=12:00:00
 
 # Request resources for a single array task
@@ -25,7 +25,7 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main/multiplex
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 
-P1_ARGS=(
+P1_ARGS_BASE=(
     --task_id "$SLURM_ARRAY_TASK_ID"
     --exp_folder "$EXP_FOLDER"
     --d_shared 16
@@ -34,32 +34,40 @@ P1_ARGS=(
     --lambda_cons 1.0
     --lambda_anch 0.5
     --lambda_var 0.1
-    --lambda_supcon 0.0
     --nn_k 5
+    --precon
+    --force_rerun
+    --validate
 )
 
 P23_ARGS=(
     --task_id "$SLURM_ARRAY_TASK_ID"
     --exp_folder "$EXP_FOLDER"
     --n_splits 5
+    --precon
     --train_phase23
     --force_rerun_phase23
 )
 
-# Phase 1 — Family A standard encoder (lambda_supcon=0.0, SC0)
-# Saves: source_sep_encoder_weights.weights.h5
-python -u 03b_source_sep_pretraining.py "${P1_ARGS[@]}" --force_rerun --validate
+# Phase 1 — Family B SC1 precon encoder
+# Saves: source_sep_precon_sc1_encoder_weights.weights.h5
+python -u 03b_source_sep_pretraining.py "${P1_ARGS_BASE[@]}" --supcon 1
 
-# Phase 2+3 — Family A, SC0: 4 variants (_p2, _crf_p2, _p3, _crf_p3)
-python -u 03b_source_sep_pretraining.py "${P23_ARGS[@]}" --supcon 0
+# Phase 1 — Family B SC2 precon encoder
+# Saves: source_sep_precon_sc2_encoder_weights.weights.h5
+python -u 03b_source_sep_pretraining.py "${P1_ARGS_BASE[@]}" --supcon 2
 
-# Phase 2+3 — Family A, SC1: 2 variants (_supcon_p3, _crf_supcon_p3)
+# Phase 1 — Family B SC3 precon encoder
+# Saves: source_sep_precon_sc3_encoder_weights.weights.h5
+python -u 03b_source_sep_pretraining.py "${P1_ARGS_BASE[@]}" --supcon 3
+
+# Phase 2+3 — Family B, SC1: 4 variants (_precon_supcon_p2/p3, _precon_crf_supcon_p2/p3)
 python -u 03b_source_sep_pretraining.py "${P23_ARGS[@]}" --supcon 1
 
-# Phase 2+3 — Family A, SC2: 2 variants (_supcon2_p3, _crf_supcon2_p3)
+# Phase 2+3 — Family B, SC2: 4 variants
 python -u 03b_source_sep_pretraining.py "${P23_ARGS[@]}" --supcon 2
 
-# Phase 2+3 — Family A, SC3: 2 variants (_supcon3_p3, _crf_supcon3_p3)
+# Phase 2+3 — Family B, SC3: 4 variants
 python -u 03b_source_sep_pretraining.py "${P23_ARGS[@]}" --supcon 3
 
 deactivate

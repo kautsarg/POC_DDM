@@ -2,8 +2,10 @@
 
 **Date**: 2026-07-18  
 **Type**: Ideation + Critical Analysis + Implementation Plan  
-**Context**: `(N=26571, T=45)` normalised dPCR curves → `{0,1}^3` for `[KPC, NDM, VIM]`.  
-Single-target: ~20K samples. Multi-positive: ~6.3K across 4 combination types. No all-negative samples.
+**Dataset**: `LAB_Multiplex/02_ACA_qdPCR_balanced` (N=10,383, T=45, balanced subset)  
+**Context**: `(N=10383, T=45)` normalised dPCR curves → `{0,1}^3` for `[KPC, NDM, VIM]`.  
+Single-target: ~4,059 samples. Multi-positive: ~6,324 across 4 combination types. No all-negative samples.  
+Note: an unbalanced full dataset with ~26,571 wells exists but is NOT used for training — the balanced subset is the canonical training set.
 
 ---
 
@@ -121,19 +123,22 @@ Suggested initial weights: `λ_cons = 1.0`, `λ_anch = 0.5`.
 
 ---
 
-## 3. Data Available
+## 3. Data Available (`02_ACA_qdPCR_balanced`)
 
 | Well type | N | Supervisory signal |
 |---|---|---|
-| Single KPC | 6,792 | L_absent (NDM,VIM→0) + L_consist (KPC channel = input) + L_anchor_KPC (= input) |
-| Single NDM | 6,232 | same pattern for NDM |
-| Single VIM | 7,223 | same pattern for VIM |
+| Single KPC | 875 | L_absent (NDM,VIM→0) + L_consist (KPC channel = input) + L_anchor_KPC (= input) |
+| Single NDM | 1,643 | same pattern for NDM |
+| Single VIM | 1,541 | same pattern for VIM |
 | KPC+NDM | 1,638 | L_absent (VIM→0) + L_consist (KPC+NDM sum = input) + L_anchor per active channel |
 | KPC+VIM | 1,582 | same pattern |
 | NDM+VIM | 1,535 | same pattern |
 | KPC+NDM+VIM | 1,569 | L_absent (all three active) + L_consist (all three sum = input) + L_anchor per active |
+| **Total** | **10,383** | — |
 
-**Ct vs. concentration**: Sigmoid params (`sigmoid_curves['params'][:, 3]`) give per-well Ct. Ct correlates strongly (r < −0.9) with log10(Conc) for each single-target group. This makes concentration-prototype anchoring physically grounded: two KPC wells at the same concentration will have nearly identical sigmoid shapes. The `Conc` column is used only to build the prototype bank offline — it is **not** an encoder input; the model sees only the raw time series `(T, 1)`.
+**Important imbalance**: unlike the full dataset, in the balanced subset **multi-positive (6,324) outnumbers single-target (4,059)**. The nearest-neighbour anchor bank for KPC has only 875 single-target references — a much sparser bank than originally assumed. Consider using the full unbalanced dataset (~26,571 wells) for Phase 1 pretraining only, since Phase 1 requires no balanced labels.
+
+**Ct vs. concentration**: Sigmoid params (`sigmoid_curves['original']['params'][:, 3]`) give per-well Ct. Ct correlates strongly (r < −0.9) with log10(Conc) for each single-target group. The `Conc` column is used only to build the prototype bank offline — it is **not** an encoder input; the model sees only the raw time series `(T, 1)`.
 
 ---
 

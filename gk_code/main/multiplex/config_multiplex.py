@@ -51,8 +51,9 @@ RESULT_FILE_BY_FLAG = {
     'auxdet':     'classification_performances_ml_auxdet.joblib',
     'quercon':    'classification_performances_ml_quercon.joblib',
     'condreg':    'classification_performances_ml_condreg.joblib',
-    'crf':        'classification_performances_ml_crf.joblib',
-    'source_sep': 'classification_performances_ml_source_sep.joblib',
+    'crf':              'classification_performances_ml_crf.joblib',
+    'source_sep':       'classification_performances_ml_source_sep.joblib',
+    'source_sep_precon': 'classification_performances_ml_source_sep_precon.joblib',
 }
 RESULT_10FOLD_FILE_BY_FLAG = {
     k: v.replace('.joblib', '_10fold.joblib')
@@ -74,7 +75,7 @@ OUTLIER_FILTERS = [
 ]
 
 # ==========================================
-# MULTIPLEX MODEL KEYS (62 total)
+# MULTIPLEX MODEL KEYS (128 total)
 # ML_MODEL_KEY_MAP and ML_MODEL_PRINT_MAP are defined in
 # utils/model_training/model_utils_multilabel.py — import from there.
 # ==========================================
@@ -136,12 +137,24 @@ MULTIPLEX_MODELS = [
     'cnn_gru_dual_crf_chain_supcon', 'cnn_gru_dual_crf_chain_supcon2', 'cnn_gru_dual_crf_chain_supcon3',
     'cnn_trans_dual_crf_chain',
     'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
-    # Source separation pretrained encoder — independent sigmoid heads (SC0-1)
+    # Source separation pretrained encoder — legacy (SC0-1, no phase suffix)
     'cnn_gru_source_sep',
     'cnn_gru_source_sep_supcon',
-    # Source separation pretrained encoder — joint-state CRF-MRF output (SC0-1)
     'cnn_gru_source_sep_crf',
     'cnn_gru_source_sep_crf_supcon',
+    # Source sep Family A — standard encoder, SC0-3, explicit phase suffix
+    'cnn_gru_source_sep_p2',      'cnn_gru_source_sep_crf_p2',
+    'cnn_gru_source_sep_p3',      'cnn_gru_source_sep_crf_p3',
+    'cnn_gru_source_sep_supcon_p3',   'cnn_gru_source_sep_crf_supcon_p3',
+    'cnn_gru_source_sep_supcon2_p3',  'cnn_gru_source_sep_crf_supcon2_p3',
+    'cnn_gru_source_sep_supcon3_p3',  'cnn_gru_source_sep_crf_supcon3_p3',
+    # Source sep Family B — SC-specific precon encoder, SC1-3, p2+p3
+    'cnn_gru_source_sep_precon_supcon_p2',    'cnn_gru_source_sep_precon_crf_supcon_p2',
+    'cnn_gru_source_sep_precon_supcon2_p2',   'cnn_gru_source_sep_precon_crf_supcon2_p2',
+    'cnn_gru_source_sep_precon_supcon3_p2',   'cnn_gru_source_sep_precon_crf_supcon3_p2',
+    'cnn_gru_source_sep_precon_supcon_p3',    'cnn_gru_source_sep_precon_crf_supcon_p3',
+    'cnn_gru_source_sep_precon_supcon2_p3',   'cnn_gru_source_sep_precon_crf_supcon2_p3',
+    'cnn_gru_source_sep_precon_supcon3_p3',   'cnn_gru_source_sep_precon_crf_supcon3_p3',
     # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CGD SC0-3
     'cnn_gru_dual_cross_attn_v2_crf_flat',
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon', 'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3',
@@ -160,6 +173,7 @@ MULTIPLEX_MODELS = [
 
 
 def _flag_for_model(key):
+    if 'source_sep_precon' in key: return 'source_sep_precon'
     if 'source_sep' in key: return 'source_sep'
     if 'crf'        in key: return 'crf'
     if 'quercon'    in key: return 'quercon'

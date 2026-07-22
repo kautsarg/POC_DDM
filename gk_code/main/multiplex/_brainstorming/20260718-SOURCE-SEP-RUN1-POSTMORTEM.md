@@ -2,7 +2,8 @@
 
 **Date**: 2026-07-18  
 **SLURM job**: 262563 (`lab_multiplex_source_sep_training.sh`)  
-**Result file**: `classification_performances_ml_source_sep_10fold.joblib`
+**Result file**: `classification_performances_ml_source_sep_10fold.joblib`  
+**Dataset**: `LAB_Multiplex/02_ACA_qdPCR_balanced` (N=10,383 balanced, T=45)
 
 ---
 
@@ -575,3 +576,59 @@ For completeness — source separation pretraining is appropriate when:
 For this PCR dataset, the correct inductive biases are temporal patterns (Ct, Fm, Sc) and
 label co-occurrence (joint state probability over 2^3 combinations). Both are already
 exploited end-to-end by the existing CRF-MRF models that rank #1–5 at 80–83%.
+
+---
+
+## Proposed Next Steps (2026-07-22)
+
+### F. Architectural change: CNN+GRU dual encoder
+
+The current `build_source_sep_encoder` is a **sequential** CNN→GRU pipeline. The top-performing
+classifiers use a **dual-branch** architecture where CNN and GRU process the raw input in
+parallel, then concatenate. A direct parallel refactor:
+
+```
+CNN branch:   Conv1D(32,5,relu) → Conv1D(32,3,relu,s=2) → Flatten → Dense(d_cnn, relu)
+GRU branch:   BiGRU(32, return_sequences=False) → Dense(d_gru, relu)  [raw input]
+Combine:      Concatenate([cnn_out, gru_out]) → LayerNorm → Dense(bottleneck, linear)
+```
+
+Benefits: each branch sees the full raw signal independently; CNN captures local Ct shape,
+GRU captures long-range saturation; matches the backbone that is already #1 for classification.
+No change to decoder or Phase 1 loss — bottleneck output shape stays the same.
+
+Function to add: `build_source_sep_encoder_dual(T, d_shared, d_target, n_targets=3, d_cnn=32, d_gru=32)`.
+
+### G. Phase naming convention
+
+SC0/SC1 are currently identical (same Phase 1 encoder, no SupCon). Rename to clarify what phase was trained:
+
+| Key | Training | Phase 3 |
+|-----|----------|---------|
+| `cnn_gru_source_sep_` | Phase 1+2 only (frozen encoder) | No |
+| `cnn_gru_source_sep_ft_` | Phase 1+2+3 (end-to-end fine-tuned) | Yes |
+| `cnn_gru_source_sep_crf_` | CRF head, Phase 1+2 frozen | No |
+| `cnn_gru_source_sep_crf_ft_` | CRF head, Phase 1+2+3 | Yes |
+
+This enables direct comparison of fine-tuned vs frozen to quantify how much Phase 3 helps.
+
+### H. Other improvements
+
+1. **Phase 1 on full unbalanced data**: the balanced dataset has only 875 KPC single-target
+   wells for the anchor bank (vs 6,792 in the full set). Running Phase 1 on the full 26,571
+   wells (which requires only curves and binary labels, not balanced sampling) gives a much
+   richer anchor bank and more diverse reconstruction signal. Phase 2+3 still uses the balanced
+   10,383.
+
+2. **Per-target SupCon (`lambda_supcon > 0`)**: was added as Fix 8 but never tested with
+   `lambda_supcon > 0`. NDM has failed the Spearman gate in all 4 runs. Setting
+   `--lambda_supcon 0.1` in Phase 1 is the most promising quick win for z_NDM alignment.
+
+3. **Shape-normalised anchor loss**: persistent L_anchor plateau (0.05–0.06) is partly L2
+   conflating amplitude and shape. A correlation-based or DTW distance would anchor
+   Ct/slope profile regardless of the amplitude ambiguity in multi-positive wells.
+
+4. **Soft per-target attention instead of hard partition**: the rigid
+   `[z_shared | z_KPC | z_NDM | z_VIM]` slice forced per-target separability. An attention
+   pooling (`Dense → query_j → attend over BiGRU sequence`) would let the head decide how to
+   use the latent without the architectural constraint.

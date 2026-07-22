@@ -2405,6 +2405,288 @@ def create_ml_cnn_trans_dual_crf_chain_supcon3_model(T, n_targets):
 
 # -- source separation factories -----------------------------------------------
 
+# ── Source-sep Phase 2/3 SC model classes ────────────────────────────────────
+
+class MultiLabelSourceSepSC1Model(tf.keras.Model):
+    """Source-sep Phase 2/3 classifier SC1: BCE + 0.2*SC(proj_full)."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp   = supcon_temp
+        self.supcon_lambda = supcon_lambda
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        cls_out, proj_f = self(x, training=training)
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp)
+        return bce + self.supcon_lambda * sc, bce, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+
+class MultiLabelSourceSepSC2Model(tf.keras.Model):
+    """Source-sep Phase 2/3 classifier SC2: BCE + 0.1*(SC(proj_s)+SC(proj_t))."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        cls_out, proj_s, proj_t = self(x, training=training)
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp))
+        return bce + self.supcon_lambda_each * sc, bce, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+
+class MultiLabelSourceSepSC3Model(tf.keras.Model):
+    """Source-sep Phase 2/3 classifier SC3: BCE + 0.1*(SC(proj_s)+SC(proj_t)+SC(proj_f))."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _step(self, x, y_dict, training):
+        y_bin    = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        cls_out, proj_s, proj_t, proj_f = self(x, training=training)
+        bce      = tf.reduce_mean(tf.keras.losses.binary_crossentropy(y_bin, cls_out))
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp))
+        return bce + self.supcon_lambda_each * sc, bce, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, bce, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, bce, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'cls_bce': bce, 'supcon': sc}
+
+
+class MultiLabelSourceSepCRFSC1Model(MultiLabelCRFMRFModel):
+    """Source-sep Phase 2/3 CRF SC1: NLL + 0.2*SC(proj_full). CRF y_dict isinstance guard."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda=SUPCON_LAMBDA, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp   = supcon_temp
+        self.supcon_lambda = supcon_lambda
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin        = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        state_logits, proj_f = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp)
+        return nll + self.supcon_lambda * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+class MultiLabelSourceSepCRFSC2Model(MultiLabelCRFMRFModel):
+    """Source-sep Phase 2/3 CRF SC2: NLL + 0.1*(SC(proj_s)+SC(proj_t))."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin          = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        state_logits, proj_s, proj_t = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+class MultiLabelSourceSepCRFSC3Model(MultiLabelCRFMRFModel):
+    """Source-sep Phase 2/3 CRF SC3: NLL + 0.1*(SC(proj_s)+SC(proj_t)+SC(proj_f))."""
+    def __init__(self, *args, supcon_temp=SUPCON_TEMP, supcon_lambda_each=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supcon_temp        = supcon_temp
+        self.supcon_lambda_each = supcon_lambda_each
+
+    def _get_crf_output(self, x):
+        return self(x, training=False)[0]
+
+    def _step(self, x, y_dict, training):
+        y_bin            = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.float32)
+        state_logits, proj_s, proj_t, proj_f = self(x, training=training)
+        nll      = self._nll(state_logits, y_dict)
+        pos_mask = _jaccard_weight_matrix(y_bin)
+        sc       = (_supcon_loss_jaccard(proj_s, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_t, pos_mask, self.supcon_temp)
+                    + _supcon_loss_jaccard(proj_f, pos_mask, self.supcon_temp))
+        return nll + self.supcon_lambda_each * sc, nll, sc
+
+    def train_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        with tf.GradientTape() as tape:
+            loss, nll, sc = self._step(x, y_dict, training=True)
+        self.optimizer.apply_gradients(
+            zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+    def test_step(self, data):
+        x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
+        loss, nll, sc = self._step(x, y_dict, training=False)
+        return {'loss': loss, 'crf_nll': nll, 'supcon': sc}
+
+
+# ── Source-sep Phase 2/3 build helpers ───────────────────────────────────────
+
+def _build_ss_cls_head(encoder, d_shared, d_target, n_targets):
+    """Build input, z, z_shared and cls_out for source-sep classifier. Returns (inputs, z, z_shared, cls_out)."""
+    T        = encoder.input_shape[1]
+    inputs   = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z        = encoder(inputs)
+    z_shared = tf.keras.layers.Lambda(lambda t: t[:, :d_shared], name='cls_z_shared')(z)
+    outs = []
+    for j in range(n_targets):
+        s    = d_shared + j * d_target
+        e    = s + d_target
+        z_j  = tf.keras.layers.Lambda(lambda t, _s=s, _e=e: t[:, _s:_e], name=f'cls_z{j}')(z)
+        h_j  = tf.keras.layers.Concatenate(name=f'cls_cat{j}')([z_shared, z_j])
+        h_j  = tf.keras.layers.Dense(d_shared + d_target, activation='relu', name=f'cls_h{j}')(h_j)
+        outs.append(tf.keras.layers.Dense(1, activation='sigmoid', name=f'cls_sig{j}')(h_j))
+    cls_out = tf.keras.layers.Concatenate(name='cls_out')(outs)
+    return inputs, z, z_shared, cls_out
+
+
+def build_source_sep_sc1_classifier(encoder, d_shared, d_target, n_targets):
+    """Source-sep classifier with SC1 projection head on z_full."""
+    inputs, z, _, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
+    proj_f = _proj_head(z, 'proj_f')
+    return MultiLabelSourceSepSC1Model(inputs=inputs, outputs=[cls_out, proj_f],
+                                       name='source_sep_sc1_cls')
+
+
+def build_source_sep_sc2_classifier(encoder, d_shared, d_target, n_targets):
+    """Source-sep classifier with SC2 projection heads on z_shared and z_target."""
+    inputs, z, z_shared, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
+    z_target = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='sc2_z_target')(z)
+    proj_s   = _proj_head(z_shared,  'proj_s')
+    proj_t   = _proj_head(z_target,  'proj_t')
+    return MultiLabelSourceSepSC2Model(inputs=inputs, outputs=[cls_out, proj_s, proj_t],
+                                       name='source_sep_sc2_cls')
+
+
+def build_source_sep_sc3_classifier(encoder, d_shared, d_target, n_targets):
+    """Source-sep classifier with SC3 projection heads on z_shared, z_target, and z_full."""
+    inputs, z, z_shared, cls_out = _build_ss_cls_head(encoder, d_shared, d_target, n_targets)
+    z_target = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='sc3_z_target')(z)
+    proj_s   = _proj_head(z_shared,  'proj_s')
+    proj_t   = _proj_head(z_target,  'proj_t')
+    proj_f   = _proj_head(z,         'proj_f')
+    return MultiLabelSourceSepSC3Model(inputs=inputs, outputs=[cls_out, proj_s, proj_t, proj_f],
+                                       name='source_sep_sc3_cls')
+
+
+def build_source_sep_crf_sc1(encoder, d_shared, d_target, n_targets):
+    """Source-sep CRF with SC1 projection head on z_full."""
+    T            = encoder.input_shape[1]
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z            = encoder(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    proj_f       = _proj_head(z, 'proj_f')
+    return MultiLabelSourceSepCRFSC1Model(inputs=inputs, outputs=[state_logits, proj_f],
+                                           n_targets=n_targets, name='source_sep_crf_sc1')
+
+
+def build_source_sep_crf_sc2(encoder, d_shared, d_target, n_targets):
+    """Source-sep CRF with SC2 projection heads on z_shared and z_target."""
+    T            = encoder.input_shape[1]
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z            = encoder(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    z_shared     = tf.keras.layers.Lambda(lambda t: t[:, :d_shared], name='crf_z_shared')(z)
+    z_target     = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='crf_z_target')(z)
+    proj_s       = _proj_head(z_shared, 'proj_s')
+    proj_t       = _proj_head(z_target, 'proj_t')
+    return MultiLabelSourceSepCRFSC2Model(inputs=inputs, outputs=[state_logits, proj_s, proj_t],
+                                           n_targets=n_targets, name='source_sep_crf_sc2')
+
+
+def build_source_sep_crf_sc3(encoder, d_shared, d_target, n_targets):
+    """Source-sep CRF with SC3 projection heads on z_shared, z_target, and z_full."""
+    T            = encoder.input_shape[1]
+    inputs       = tf.keras.layers.Input(shape=(T, 1), name='cls_input')
+    z            = encoder(inputs)
+    state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
+    z_shared     = tf.keras.layers.Lambda(lambda t: t[:, :d_shared], name='crf_z_shared')(z)
+    z_target     = tf.keras.layers.Lambda(lambda t: t[:, d_shared:], name='crf_z_target')(z)
+    proj_s       = _proj_head(z_shared, 'proj_s')
+    proj_t       = _proj_head(z_target, 'proj_t')
+    proj_f       = _proj_head(z,        'proj_f')
+    return MultiLabelSourceSepCRFSC3Model(inputs=inputs, outputs=[state_logits, proj_s, proj_t, proj_f],
+                                           n_targets=n_targets, name='source_sep_crf_sc3')
+
+
+# ── Source-sep factory functions (original + new SC1/2/3) ────────────────────
+
 def create_ml_cnn_gru_source_sep_model(T, n_targets):
     encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
     cls = build_source_sep_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
@@ -2441,6 +2723,36 @@ def create_ml_cnn_gru_source_sep_crf_supcon_model(T, n_targets):
     z            = encoder(inputs)
     state_logits = tf.keras.layers.Dense(2 ** n_targets, name='crf_logits')(z)
     return MultiLabelCRFMRFModel(inputs=inputs, outputs=state_logits, n_targets=n_targets)
+
+
+def create_ml_cnn_gru_source_sep_sc1_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_sc1_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+
+
+def create_ml_cnn_gru_source_sep_sc2_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_sc2_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+
+
+def create_ml_cnn_gru_source_sep_sc3_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_sc3_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+
+
+def create_ml_cnn_gru_source_sep_crf_sc1_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_crf_sc1(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+
+
+def create_ml_cnn_gru_source_sep_crf_sc2_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_crf_sc2(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+
+
+def create_ml_cnn_gru_source_sep_crf_sc3_model(T, n_targets):
+    encoder = build_source_sep_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return build_source_sep_crf_sc3(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
 
 
 # -- factory dispatch --------------------------------------------------------
@@ -2542,11 +2854,35 @@ ML_FACTORIES = {
     'cnn_trans_dual_crf_chain_supcon':   create_ml_cnn_trans_dual_crf_chain_supcon_model,
     'cnn_trans_dual_crf_chain_supcon2':  create_ml_cnn_trans_dual_crf_chain_supcon2_model,
     'cnn_trans_dual_crf_chain_supcon3':  create_ml_cnn_trans_dual_crf_chain_supcon3_model,
-    # Source separation pretrained classifier SC0-1
+    # Source separation pretrained classifier SC0-1 (legacy keys, kept for compat)
     'cnn_gru_source_sep':               create_ml_cnn_gru_source_sep_model,
     'cnn_gru_source_sep_supcon':        create_ml_cnn_gru_source_sep_supcon_model,
     'cnn_gru_source_sep_crf':           create_ml_cnn_gru_source_sep_crf_model,
     'cnn_gru_source_sep_crf_supcon':    create_ml_cnn_gru_source_sep_crf_supcon_model,
+    # Source separation — Family A (standard encoder, λ_supcon=0 pretraining) — 10 variants
+    'cnn_gru_source_sep_p2':              create_ml_cnn_gru_source_sep_model,
+    'cnn_gru_source_sep_crf_p2':          create_ml_cnn_gru_source_sep_crf_model,
+    'cnn_gru_source_sep_p3':              create_ml_cnn_gru_source_sep_model,
+    'cnn_gru_source_sep_supcon_p3':       create_ml_cnn_gru_source_sep_sc1_model,
+    'cnn_gru_source_sep_supcon2_p3':      create_ml_cnn_gru_source_sep_sc2_model,
+    'cnn_gru_source_sep_supcon3_p3':      create_ml_cnn_gru_source_sep_sc3_model,
+    'cnn_gru_source_sep_crf_p3':          create_ml_cnn_gru_source_sep_crf_model,
+    'cnn_gru_source_sep_crf_supcon_p3':   create_ml_cnn_gru_source_sep_crf_sc1_model,
+    'cnn_gru_source_sep_crf_supcon2_p3':  create_ml_cnn_gru_source_sep_crf_sc2_model,
+    'cnn_gru_source_sep_crf_supcon3_p3':  create_ml_cnn_gru_source_sep_crf_sc3_model,
+    # Source separation — Family B (SC-specific precon encoder) — 12 variants
+    'cnn_gru_source_sep_precon_supcon_p2':       create_ml_cnn_gru_source_sep_sc1_model,
+    'cnn_gru_source_sep_precon_supcon2_p2':      create_ml_cnn_gru_source_sep_sc2_model,
+    'cnn_gru_source_sep_precon_supcon3_p2':      create_ml_cnn_gru_source_sep_sc3_model,
+    'cnn_gru_source_sep_precon_crf_supcon_p2':   create_ml_cnn_gru_source_sep_crf_sc1_model,
+    'cnn_gru_source_sep_precon_crf_supcon2_p2':  create_ml_cnn_gru_source_sep_crf_sc2_model,
+    'cnn_gru_source_sep_precon_crf_supcon3_p2':  create_ml_cnn_gru_source_sep_crf_sc3_model,
+    'cnn_gru_source_sep_precon_supcon_p3':       create_ml_cnn_gru_source_sep_sc1_model,
+    'cnn_gru_source_sep_precon_supcon2_p3':      create_ml_cnn_gru_source_sep_sc2_model,
+    'cnn_gru_source_sep_precon_supcon3_p3':      create_ml_cnn_gru_source_sep_sc3_model,
+    'cnn_gru_source_sep_precon_crf_supcon_p3':   create_ml_cnn_gru_source_sep_crf_sc1_model,
+    'cnn_gru_source_sep_precon_crf_supcon2_p3':  create_ml_cnn_gru_source_sep_crf_sc2_model,
+    'cnn_gru_source_sep_precon_crf_supcon3_p3':  create_ml_cnn_gru_source_sep_crf_sc3_model,
     # CAttn-V2 + CRF-MRF: flat / factored / bilinear × CGD SC0-3
     'cnn_gru_dual_cross_attn_v2_crf_flat':            create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_model,
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':     create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon_model,
@@ -2587,6 +2923,29 @@ _RCFD_ML_KEYS = frozenset({
 _SS_ML_KEYS = frozenset({
     'cnn_gru_source_sep', 'cnn_gru_source_sep_supcon',
     'cnn_gru_source_sep_crf', 'cnn_gru_source_sep_crf_supcon',
+    # Family A (standard encoder)
+    'cnn_gru_source_sep_p2',              'cnn_gru_source_sep_crf_p2',
+    'cnn_gru_source_sep_p3',              'cnn_gru_source_sep_supcon_p3',
+    'cnn_gru_source_sep_supcon2_p3',      'cnn_gru_source_sep_supcon3_p3',
+    'cnn_gru_source_sep_crf_p3',          'cnn_gru_source_sep_crf_supcon_p3',
+    'cnn_gru_source_sep_crf_supcon2_p3',  'cnn_gru_source_sep_crf_supcon3_p3',
+    # Family B (SC-specific precon encoder — path derived per-model via _precon_encoder_file)
+    'cnn_gru_source_sep_precon_supcon_p2',      'cnn_gru_source_sep_precon_supcon2_p2',
+    'cnn_gru_source_sep_precon_supcon3_p2',     'cnn_gru_source_sep_precon_crf_supcon_p2',
+    'cnn_gru_source_sep_precon_crf_supcon2_p2', 'cnn_gru_source_sep_precon_crf_supcon3_p2',
+    'cnn_gru_source_sep_precon_supcon_p3',      'cnn_gru_source_sep_precon_supcon2_p3',
+    'cnn_gru_source_sep_precon_supcon3_p3',     'cnn_gru_source_sep_precon_crf_supcon_p3',
+    'cnn_gru_source_sep_precon_crf_supcon2_p3', 'cnn_gru_source_sep_precon_crf_supcon3_p3',
+})
+
+# Family B keys — encoder path is SC-specific, derived by _precon_encoder_file(m)
+_SS_PRECON_ML_KEYS = frozenset({
+    'cnn_gru_source_sep_precon_supcon_p2',      'cnn_gru_source_sep_precon_supcon2_p2',
+    'cnn_gru_source_sep_precon_supcon3_p2',     'cnn_gru_source_sep_precon_crf_supcon_p2',
+    'cnn_gru_source_sep_precon_crf_supcon2_p2', 'cnn_gru_source_sep_precon_crf_supcon3_p2',
+    'cnn_gru_source_sep_precon_supcon_p3',      'cnn_gru_source_sep_precon_supcon2_p3',
+    'cnn_gru_source_sep_precon_supcon3_p3',     'cnn_gru_source_sep_precon_crf_supcon_p3',
+    'cnn_gru_source_sep_precon_crf_supcon2_p3', 'cnn_gru_source_sep_precon_crf_supcon3_p3',
 })
 
 # Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
@@ -2595,8 +2954,16 @@ _CRF_ML_KEYS = frozenset({
     'cnn_trans_dual_crf_mrf', 'cnn_trans_dual_crf_mrf_supcon', 'cnn_trans_dual_crf_mrf_supcon2', 'cnn_trans_dual_crf_mrf_supcon3',
     'cnn_gru_dual_crf_chain',   'cnn_gru_dual_crf_chain_supcon',   'cnn_gru_dual_crf_chain_supcon2',   'cnn_gru_dual_crf_chain_supcon3',
     'cnn_trans_dual_crf_chain', 'cnn_trans_dual_crf_chain_supcon', 'cnn_trans_dual_crf_chain_supcon2', 'cnn_trans_dual_crf_chain_supcon3',
-    # Source sep + CRF-MRF: pretrained encoder + joint-state structured output
+    # Source sep + CRF-MRF: pretrained encoder + joint-state structured output (legacy)
     'cnn_gru_source_sep_crf', 'cnn_gru_source_sep_crf_supcon',
+    # Source sep new CRF variants (Family A and B, SC0-3)
+    'cnn_gru_source_sep_crf_p2',          'cnn_gru_source_sep_crf_p3',
+    'cnn_gru_source_sep_crf_supcon_p3',   'cnn_gru_source_sep_crf_supcon2_p3',
+    'cnn_gru_source_sep_crf_supcon3_p3',
+    'cnn_gru_source_sep_precon_crf_supcon_p2',   'cnn_gru_source_sep_precon_crf_supcon2_p2',
+    'cnn_gru_source_sep_precon_crf_supcon3_p2',
+    'cnn_gru_source_sep_precon_crf_supcon_p3',   'cnn_gru_source_sep_precon_crf_supcon2_p3',
+    'cnn_gru_source_sep_precon_crf_supcon3_p3',
     # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CGD SC0-3
     'cnn_gru_dual_cross_attn_v2_crf_flat',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon2',    'cnn_gru_dual_cross_attn_v2_crf_flat_supcon3',
     'cnn_gru_dual_cross_attn_v2_crf_factored','cnn_gru_dual_cross_attn_v2_crf_factored_supcon','cnn_gru_dual_cross_attn_v2_crf_factored_supcon2','cnn_gru_dual_cross_attn_v2_crf_factored_supcon3',
@@ -2629,6 +2996,19 @@ _SUPCON_ML_KEYS = frozenset({
     # QuerCon (all 4 — QuerCon itself is a contrastive loss so all variants are "supcon-like")
     'cnn_gru_dual_cross_attn_v2_quercon', 'cnn_gru_dual_cross_attn_v2_quercon_supcon',
     'cnn_gru_dual_cross_attn_v2_quercon_supcon2', 'cnn_gru_dual_cross_attn_v2_quercon_supcon3',
+    # Source-sep SC1-3 (Family A p3 and Family B p2/p3) — projection-head models
+    'cnn_gru_source_sep_supcon_p3',       'cnn_gru_source_sep_supcon2_p3',
+    'cnn_gru_source_sep_supcon3_p3',
+    'cnn_gru_source_sep_crf_supcon_p3',   'cnn_gru_source_sep_crf_supcon2_p3',
+    'cnn_gru_source_sep_crf_supcon3_p3',
+    'cnn_gru_source_sep_precon_supcon_p2',      'cnn_gru_source_sep_precon_supcon2_p2',
+    'cnn_gru_source_sep_precon_supcon3_p2',
+    'cnn_gru_source_sep_precon_crf_supcon_p2',  'cnn_gru_source_sep_precon_crf_supcon2_p2',
+    'cnn_gru_source_sep_precon_crf_supcon3_p2',
+    'cnn_gru_source_sep_precon_supcon_p3',      'cnn_gru_source_sep_precon_supcon2_p3',
+    'cnn_gru_source_sep_precon_supcon3_p3',
+    'cnn_gru_source_sep_precon_crf_supcon_p3',  'cnn_gru_source_sep_precon_crf_supcon2_p3',
+    'cnn_gru_source_sep_precon_crf_supcon3_p3',
 })
 
 # Canonical key maps — consumed by 03_main_training.py and print_ml_results_summary
@@ -2721,12 +3101,35 @@ ML_MODEL_PRINT_MAP = {
     'cnn_trans_dual_crf_chain_supcon':  'CNN+Tr CRF-chain SC1',
     'cnn_trans_dual_crf_chain_supcon2': 'CNN+Tr CRF-chain SC2',
     'cnn_trans_dual_crf_chain_supcon3': 'CNN+Tr CRF-chain SC3',
-    # Source separation — independent sigmoid heads (SC0-1)
+    # Source separation — legacy keys (SC0/SC1 original)
     'cnn_gru_source_sep':              'SrcSep SC0',
     'cnn_gru_source_sep_supcon':       'SrcSep SC1',
-    # Source separation — joint-state CRF-MRF output (SC0-1)
     'cnn_gru_source_sep_crf':          'SrcSep CRF SC0',
     'cnn_gru_source_sep_crf_supcon':   'SrcSep CRF SC1',
+    # Source separation — Family A (standard encoder, SC0-3)
+    'cnn_gru_source_sep_p2':              'SrcSep A SC0 p2',
+    'cnn_gru_source_sep_crf_p2':          'SrcSep A CRF SC0 p2',
+    'cnn_gru_source_sep_p3':              'SrcSep A SC0 p3',
+    'cnn_gru_source_sep_supcon_p3':       'SrcSep A SC1 p3',
+    'cnn_gru_source_sep_supcon2_p3':      'SrcSep A SC2 p3',
+    'cnn_gru_source_sep_supcon3_p3':      'SrcSep A SC3 p3',
+    'cnn_gru_source_sep_crf_p3':          'SrcSep A CRF SC0 p3',
+    'cnn_gru_source_sep_crf_supcon_p3':   'SrcSep A CRF SC1 p3',
+    'cnn_gru_source_sep_crf_supcon2_p3':  'SrcSep A CRF SC2 p3',
+    'cnn_gru_source_sep_crf_supcon3_p3':  'SrcSep A CRF SC3 p3',
+    # Source separation — Family B (SC-specific precon encoder, SC1-3)
+    'cnn_gru_source_sep_precon_supcon_p2':       'SrcSep B SC1 p2',
+    'cnn_gru_source_sep_precon_supcon2_p2':      'SrcSep B SC2 p2',
+    'cnn_gru_source_sep_precon_supcon3_p2':      'SrcSep B SC3 p2',
+    'cnn_gru_source_sep_precon_crf_supcon_p2':   'SrcSep B CRF SC1 p2',
+    'cnn_gru_source_sep_precon_crf_supcon2_p2':  'SrcSep B CRF SC2 p2',
+    'cnn_gru_source_sep_precon_crf_supcon3_p2':  'SrcSep B CRF SC3 p2',
+    'cnn_gru_source_sep_precon_supcon_p3':       'SrcSep B SC1 p3',
+    'cnn_gru_source_sep_precon_supcon2_p3':      'SrcSep B SC2 p3',
+    'cnn_gru_source_sep_precon_supcon3_p3':      'SrcSep B SC3 p3',
+    'cnn_gru_source_sep_precon_crf_supcon_p3':   'SrcSep B CRF SC1 p3',
+    'cnn_gru_source_sep_precon_crf_supcon2_p3':  'SrcSep B CRF SC2 p3',
+    'cnn_gru_source_sep_precon_crf_supcon3_p3':  'SrcSep B CRF SC3 p3',
     # CAttn-V2 + CRF-MRF flat (CGD SC0-3)
     'cnn_gru_dual_cross_attn_v2_crf_flat':          'CNN+GRU CAttn-V2 CRF-flat SC0',
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':   'CNN+GRU CAttn-V2 CRF-flat SC1',
@@ -2758,6 +3161,14 @@ ML_MODEL_PRINT_MAP = {
     'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon2':  'CNN+Tr CAttn-V2 CRF-bilinear SC2',
     'cnn_trans_dual_cross_attn_v2_crf_bilinear_supcon3':  'CNN+Tr CAttn-V2 CRF-bilinear SC3',
 }
+
+
+def _precon_encoder_file(m):
+    """Return SC-specific precon encoder filename for Family B model key m."""
+    if '_supcon3' in m: return 'source_sep_precon_sc3_encoder_weights.weights.h5'
+    if '_supcon2' in m: return 'source_sep_precon_sc2_encoder_weights.weights.h5'
+    if '_supcon'  in m: return 'source_sep_precon_sc1_encoder_weights.weights.h5'
+    raise ValueError(f'No precon encoder for non-SC key: {m}')
 
 
 # ======================================================================
@@ -2803,6 +3214,7 @@ def evaluate_outlier_filters_ml(
     threshold=0.5,
     rerun_models=None,
     encoder_weights_path=None,
+    exp_path=None,
 ):
     """Train and evaluate multi-label models across outlier filters.
 
@@ -2948,12 +3360,15 @@ def evaluate_outlier_filters_ml(
                 # Keras 3 val_loss=0.0 bug. SC1/SC2/SC3 return 3 metrics → tracked fine.
                 _is_auxdet_sc0 = type(model) is MultiLabelAuxDetModel
                 _enc = None
-                if (m in _SS_ML_KEYS
-                        and encoder_weights_path
-                        and os.path.exists(encoder_weights_path)):
-                    _enc = model.get_layer('source_sep_encoder')
-                    _enc.load_weights(encoder_weights_path)
-                    _enc.trainable = False  # Phase 2: frozen encoder
+                if m in _SS_ML_KEYS:
+                    if m in _SS_PRECON_ML_KEYS and exp_path:
+                        _w = os.path.join(exp_path, _precon_encoder_file(m))
+                    else:
+                        _w = encoder_weights_path
+                    if _w and os.path.exists(_w):
+                        _enc = model.get_layer('source_sep_encoder')
+                        _enc.load_weights(_w)
+                        _enc.trainable = False  # Phase 2: frozen encoder
                 if _is_standard:
                     model.compile(optimizer=tf.keras.optimizers.Adam(0.001, clipnorm=1.0),
                                   loss='binary_crossentropy')
@@ -3017,7 +3432,8 @@ def evaluate_outlier_filters_ml(
                     model.fit(X_train, _full_y, **fit_kw)
 
                 # Phase 3: unfreeze encoder, fine-tune end-to-end at low LR
-                if _enc is not None:
+                # _p2 keys skip Phase 3 — frozen encoder training only
+                if _enc is not None and '_p2' not in m:
                     _enc.trainable = True
                     if _is_standard:
                         model.compile(optimizer=tf.keras.optimizers.Adam(1e-5, clipnorm=1.0),
