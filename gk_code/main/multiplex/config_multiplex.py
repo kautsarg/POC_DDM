@@ -52,8 +52,9 @@ RESULT_FILE_BY_FLAG = {
     'quercon':    'classification_performances_ml_quercon.joblib',
     'condreg':    'classification_performances_ml_condreg.joblib',
     'crf':              'classification_performances_ml_crf.joblib',
-    'source_sep':       'classification_performances_ml_source_sep.joblib',
+    'source_sep':        'classification_performances_ml_source_sep.joblib',
     'source_sep_precon': 'classification_performances_ml_source_sep_precon.joblib',
+    'source_sep_serial': 'classification_performances_ml_source_sep_serial.joblib',
 }
 RESULT_10FOLD_FILE_BY_FLAG = {
     k: v.replace('.joblib', '_10fold.joblib')
@@ -162,6 +163,11 @@ MULTIPLEX_MODELS = [
     'cnn_gru_dual_cross_attn_v2_crf_factored_supcon', 'cnn_gru_dual_cross_attn_v2_crf_factored_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_factored_supcon3',
     'cnn_gru_dual_cross_attn_v2_crf_bilinear',
     'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon', 'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon2', 'cnn_gru_dual_cross_attn_v2_crf_bilinear_supcon3',
+    # Source sep serial — 03c (serial-bigger encoder, p2 only; sum and avg L_consist)
+    'serial_source_sep_active_p2',
+    'serial_source_sep_balance_p2',
+    'serial_source_sep_active_avg_p2',
+    'serial_source_sep_balance_avg_p2',
     # CAttn-V2 + CRF-MRF: flat/factored/bilinear × CTD SC0-3
     'cnn_trans_dual_cross_attn_v2_crf_flat',
     'cnn_trans_dual_cross_attn_v2_crf_flat_supcon', 'cnn_trans_dual_cross_attn_v2_crf_flat_supcon2', 'cnn_trans_dual_cross_attn_v2_crf_flat_supcon3',
@@ -174,6 +180,7 @@ MULTIPLEX_MODELS = [
 
 def _flag_for_model(key):
     if 'source_sep_precon' in key: return 'source_sep_precon'
+    if 'serial_source_sep'  in key: return 'source_sep_serial'
     if 'source_sep' in key: return 'source_sep'
     if 'crf'        in key: return 'crf'
     if 'quercon'    in key: return 'quercon'

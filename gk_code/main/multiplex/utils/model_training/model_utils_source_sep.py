@@ -89,6 +89,23 @@ def build_source_sep_encoder(T, d_shared, d_target, n_targets=3):
     return tf.keras.Model(inputs=inputs, outputs=z, name='source_sep_encoder')
 
 
+def build_serial_bigger_encoder(T, d_shared, d_target, n_targets=3):
+    """Serial encoder: Conv1D(32,5) → Conv1D(32,3,stride=2) → BiGRU(64) → LayerNorm → Dense.
+
+    Simpler than the dual-branch encoder but with more recurrent capacity than the
+    original serial encoder. Layer names use 'sb_' prefix to avoid weight-name
+    conflicts when loading alongside dual-branch weights.
+    """
+    inputs = tf.keras.layers.Input(shape=(T, 1), name='sb_input')
+    x = tf.keras.layers.Conv1D(32, 5, activation='relu', padding='causal', name='sb_conv1')(inputs)
+    x = tf.keras.layers.Conv1D(32, 3, activation='relu', padding='causal', strides=2, name='sb_conv2')(x)
+    x = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(64), name='sb_bigru')(x)  # (128,)
+    x = tf.keras.layers.LayerNormalization(name='sb_ln')(x)
+    z = tf.keras.layers.Dense(
+        d_shared + n_targets * d_target, name='sb_bottleneck')(x)  # linear — no relu
+    return tf.keras.Model(inputs=inputs, outputs=z, name='serial_bigger_encoder')
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Parametric decoder (one per target channel)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -196,25 +213,28 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
     def __init__(self, encoder, decoders, nn_bank, T=45,
                  d_shared=16, d_target=10, n_targets=3,
                  lambda_cons=2.0, lambda_anch=0.3, lambda_var=0.05,
-                 lambda_active=0.5, Fm_floor_frac=0.65,
+                 lambda_active=0.5, lambda_balance=0.0, Fm_floor_frac=0.65,
+                 avg_consist=False,
                  var_margin=0.05, lambda_supcon=0.0, supcon_temp=0.07,
                  k=5, **kwargs):
         super().__init__(**kwargs)
-        self.encoder       = encoder
-        self.decoders      = decoders
-        self.nn_bank       = [tf.constant(b, dtype=tf.float32) for b in nn_bank]
-        self.T             = T
-        self.d_shared      = d_shared
-        self.d_target      = d_target
-        self.n_targets     = n_targets
-        self.lambda_cons   = lambda_cons
-        self.lambda_anch   = lambda_anch
-        self.lambda_var    = lambda_var
-        self.lambda_active = lambda_active
-        self.var_margin    = var_margin
-        self.lambda_supcon = lambda_supcon
-        self.supcon_temp   = supcon_temp
-        self.k             = k
+        self.encoder        = encoder
+        self.decoders       = decoders
+        self.nn_bank        = [tf.constant(b, dtype=tf.float32) for b in nn_bank]
+        self.T              = T
+        self.d_shared       = d_shared
+        self.d_target       = d_target
+        self.n_targets      = n_targets
+        self.lambda_cons    = lambda_cons
+        self.lambda_anch    = lambda_anch
+        self.lambda_var     = lambda_var
+        self.lambda_active  = lambda_active
+        self.lambda_balance = lambda_balance
+        self.avg_consist    = avg_consist
+        self.var_margin     = var_margin
+        self.lambda_supcon  = lambda_supcon
+        self.supcon_temp    = supcon_temp
+        self.k              = k
         # Per-target amplitude floor: 65% of mean single-target peak (self-calibrates to data)
         self.Fm_floor = tf.constant([
             Fm_floor_frac * float(tf.reduce_mean(tf.reduce_mean(b, axis=-1)))
@@ -283,11 +303,31 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
             l_active += tf.reduce_mean(
                 y_f[:, j] * tf.nn.relu(self.Fm_floor[j] - mean_j))
 
-        # L_consist: sum of active channels ≈ input
+        # L_balance: penalise relative amplitude imbalance between active decoders.
+        # Fires only on multi-label wells; self-normalised via max active mean.
+        # When lambda_balance=0 (default) this block is skipped entirely.
+        l_balance = tf.constant(0.0)
+        if self.lambda_balance > 0:
+            all_means = tf.stack([
+                tf.reduce_mean(rendered[j], axis=-1) * y_f[:, j]
+                for j in range(self.n_targets)
+            ], axis=1)  # (batch, n_targets) — zero for inactive channels
+            max_mean = tf.reduce_max(all_means, axis=1, keepdims=True)  # (batch, 1)
+            for j in range(self.n_targets):
+                l_balance += tf.reduce_mean(
+                    y_f[:, j] * tf.nn.relu(0.5 * max_mean[:, 0] - all_means[:, j]))
+
+        # L_consist: active channels ≈ input (sum or avg formulation)
         active_sum = tf.zeros_like(x_curve)
         for j in range(self.n_targets):
             active_sum = active_sum + y_f[:, j:j+1] * rendered[j]
-        l_consist = tf.reduce_mean((x_curve - active_sum) ** 2)
+        if self.avg_consist:
+            # avg formulation: each active decoder should produce full-amplitude curves;
+            # physically appropriate when multi-target signal = mean of single-target signals
+            n_active  = tf.maximum(tf.reduce_sum(y_f, axis=1, keepdims=True), 1.0)
+            l_consist = tf.reduce_mean((x_curve - active_sum / n_active) ** 2)
+        else:
+            l_consist = tf.reduce_mean((x_curve - active_sum) ** 2)
 
         # L_anchor: active channels close to NN reference (no concentration used)
         l_anchor = tf.constant(0.0)
@@ -314,12 +354,13 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
                     z_parts[j], y_int[:, j], temp=self.supcon_temp)
 
         loss = (l_absent
-                + self.lambda_active * l_active
-                + self.lambda_cons   * l_consist
-                + self.lambda_anch   * l_anchor
-                + self.lambda_var    * l_var
-                + self.lambda_supcon * l_supcon)
-        return loss, l_absent, l_active, l_consist, l_anchor, l_var, l_supcon
+                + self.lambda_active  * l_active
+                + self.lambda_balance * l_balance
+                + self.lambda_cons    * l_consist
+                + self.lambda_anch    * l_anchor
+                + self.lambda_var     * l_var
+                + self.lambda_supcon  * l_supcon)
+        return loss, l_absent, l_active, l_balance, l_consist, l_anchor, l_var, l_supcon
 
     def call(self, x, training=False):
         _, rendered = self._encode_and_decode(x, training)
@@ -329,18 +370,18 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         with tf.GradientTape() as tape:
-            loss, l_ab, l_ac, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
+            loss, l_ab, l_ac, l_ba, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
         self.optimizer.apply_gradients(
             zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
-        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_consist': l_co,
-                'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
+        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_balance': l_ba,
+                'l_consist': l_co, 'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
-        loss, l_ab, l_ac, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
-        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_consist': l_co,
-                'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
+        loss, l_ab, l_ac, l_ba, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
+        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_balance': l_ba,
+                'l_consist': l_co, 'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -44,7 +44,8 @@ from model_utils import (
     create_cnn_gru_dual_model, create_cnn_transformer_dual_model,
 )
 from safe_io import safe_keras_save
-from model_utils_source_sep import build_source_sep_encoder, build_source_sep_classifier
+from model_utils_source_sep import (build_source_sep_encoder, build_source_sep_classifier,
+                                    build_serial_bigger_encoder)
 
 _SS_D_SHARED = 16
 _SS_D_TARGET  = 10
@@ -2772,6 +2773,26 @@ def create_ml_cnn_gru_source_sep_crf_sc3_model(T, n_targets):
     return build_source_sep_crf_sc3(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
 
 
+# Source sep serial — 03c (serial-bigger encoder, four variant keys)
+def _make_serial_ss_model(T, n_targets, name):
+    encoder = build_serial_bigger_encoder(T, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    cls = build_source_sep_classifier(encoder, _SS_D_SHARED, _SS_D_TARGET, n_targets)
+    return _StandardMultiLabelModel(inputs=cls.inputs, outputs=cls.outputs, name=name)
+
+
+def create_ml_serial_source_sep_active_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_active_classifier')
+
+def create_ml_serial_source_sep_balance_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_balance_classifier')
+
+def create_ml_serial_source_sep_active_avg_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_active_avg_classifier')
+
+def create_ml_serial_source_sep_balance_avg_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_balance_avg_classifier')
+
+
 # -- factory dispatch --------------------------------------------------------
 
 ML_FACTORIES = {
@@ -2900,6 +2921,11 @@ ML_FACTORIES = {
     'cnn_gru_source_sep_precon_crf_supcon_p3':   create_ml_cnn_gru_source_sep_crf_sc1_model,
     'cnn_gru_source_sep_precon_crf_supcon2_p3':  create_ml_cnn_gru_source_sep_crf_sc2_model,
     'cnn_gru_source_sep_precon_crf_supcon3_p3':  create_ml_cnn_gru_source_sep_crf_sc3_model,
+    # Source sep serial — 03c (sum-consist and avg-consist variants)
+    'serial_source_sep_active_p2':      create_ml_serial_source_sep_active_model,
+    'serial_source_sep_balance_p2':     create_ml_serial_source_sep_balance_model,
+    'serial_source_sep_active_avg_p2':  create_ml_serial_source_sep_active_avg_model,
+    'serial_source_sep_balance_avg_p2': create_ml_serial_source_sep_balance_avg_model,
     # CAttn-V2 + CRF-MRF: flat / factored / bilinear × CGD SC0-3
     'cnn_gru_dual_cross_attn_v2_crf_flat':            create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_model,
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':     create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon_model,
@@ -2963,6 +2989,14 @@ _SS_PRECON_ML_KEYS = frozenset({
     'cnn_gru_source_sep_precon_supcon_p3',      'cnn_gru_source_sep_precon_supcon2_p3',
     'cnn_gru_source_sep_precon_supcon3_p3',     'cnn_gru_source_sep_precon_crf_supcon_p3',
     'cnn_gru_source_sep_precon_crf_supcon2_p3', 'cnn_gru_source_sep_precon_crf_supcon3_p3',
+})
+
+# Serial-bigger encoder keys (03c) — same freeze/load pattern but encoder named 'serial_bigger_encoder'
+_SERIAL_SS_ML_KEYS = frozenset({
+    'serial_source_sep_active_p2',
+    'serial_source_sep_balance_p2',
+    'serial_source_sep_active_avg_p2',
+    'serial_source_sep_balance_avg_p2',
 })
 
 # Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
@@ -3147,6 +3181,11 @@ ML_MODEL_PRINT_MAP = {
     'cnn_gru_source_sep_precon_crf_supcon_p3':   'SrcSep B CRF SC1 p3',
     'cnn_gru_source_sep_precon_crf_supcon2_p3':  'SrcSep B CRF SC2 p3',
     'cnn_gru_source_sep_precon_crf_supcon3_p3':  'SrcSep B CRF SC3 p3',
+    # Source sep serial — 03c (sum-consist and avg-consist)
+    'serial_source_sep_active_p2':      'SrcSep Serial Active p2',
+    'serial_source_sep_balance_p2':     'SrcSep Serial Balance p2',
+    'serial_source_sep_active_avg_p2':  'SrcSep Serial Active Avg p2',
+    'serial_source_sep_balance_avg_p2': 'SrcSep Serial Balance Avg p2',
     # CAttn-V2 + CRF-MRF flat (CGD SC0-3)
     'cnn_gru_dual_cross_attn_v2_crf_flat':          'CNN+GRU CAttn-V2 CRF-flat SC0',
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':   'CNN+GRU CAttn-V2 CRF-flat SC1',
@@ -3384,6 +3423,12 @@ def evaluate_outlier_filters_ml(
                         _w = encoder_weights_path
                     if _w and os.path.exists(_w):
                         _enc = model.get_layer('source_sep_encoder')
+                        _enc.load_weights(_w)
+                        _enc.trainable = False  # Phase 2: frozen encoder
+                elif m in _SERIAL_SS_ML_KEYS:
+                    _w = encoder_weights_path
+                    if _w and os.path.exists(_w):
+                        _enc = model.get_layer('serial_bigger_encoder')
                         _enc.load_weights(_w)
                         _enc.trainable = False  # Phase 2: frozen encoder
                 if _is_standard:
