@@ -195,24 +195,31 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
 
     def __init__(self, encoder, decoders, nn_bank, T=45,
                  d_shared=16, d_target=10, n_targets=3,
-                 lambda_cons=1.0, lambda_anch=0.5, lambda_var=0.1,
+                 lambda_cons=2.0, lambda_anch=0.3, lambda_var=0.05,
+                 lambda_active=0.5, Fm_floor_frac=0.65,
                  var_margin=0.05, lambda_supcon=0.0, supcon_temp=0.07,
                  k=5, **kwargs):
         super().__init__(**kwargs)
-        self.encoder      = encoder
-        self.decoders     = decoders
-        self.nn_bank      = [tf.constant(b, dtype=tf.float32) for b in nn_bank]
-        self.T            = T
-        self.d_shared     = d_shared
-        self.d_target     = d_target
-        self.n_targets    = n_targets
+        self.encoder       = encoder
+        self.decoders      = decoders
+        self.nn_bank       = [tf.constant(b, dtype=tf.float32) for b in nn_bank]
+        self.T             = T
+        self.d_shared      = d_shared
+        self.d_target      = d_target
+        self.n_targets     = n_targets
         self.lambda_cons   = lambda_cons
         self.lambda_anch   = lambda_anch
         self.lambda_var    = lambda_var
+        self.lambda_active = lambda_active
         self.var_margin    = var_margin
         self.lambda_supcon = lambda_supcon
         self.supcon_temp   = supcon_temp
         self.k             = k
+        # Per-target amplitude floor: 65% of mean single-target peak (self-calibrates to data)
+        self.Fm_floor = tf.constant([
+            Fm_floor_frac * float(tf.reduce_mean(tf.reduce_mean(b, axis=-1)))
+            for b in self.nn_bank
+        ], dtype=tf.float32)  # (n_targets,)
 
     def _split_z(self, z):
         z_shared = z[:, :self.d_shared]
@@ -267,6 +274,15 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
             sq     = tf.reduce_mean(rendered[j] ** 2, axis=-1)
             l_absent = l_absent + tf.reduce_mean(absent * sq)
 
+        # L_active: active channels must reach a minimum peak amplitude (prevents
+        # the degenerate solution where one decoder absorbs the full mixture signal
+        # and other active decoders remain flat).
+        l_active = tf.constant(0.0)
+        for j in range(self.n_targets):
+            mean_j   = tf.reduce_mean(rendered[j], axis=-1)       # (batch,) — stable gradient vs max
+            l_active += tf.reduce_mean(
+                y_f[:, j] * tf.nn.relu(self.Fm_floor[j] - mean_j))
+
         # L_consist: sum of active channels ≈ input
         active_sum = tf.zeros_like(x_curve)
         for j in range(self.n_targets):
@@ -298,11 +314,12 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
                     z_parts[j], y_int[:, j], temp=self.supcon_temp)
 
         loss = (l_absent
+                + self.lambda_active * l_active
                 + self.lambda_cons   * l_consist
                 + self.lambda_anch   * l_anchor
                 + self.lambda_var    * l_var
                 + self.lambda_supcon * l_supcon)
-        return loss, l_absent, l_consist, l_anchor, l_var, l_supcon
+        return loss, l_absent, l_active, l_consist, l_anchor, l_var, l_supcon
 
     def call(self, x, training=False):
         _, rendered = self._encode_and_decode(x, training)
@@ -312,17 +329,17 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
         with tf.GradientTape() as tape:
-            loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
+            loss, l_ab, l_ac, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=True)
         self.optimizer.apply_gradients(
             zip(tape.gradient(loss, self.trainable_variables), self.trainable_variables))
-        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
+        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_consist': l_co,
                 'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_bin = tf.cast(y_dict['cls_out'] if isinstance(y_dict, dict) else y_dict, tf.int32)
-        loss, l_ab, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
-        return {'loss': loss, 'l_absent': l_ab, 'l_consist': l_co,
+        loss, l_ab, l_ac, l_co, l_an, l_va, l_sc = self._compute_losses(x, y_bin, training=False)
+        return {'loss': loss, 'l_absent': l_ab, 'l_active': l_ac, 'l_consist': l_co,
                 'l_anchor': l_an, 'l_var': l_va, 'l_supcon': l_sc}
 
 
@@ -389,11 +406,11 @@ class MultiLabelSourceSepPhase1SC1Model(MultiLabelSourceSepPhase1Model):
         self._pf = tf.keras.layers.Dense(64, activation='relu', name='p1sc1_pf')
 
     def _compute_losses(self, x, y_bin, training):
-        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        loss, l_ab, l_ac, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
         z_full = self.encoder(x, training=training)
         proj_f = _proj_l2(self._pf, z_full, training)
         l_sc   = _sc_loss_p1(proj_f, _jaccard_pm(y_bin))
-        return loss + _SC_LAMBDA_SC1 * l_sc, l_ab, l_co, l_an, l_va, l_sc
+        return loss + _SC_LAMBDA_SC1 * l_sc, l_ab, l_ac, l_co, l_an, l_va, l_sc
 
 
 class MultiLabelSourceSepPhase1SC2Model(MultiLabelSourceSepPhase1Model):
@@ -411,13 +428,13 @@ class MultiLabelSourceSepPhase1SC2Model(MultiLabelSourceSepPhase1Model):
         self._branch_ext = _make_branch_extractor(self.encoder)
 
     def _compute_losses(self, x, y_bin, training):
-        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        loss, l_ab, l_ac, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
         z_cnn, z_gru = self._branch_ext(x, training=training)
         pm     = _jaccard_pm(y_bin)
         proj_c = _proj_l2(self._pc, z_cnn, training)
         proj_g = _proj_l2(self._pg, z_gru, training)
         l_sc   = _sc_loss_p1(proj_c, pm) + _sc_loss_p1(proj_g, pm)
-        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
+        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_ac, l_co, l_an, l_va, l_sc
 
 
 class MultiLabelSourceSepPhase1SC3Model(MultiLabelSourceSepPhase1Model):
@@ -442,14 +459,14 @@ class MultiLabelSourceSepPhase1SC3Model(MultiLabelSourceSepPhase1Model):
         )
 
     def _compute_losses(self, x, y_bin, training):
-        loss, l_ab, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
+        loss, l_ab, l_ac, l_co, l_an, l_va, _ = super()._compute_losses(x, y_bin, training)
         z_cnn, z_gru, z_full = self._branch_ext(x, training=training)
         pm     = _jaccard_pm(y_bin)
         proj_c = _proj_l2(self._pc, z_cnn, training)
         proj_g = _proj_l2(self._pg, z_gru, training)
         proj_f = _proj_l2(self._pf, z_full, training)
         l_sc   = _sc_loss_p1(proj_c, pm) + _sc_loss_p1(proj_g, pm) + _sc_loss_p1(proj_f, pm)
-        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_co, l_an, l_va, l_sc
+        return loss + _SC_LAMBDA_SCN * l_sc, l_ab, l_ac, l_co, l_an, l_va, l_sc
 
 
 # ──────────────────────────────────────────────────────────────────────────────

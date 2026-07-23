@@ -748,3 +748,224 @@ Files to change:
   and merge pattern to stay consistent with existing dual models
 - SLURM scripts: update `--epochs_p1 200` → `--epochs_p1 400`; bottleneck dims unchanged
 - Run `--force_rerun` on Phase 1 and `--force_rerun_phase23` on Phase 2+3 for all datasets
+
+---
+
+## Phase 1 Decomposition Fix: `L_active` — Multi-Label Active Channel Constraint
+
+**Date added:** 2026-07-22 (post-run observation)  
+**Status:** Inconclusive — see Experimental Summary section below for findings and future directions.
+
+### Problem
+
+After the dual-branch encoder upgrade, Phase 1 reconstruction quality improved dramatically
+(`val_l_consist` 0.050 → 0.0019). However, visual inspection of the decomposition notebook
+shows a persistent issue in **multi-label wells**: only ONE active decoder produces an
+amplifying sigmoid, while the other active decoder(s) are flat — a degenerate solution.
+
+**Why the degenerate solution is stable under the current loss:**
+
+| Loss | Degenerate case | Non-degenerate case |
+|---|---|---|
+| `L_consist` | ✅ one amplifying decoder ≈ full multiplex curve | both decoders amplify, sum ≈ input |
+| `L_absent` | ✅ inactive channels flat | ✅ inactive channels flat |
+| `L_anchor` | ❌ flat active decoder incurs high MSE vs reference | ✅ each decoder resembles single-target |
+
+`L_anchor` (λ=0.3, l_anchor≈0.10) already contributes ~0.030 to total loss vs `L_consist`'s
+~0.0054 — it numerically dominates. But the model is trapped in a **local minimum**: the
+encoder routes mixture information entirely through one z_j slice, and the L_anchor gradient
+can't reorganise this without incurring a large L_consist penalty during the transition.
+
+**Why increasing lambda_anchor doesn't fully solve it:** The gradient from L_anchor is already
+6× the L_consist gradient in magnitude; the issue is an optimisation local minimum, not a
+simple lambda balance problem.
+
+**Why a learned weighted sum doesn't solve it:** A per-channel weight `w_j` that scales each
+decoder's contribution gives the model MORE freedom to zero out active channels (set `w_j→0`)
+without triggering `L_absent` (which only fires for `y_j==0`). This makes the degenerate
+solution easier, not harder.
+
+### Fix: `L_active` — minimum amplitude floor for active channels
+
+Add a hinge loss that requires each active decoder to reach a minimum peak amplitude:
+
+```python
+l_active = 0.0
+for j in range(n_targets):
+    peak_j   = tf.reduce_max(rendered[j], axis=-1)   # (batch,) — peak of sigmoid curve
+    l_active += tf.reduce_mean(y_f[:, j] * tf.nn.relu(self.Fm_floor[j] - peak_j))
+```
+
+**Setting `Fm_floor`:** Do NOT hard-code a small fixed value (e.g. 0.15 is too low — a curve
+with peak 0.15 still looks visually flat). Instead, compute per-target floors automatically
+from the anchor bank at model init time:
+
+```python
+# In __init__, after self.nn_bank is stored:
+self.Fm_floor = tf.constant([
+    0.65 * float(tf.reduce_mean(tf.reduce_max(b, axis=-1)))
+    for b in self.nn_bank
+], dtype=tf.float32)  # shape (n_targets,) — 65% of mean single-target peak per target
+```
+
+- 65% of the mean single-target peak gives a ~35% margin below the mean, so legitimate
+  low-amplitude single-target responses (high Ct, early plateau) still clear the floor.
+- Per-target (not global): KPC/NDM/VIM may have different typical fluorescence amplitudes.
+- No manual tuning: self-calibrates to the data.
+
+**Note on tension with `L_consist` for multi-label wells:**
+PCR fluorescence is additive — each target amplifies independently, so KPC+NDM mixture ≈
+f_KPC + f_NDM. If single-target peak ≈ A, then `Fm_floor = 0.65*A` and:
+- KPC+NDM: sum of floors = 1.3*A, but actual mixture peak ≈ 2*A → no conflict
+- KPC+NDM+VIM: sum of floors = 1.95*A, actual peak ≈ 3*A → no conflict
+Setting floor at 0.65 of the mean gives enough headroom that `L_consist` and `L_active`
+can be simultaneously satisfied even for triple-positive wells.
+
+**Interaction with other losses:**
+- `L_active` forces every active decoder to produce a genuinely amplifying curve.
+- `L_consist` forces their sum to match the input.
+- Together (assuming additive PCR fluorescence), both constraints are satisfied only by a
+  proper decomposition: each decoder contributes ~its single-target amplitude, their sum ≈ the
+  multiplex input.
+- `L_anchor` continues to shape the curve correctly (pull toward single-target reference).
+- `L_absent` continues to suppress inactive channels.
+
+### Implementation
+
+**`model_utils_source_sep.py`** (`MultiLabelSourceSepPhase1Model`):
+- Add `lambda_active=1.0` and `Fm_floor=0.15` to `__init__`; store as `self.*`.
+- Add `l_active` computation in `_compute_losses` (after L_absent, before L_consist).
+- Include `l_active` in the `loss` sum and in the `train_step`/`test_step` metrics dict.
+
+**`03b_source_sep_pretraining.py`**:
+- Add `--lambda_active` (float, default 1.0) and `--Fm_floor_frac` (float, default 0.65) CLI args.
+- Pass through to model constructor; constructor computes per-target `Fm_floor` from `nn_bank`.
+
+**SLURM scripts**:
+- Add `--lambda_active 1.0` to `P1_ARGS_BASE` in both training scripts (or leave as default
+  if CLI default suffices).
+
+### Hyperparameter guidance
+
+| Param | Default | Tuning |
+|---|---|---|
+| `lambda_active` | 1.0 | If decoders still flat → 2.0. If overly rigid (l_active never reaches 0) → 0.5. |
+| `Fm_floor_frac` | 0.65 | Fraction of mean single-target peak used to compute per-target floors. |
+
+Existing `lambda_anch=0.3` unchanged — `L_active` handles the degenerate minimum, `L_anchor`
+handles the curve shape.
+
+### Verification
+
+1. Phase 1 training: watch `l_active` converge toward 0 (all active channels amplifying).
+2. Decomposition notebook: multi-label wells should now show all active channels amplifying.
+3. `l_consist` should remain low (proper decomposition is compatible with additive PCR fluorescence).
+4. Compare Phase 2/3 classification vs runs without `L_active`.
+
+---
+
+## Phase 1 Decomposition Fix: Experimental Summary and Future Directions
+
+**Date:** 2026-07-22
+
+### What was tried
+
+| Job | λ_active | Peak metric | Implementation | val_l_consist | val_l_active (final) | Outcome |
+|---|---|---|---|---|---|---|
+| 264396/397 | 1.0 | `reduce_max` | original | ~0.040 | →0 (fast) | NaN crash at epoch ~39; bad reconstruction |
+| 264402/403 | 0.1 | `reduce_mean` | fixed | 0.0024 | 0.062 (plateau) | No NaN; reconstruction good; degenerate minimum unchanged |
+| 264417/418 | 0.5 | `reduce_mean` | fixed | 0.0044 | 0.039 (plateau) | No NaN; partial improvement; reconstruction slightly degraded |
+
+**Bugs fixed along the way:**
+- `reduce_max` → gradient concentrated on single argmax timestep → NaN at epoch ~39. Fixed by replacing with `reduce_mean` (uniform gradient across all 45 timesteps).
+- `Fm_floor` was computed from `reduce_max(anchor_bank)` but the loss used `reduce_mean` after the fix — now both use `reduce_mean` for self-consistency.
+- `lambda_active` default: 1.0 → 0.5 (current); argparse and model `__init__` kept in sync.
+
+### Core finding: L_active is on a tradeoff curve
+
+There is no λ value that simultaneously escapes the degenerate minimum AND preserves good reconstruction:
+
+- **λ too low (≤ 0.1):** The model just absorbs the constant cost (λ × l_active) and stays in the degenerate minimum. No reorganisation.
+- **λ too high (≥ 1.0):** L_active overpowers L_consist (300× at degenerate state). The model escapes the flat-channel minimum but lands in a NEW bad minimum: all active channels amplify above the floor but their sum doesn't match the input (wrong decomposition). Reconstruction degrades 20×.
+- **λ = 0.5 (current):** Partially reduces l_active (0.062 → 0.039) but doesn't fully escape, and reconstruction degrades 2× (0.0024 → 0.0044).
+
+### Why L_active structurally fails to fully fix this
+
+The degenerate state (one decoder absorbs the full mixture, other active decoders flat) requires a **coordinated** reorganisation to escape: the flat decoder must rise AND the dominant decoder must drop simultaneously so their sum still matches the input. L_active only pushes the flat decoder up — it provides no gradient to lower the dominant decoder. The model can't take a coordinated gradient step across two decoders, so it gets stuck at a compromise state.
+
+This is a structural limitation of the loss design, not a tuning problem.
+
+---
+
+### Future directions
+
+#### Minor improvements (low implementation cost)
+
+**M1 — Warmup curriculum for λ_active**  
+Start Phase 1 training with λ_active=0 for the first N epochs (e.g. 50) to let reconstruction converge cleanly, then switch on λ_active=0.5 (or higher). This avoids L_active interfering during the critical early reconstruction phase. The model enters the "turn on L_active" phase already knowing how to route information for single-positive wells, so the reorganisation for multi-positive wells is a smaller perturbation.  
+_Risk:_ The same local minimum still exists after warmup; may not escape.
+
+**M2 — Higher λ_active (brute force)**  
+Now that `reduce_max` is replaced with `reduce_mean`, NaN is fixed. Try λ_active=2.0 or 5.0. At high enough λ, the degenerate minimum becomes unprofitable. The previous λ=1.0 NaN crash was a `reduce_max` bug, not a fundamental λ=1.0 problem.  
+_Risk:_ Reconstruction will degrade further (same tradeoff curve, just a different point on it). May need to pair with lower λ_cons.
+
+**M3 — Multi-positive sample up-weighting**  
+Give multi-positive wells (n_active ≥ 2) higher loss weight (e.g., 3×). These are the samples where the degenerate minimum is harmful; upweighting them amplifies the gradient signal that would push toward proper decomposition. Currently all samples are equally weighted, so single-positive wells (majority) dominate and reinforce the existing routing.  
+_Implementation:_ pass sample_weight via the dataset. Minimal code change.
+
+**M4 — Softer Fm_floor_frac**  
+Current Fm_floor_frac=0.65 of mean anchor curve amplitude. Lower to 0.3–0.4 so L_active is only a tiebreaker (fires only when a channel is very flat) rather than a meaningful constraint. Combine with M2 (higher λ) for the same effective floor pressure — but distributed differently.
+
+---
+
+#### Major improvements (significant redesign)
+
+**MA1 — L_balance: relative amplitude constraint (recommended next step)**  
+Replace L_active with a loss that directly penalises amplitude *imbalance between active decoders* in the same sample. For each pair (j, k) both active in a well, penalise when one decoder's mean amplitude is much smaller than the other's:
+
+```python
+for j in range(n_targets):
+    for k in range(j+1, n_targets):
+        both_active = y_f[:, j] * y_f[:, k]          # (batch,) — 1 where both j and k active
+        mean_j = tf.reduce_mean(rendered[j], axis=-1) # (batch,)
+        mean_k = tf.reduce_mean(rendered[k], axis=-1) # (batch,)
+        l_balance += tf.reduce_mean(both_active * tf.square(mean_j - mean_k))
+```
+
+Or a self-normalising version: for each active channel j, penalise when mean_j < thresh_frac × max(mean_active_channels):
+
+```python
+# No active channel can be < 50% of the loudest active channel in the same sample
+all_means = tf.stack([tf.reduce_mean(rendered[j], axis=-1) * y_f[:, j]
+                      for j in range(n_targets)], axis=1)  # (batch, n_targets)
+max_mean  = tf.reduce_max(all_means, axis=1, keepdims=True)
+for j:
+    l_balance += tf.reduce_mean(y_f[:, j] * tf.nn.relu(0.5 * max_mean[:, 0] - all_means[:, j]))
+```
+
+_Why this is better than L_active:_ Self-normalising (doesn't depend on absolute amplitude), directly penalises the degenerate state (dominant ≈ 2μ, flat ≈ 0 → large imbalance), and is compatible with L_consist (proper decomposition with each channel at ~μ satisfies balance with threshold 0.5).  
+_Risk:_ If different targets genuinely have different mean amplitudes (e.g. KPC plateau higher than VIM), the pairwise squared-difference version would penalise even correct decompositions. Use the self-normalising (max-relative) version to avoid this.
+
+**MA2 — Curriculum by label complexity**  
+Train Phase 1 in stages: first on single-positive wells only (N epochs), then add double-positive, then triple-positive. By the time multi-positive wells enter training, each decoder has already learned its single-target shape. The transition to multi-positive requires redistribution of the mixture signal rather than learning shapes from scratch.  
+_Risk:_ Requires dataset splitting logic and staged training loop. Significant implementation effort.
+
+**MA3 — Contrastive decoder diversity loss**  
+For multi-positive wells, penalise the cosine similarity between rendered curves of different active decoders. This forces each decoder to produce a DIFFERENT signal for the same input — breaking the degenerate symmetry from a different angle than L_balance.
+
+```python
+# For each pair of active decoders, penalise high cosine similarity
+for (j, k) active pairs:
+    cos_sim = dot(rendered[j], rendered[k]) / (norm(rendered[j]) * norm(rendered[k]))
+    l_div += tf.reduce_mean(both_active * tf.nn.relu(cos_sim - margin))
+```
+
+_Risk:_ The degenerate state (dominant ≈ mixture, flat ≈ 0) already has low cosine similarity (mixture vs zero vector), so this loss wouldn't fire at the degenerate state itself — it's better at preventing the "two similar decoders" failure mode than the actual observed failure.
+
+**MA4 — Instance-conditioned routing**  
+Add a lightweight gating network that reads y_bin (target labels) and produces a per-target routing mask applied to the shared z_shared dimension. This gives the model an explicit mechanism to route mixture information to the correct z_j slice, rather than hoping the encoder learns it implicitly. In single-positive wells the gate is trivially sparse; in multi-positive wells it must be diffuse.  
+_Risk:_ Adds y_bin dependency at inference time for the decoder (currently the decoder only reads z_j). Changes the inference interface.
+
+**MA5 — Per-target sub-encoders (full disentanglement)**  
+Replace the shared encoder + z_j slices with J separate bottleneck branches — one per target — each producing a target-specific latent independently. Forces true disentanglement by construction. The J bottleneck outputs are each decoded by the corresponding decoder.  
+_Risk:_ Large architectural change; removes cross-target information sharing which may hurt classification quality; must retrain everything.

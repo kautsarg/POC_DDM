@@ -28,14 +28,6 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 P1_ARGS=(
     --task_id "$SLURM_ARRAY_TASK_ID"
     --exp_folder "$EXP_FOLDER"
-    --d_shared 16
-    --d_target 10
-    --epochs_p1 400
-    --lambda_cons 2.0
-    --lambda_anch 0.3
-    --lambda_var 0.05
-    --lambda_supcon 0.0
-    --nn_k 5
 )
 
 P23_ARGS=(

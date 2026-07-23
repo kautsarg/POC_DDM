@@ -115,10 +115,14 @@ if __name__ == "__main__":
     parser.add_argument("--d_shared",     type=int,   default=16)
     parser.add_argument("--d_target",     type=int,   default=10)
     parser.add_argument("--epochs_p1",    type=int,   default=400)
-    parser.add_argument("--lambda_cons",  type=float, default=1.0)
-    parser.add_argument("--lambda_anch",  type=float, default=0.5)
-    parser.add_argument("--nn_k",         type=int,   default=5)
-    parser.add_argument("--lambda_var",   type=float, default=0.1)
+    parser.add_argument("--lambda_cons",  type=float, default=2.0)
+    parser.add_argument("--lambda_anch",   type=float, default=0.3)
+    parser.add_argument("--lambda_active", type=float, default=0.5,
+                        help="Weight for L_active (min-amplitude floor on active decoders).")
+    parser.add_argument("--Fm_floor_frac", type=float, default=0.65,
+                        help="Fraction of mean single-target peak used as per-target amplitude floor.")
+    parser.add_argument("--nn_k",          type=int,   default=5)
+    parser.add_argument("--lambda_var",    type=float, default=0.05)
     parser.add_argument("--lambda_supcon", type=float, default=0.0,
                         help="Legacy per-target SupCon weight for SC0 Phase 1 (ignored for SC1-3).")
     parser.add_argument("--batch_size",   type=int,   default=512)
@@ -217,18 +221,20 @@ if __name__ == "__main__":
                     for j in range(_n_targets)]
 
         model = P1ModelCls(
-            encoder       = encoder,
-            decoders      = decoders,
-            nn_bank       = nn_bank,
-            T             = _T,
-            d_shared      = args.d_shared,
-            d_target      = args.d_target,
-            n_targets     = _n_targets,
-            lambda_cons   = args.lambda_cons,
-            lambda_anch   = args.lambda_anch,
-            lambda_var    = args.lambda_var,
-            lambda_supcon = args.lambda_supcon,
-            k             = args.nn_k,
+            encoder        = encoder,
+            decoders       = decoders,
+            nn_bank        = nn_bank,
+            T              = _T,
+            d_shared       = args.d_shared,
+            d_target       = args.d_target,
+            n_targets      = _n_targets,
+            lambda_cons    = args.lambda_cons,
+            lambda_anch    = args.lambda_anch,
+            lambda_active  = args.lambda_active,
+            Fm_floor_frac  = args.Fm_floor_frac,
+            lambda_var     = args.lambda_var,
+            lambda_supcon  = args.lambda_supcon,
+            k              = args.nn_k,
         )
         model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0))
 
@@ -242,9 +248,9 @@ if __name__ == "__main__":
 
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor='val_l_consist', patience=30, restore_best_weights=True),
+                monitor='val_l_consist', mode='min', patience=30, restore_best_weights=True),
             tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_l_consist', factor=0.3, patience=15, min_lr=1e-5),
+                monitor='val_l_consist', mode='min', factor=0.3, patience=15, min_lr=1e-5),
             tf.keras.callbacks.TerminateOnNaN(),
         ]
 
