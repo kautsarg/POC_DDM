@@ -42,37 +42,14 @@ import tensorflow as tf
 
 
 # ======================================================================
-# SC0 BASE CLASS (single-task, plain CE, no SupCon)
-# ======================================================================
-
-class _STBaseModel(tf.keras.Model):
-    def train_step(self, data):
-        x, y = data
-        with tf.GradientTape() as tape:
-            cls_out = self(x, training=True)
-            loss = tf.reduce_mean(
-                tf.keras.losses.sparse_categorical_crossentropy(y, cls_out))
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        return {'loss': loss}
-
-    def test_step(self, data):
-        x, y = data
-        cls_out = self(x, training=False)
-        loss = tf.reduce_mean(
-            tf.keras.losses.sparse_categorical_crossentropy(y, cls_out))
-        return {'loss': loss}
-
-
-# ======================================================================
 # MODEL CLASSES — 12 unique Keras packages
 # ======================================================================
 
 # --- CGD ---
 
 @tf.keras.utils.register_keras_serializable(package='arch_poc_st_cgd')
-class ArchPocSTCGDModel(_STBaseModel):
-    """CGD SC0 ST: plain CE. Output: cls_out."""
+class ArchPocSTCGDModel(tf.keras.Model):
+    """CGD SC0 ST: plain CE via compiled loss. Output: cls_out."""
     pass
 
 
@@ -97,8 +74,8 @@ class ArchPocSTCGDSC3Model(SupConBranch3STModel):
 # --- CGS ---
 
 @tf.keras.utils.register_keras_serializable(package='arch_poc_st_cgs')
-class ArchPocSTCGSModel(_STBaseModel):
-    """CGS SC0 ST: plain CE. Output: cls_out."""
+class ArchPocSTCGSModel(tf.keras.Model):
+    """CGS SC0 ST: plain CE via compiled loss. Output: cls_out."""
     pass
 
 
@@ -123,8 +100,8 @@ class ArchPocSTCGSSC3Model(SupConBranch3STModel):
 # --- CCGD ---
 
 @tf.keras.utils.register_keras_serializable(package='arch_poc_st_ccgd')
-class ArchPocSTCCGDModel(_STBaseModel):
-    """CCGD SC0 ST: plain CE. Output: cls_out."""
+class ArchPocSTCCGDModel(tf.keras.Model):
+    """CCGD SC0 ST: plain CE via compiled loss. Output: cls_out."""
     pass
 
 
@@ -544,9 +521,17 @@ def run_03g_training(
                         f'got {type(_probe).__name__} '
                         f'len={getattr(_probe, "__len__", lambda: "?")()}.')
 
-            model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                jit_compile=False)
+            if is_sc0:
+                # Built-in Keras loss — handles named output → y matching
+                # correctly, avoiding the custom train_step dict-wrapping bug.
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                    loss='sparse_categorical_crossentropy',
+                    jit_compile=False)
+            else:
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                    jit_compile=False)
             model.fit(X_tr, fit_y,
                       validation_data=val_data, callbacks=callbacks,
                       epochs=500, batch_size=512, shuffle=True, verbose=0)
