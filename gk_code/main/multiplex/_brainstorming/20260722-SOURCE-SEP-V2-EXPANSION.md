@@ -969,3 +969,49 @@ _Risk:_ Adds y_bin dependency at inference time for the decoder (currently the d
 **MA5 — Per-target sub-encoders (full disentanglement)**  
 Replace the shared encoder + z_j slices with J separate bottleneck branches — one per target — each producing a target-specific latent independently. Forces true disentanglement by construction. The J bottleneck outputs are each decoded by the corresponding decoder.  
 _Risk:_ Large architectural change; removes cross-target information sharing which may hurt classification quality; must retrain everything.
+
+---
+
+## Serial-Bigger Encoder (03c) — 10-Fold Results
+
+**Date:** 2026-07-23  
+**Job:** 264683_1  
+**Dataset:** `02_ACA_qdPCR_balanced` (N=10,383, T=45, 3 targets: KPC/NDM/VIM)  
+**CV:** 10-fold  
+**Encoder:** `serial_bigger_encoder` (Conv1D(32,5,causal)→Conv1D(32,3,stride=2,causal)→BiGRU(64)→LN→Dense(d_sh+n·d_t))
+
+### Phase 2 Classification Results
+
+| Key | L_consist | Exact Match | Hamming Loss | F1-Sample |
+|---|---|---|---|---|
+| `serial_source_sep_active_p2`     | sum  | 54.18% | 0.1832 | 0.8584 |
+| `serial_source_sep_balance_p2`    | sum  | 55.26% | 0.1791 | 0.8626 |
+| **`serial_source_sep_active_avg_p2`** | **avg** | **62.96%** | **0.1535** | **0.8824** |
+| `serial_source_sep_balance_avg_p2` | avg | 50.52% | 0.1934 | 0.8479 |
+
+**Best so far:** `serial_source_sep_active_avg_p2` — exact=62.96%, hamming=0.1535, f1_samp=0.8824.
+
+### Spearman Validation (Ct correlation in z_j[0])
+
+| Variant | KPC | NDM | VIM |
+|---|---|---|---|
+| active, sum  | 0.134 WARN | 0.225 WARN | 0.177 WARN |
+| balance, sum | **0.653 OK** | 0.163 WARN | −0.110 WARN |
+| active, avg  | 0.439 WARN | −0.011 WARN | 0.253 WARN |
+| balance, avg | 0.175 WARN | 0.039 WARN | −0.369 WARN |
+
+All variants WARN (r < 0.65) except balance-sum KPC (r=0.653). The serial-bigger encoder doesn't strongly encode Ct in z_j[0], but the classifier still benefits substantially from avg L_consist.
+
+### Key Findings
+
+1. **avg L_consist (+8.8pp exact over sum)**: The visual observation that multi-target curves ≈ mean of single-target curves is validated — avg normalisation dramatically outperforms the sum formulation for the active variant.
+
+2. **balance+avg is worst (50.52%)**: The combination of L_balance weighting and avg L_consist appears to conflict — likely because L_balance already down-weights high-count samples, and avg division further attenuates the gradient signal for those same wells.
+
+3. **balance+sum is competitive (55.26%)** but only 1.1pp above active+sum, and KPC Spearman (0.653) is the only passing Spearman score across all variants.
+
+4. **Spearman validation broadly WARN**: The serial-bigger encoder's z_j[0] does not reliably encode Ct for most targets and variants. This is expected given that Phase 1 optimises reconstruction (L_consist + L_anchor + L_absent + L_active) without an explicit Ct regression objective. The Spearman check here is diagnostic, not a training target.
+
+### Conclusion
+
+`serial_source_sep_active_avg_p2` is the current best multiplex source-sep classifier. The avg L_consist formulation should be carried forward to future encoder variants.
