@@ -214,7 +214,7 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
                  d_shared=16, d_target=10, n_targets=3,
                  lambda_cons=2.0, lambda_anch=0.3, lambda_var=0.05,
                  lambda_active=0.5, lambda_balance=0.0, Fm_floor_frac=0.65,
-                 avg_consist=False,
+                 avg_consist=False, sum_norm_consist=False,
                  var_margin=0.05, lambda_supcon=0.0, supcon_temp=0.07,
                  k=5, **kwargs):
         super().__init__(**kwargs)
@@ -230,7 +230,8 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
         self.lambda_var     = lambda_var
         self.lambda_active  = lambda_active
         self.lambda_balance = lambda_balance
-        self.avg_consist    = avg_consist
+        self.avg_consist      = avg_consist
+        self.sum_norm_consist = sum_norm_consist
         self.var_margin     = var_margin
         self.lambda_supcon  = lambda_supcon
         self.supcon_temp    = supcon_temp
@@ -317,15 +318,22 @@ class MultiLabelSourceSepPhase1Model(tf.keras.Model):
                 l_balance += tf.reduce_mean(
                     y_f[:, j] * tf.nn.relu(0.5 * max_mean[:, 0] - all_means[:, j]))
 
-        # L_consist: active channels ≈ input (sum or avg formulation)
+        # L_consist: active channels ≈ input (sum / avg / sum-then-normalise)
         active_sum = tf.zeros_like(x_curve)
         for j in range(self.n_targets):
             active_sum = active_sum + y_f[:, j:j+1] * rendered[j]
         if self.avg_consist:
-            # avg formulation: each active decoder should produce full-amplitude curves;
-            # physically appropriate when multi-target signal = mean of single-target signals
+            # avg: each active decoder produces full-amplitude curves;
+            # appropriate when multi-target signal = mean of single-target signals
             n_active  = tf.maximum(tf.reduce_sum(y_f, axis=1, keepdims=True), 1.0)
             l_consist = tf.reduce_mean((x_curve - active_sum / n_active) ** 2)
+        elif self.sum_norm_consist:
+            # sum-then-normalise: sum active decoders, then min-max rescale per sample
+            # to [0, 1] before comparing to the (already-normalised) input curve
+            S_min  = tf.reduce_min(active_sum, axis=-1, keepdims=True)
+            S_max  = tf.reduce_max(active_sum, axis=-1, keepdims=True)
+            S_norm = (active_sum - S_min) / (S_max - S_min + 1e-8)
+            l_consist = tf.reduce_mean((x_curve - S_norm) ** 2)
         else:
             l_consist = tf.reduce_mean((x_curve - active_sum) ** 2)
 

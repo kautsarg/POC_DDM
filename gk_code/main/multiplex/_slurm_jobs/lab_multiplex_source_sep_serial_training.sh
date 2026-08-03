@@ -47,4 +47,10 @@ python -u 03c_serial_source_sep_pretraining.py "${P1_ARGS[@]}" --variant active 
 # Variant D: L_balance, avg L_consist
 python -u 03c_serial_source_sep_pretraining.py "${P1_ARGS[@]}" --variant balance --avg_consist
 
+# Variant E: L_active, sum-then-normalise L_consist (input curves are already normalised)
+python -u 03c_serial_source_sep_pretraining.py "${P1_ARGS[@]}" --variant active  --sum_norm_consist
+
+# Variant F: L_balance, sum-then-normalise L_consist
+python -u 03c_serial_source_sep_pretraining.py "${P1_ARGS[@]}" --variant balance --sum_norm_consist
+
 deactivate

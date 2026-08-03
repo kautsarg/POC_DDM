@@ -9,7 +9,8 @@ No preconditioning, no SupCon, no CRF, no Phase 3.
 Usage:
   python 03c_serial_source_sep_pretraining.py --variant active  --task_id 0 --exp_folder /path
   python 03c_serial_source_sep_pretraining.py --variant balance --task_id 0 --exp_folder /path --train_phase2 --n_splits 5
-  python 03c_serial_source_sep_pretraining.py --variant active  --avg_consist --task_id 0 --exp_folder /path --train_phase2
+  python 03c_serial_source_sep_pretraining.py --variant active  --avg_consist      --task_id 0 --exp_folder /path --train_phase2
+  python 03c_serial_source_sep_pretraining.py --variant active  --sum_norm_consist --task_id 0 --exp_folder /path --train_phase2
 """
 import os
 import sys
@@ -109,9 +110,12 @@ if __name__ == "__main__":
     parser.add_argument("--fast_mode",     action="store_true")
     parser.add_argument("--validate",      action="store_true")
     parser.add_argument("--force_rerun",   action="store_true")
-    parser.add_argument("--avg_consist",   action="store_true",
+    parser.add_argument("--avg_consist",      action="store_true",
                         help="L_consist uses avg of active decoders (not sum). "
                              "Appropriate when multi-target signal = mean of single-target signals.")
+    parser.add_argument("--sum_norm_consist", action="store_true",
+                        help="L_consist sums active decoders then min-max normalises per sample "
+                             "before comparing to the (already-normalised) input curve.")
     parser.add_argument("--train_phase2",  action="store_true",
                         help="Run Phase 2 (frozen encoder classification head) after Phase 1.")
     parser.add_argument("--n_splits",      type=int, default=5,
@@ -136,12 +140,18 @@ if __name__ == "__main__":
     exp_path = task_dirs[args.task_id % len(task_dirs)]
     folder   = exp_path.name
 
-    # variant_key includes _avg suffix when avg_consist is on, keeping filenames unique
-    variant_key = f'{args.variant}_avg' if args.avg_consist else args.variant
+    # variant_key includes mode suffix to keep filenames unique across decoder formulas
+    if args.avg_consist:
+        variant_key = f'{args.variant}_avg'
+    elif args.sum_norm_consist:
+        variant_key = f'{args.variant}_sum_norm'
+    else:
+        variant_key = args.variant
     out_path    = os.path.join(exp_path, f'source_sep_serial_{variant_key}_encoder_weights.weights.h5')
 
     print(f"\n{'='*70}")
-    print(f"[SS SERIAL]  {folder}  variant={args.variant}  avg_consist={args.avg_consist}  "
+    print(f"[SS SERIAL]  {folder}  variant={args.variant}  "
+          f"avg_consist={args.avg_consist}  sum_norm_consist={args.sum_norm_consist}  "
           f"λ_active={args.lambda_active}  λ_balance={args.lambda_balance}")
     print(f"{'='*70}")
 
@@ -199,14 +209,15 @@ if __name__ == "__main__":
             d_shared       = args.d_shared,
             d_target       = args.d_target,
             n_targets      = n_targets,
-            lambda_cons    = args.lambda_cons,
-            lambda_anch    = args.lambda_anch,
-            lambda_active  = args.lambda_active,
-            lambda_balance = args.lambda_balance,
-            Fm_floor_frac  = args.Fm_floor_frac,
-            avg_consist    = args.avg_consist,
-            lambda_var     = args.lambda_var,
-            k              = args.nn_k,
+            lambda_cons      = args.lambda_cons,
+            lambda_anch      = args.lambda_anch,
+            lambda_active    = args.lambda_active,
+            lambda_balance   = args.lambda_balance,
+            Fm_floor_frac    = args.Fm_floor_frac,
+            avg_consist      = args.avg_consist,
+            sum_norm_consist = args.sum_norm_consist,
+            lambda_var       = args.lambda_var,
+            k                = args.nn_k,
         )
         model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0))
 
