@@ -85,6 +85,9 @@ from model_utils_rcfd import (
     RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS,
     ALL_RCFD_KEYS, _RCFD_ALL_FACTORIES,
 )
+from model_utils_arch_poc_st import (
+    CCGD_ST_ALL_KEYS, _CCGD_FACTORIES,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -1547,6 +1550,36 @@ def evaluate_outlier_filters(
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
                     cls_prob = raw_out[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls  = np.unique(y_encoded)
+                    preds.append(pred); probs.append(cls_prob); classes_list.append(cls)
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in CCGD_ST_ALL_KEYS:
+                    # CCGD ST from 03g: SC0=plain CE, SC1-3=SupCon (1-4 outputs).
+                    tf.keras.backend.clear_session()
+                    T     = X_train_curve.shape[1]
+                    model = _CCGD_FACTORIES[_base_m](T, n_classes)
+                    is_sc0 = (_base_m == 'ccgd_arch_poc_st')
+                    if is_sc0:
+                        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0),
+                                      loss='sparse_categorical_crossentropy')
+                    else:
+                        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=1.0))
+                    epochs = 500
+                    if _val_split_ok:
+                        y_fit_  = y_train_fit if is_sc0 else {'cls_out': y_train_fit}
+                        y_val_  = y_val       if is_sc0 else {'cls_out': y_val}
+                        model.fit(X_train_curve_fit, y_fit_,
+                                  validation_data=(X_val_curve, y_val_),
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
+                                  callbacks=_fit_callbacks)
+                    else:
+                        y_fit_ = y_train if is_sc0 else {'cls_out': y_train}
+                        model.fit(X_train_curve, y_fit_,
+                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    raw_out  = model.predict(X_test_curve, verbose=0)
+                    cls_prob = raw_out if is_sc0 else raw_out[0]
                     pred = np.argmax(cls_prob, axis=1)
                     cls  = np.unique(y_encoded)
                     preds.append(pred); probs.append(cls_prob); classes_list.append(cls)

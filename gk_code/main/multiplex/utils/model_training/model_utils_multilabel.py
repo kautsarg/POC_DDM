@@ -2792,6 +2792,12 @@ def create_ml_serial_source_sep_active_avg_model(T, n_targets):
 def create_ml_serial_source_sep_balance_avg_model(T, n_targets):
     return _make_serial_ss_model(T, n_targets, 'serial_source_sep_balance_avg_classifier')
 
+def create_ml_serial_source_sep_active_sum_norm_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_active_sum_norm_classifier')
+
+def create_ml_serial_source_sep_balance_sum_norm_model(T, n_targets):
+    return _make_serial_ss_model(T, n_targets, 'serial_source_sep_balance_sum_norm_classifier')
+
 
 # -- factory dispatch --------------------------------------------------------
 
@@ -2922,10 +2928,12 @@ ML_FACTORIES = {
     'cnn_gru_source_sep_precon_crf_supcon2_p3':  create_ml_cnn_gru_source_sep_crf_sc2_model,
     'cnn_gru_source_sep_precon_crf_supcon3_p3':  create_ml_cnn_gru_source_sep_crf_sc3_model,
     # Source sep serial — 03c (sum-consist and avg-consist variants)
-    'serial_source_sep_active_p2':      create_ml_serial_source_sep_active_model,
-    'serial_source_sep_balance_p2':     create_ml_serial_source_sep_balance_model,
-    'serial_source_sep_active_avg_p2':  create_ml_serial_source_sep_active_avg_model,
-    'serial_source_sep_balance_avg_p2': create_ml_serial_source_sep_balance_avg_model,
+    'serial_source_sep_active_p2':          create_ml_serial_source_sep_active_model,
+    'serial_source_sep_balance_p2':         create_ml_serial_source_sep_balance_model,
+    'serial_source_sep_active_avg_p2':      create_ml_serial_source_sep_active_avg_model,
+    'serial_source_sep_balance_avg_p2':     create_ml_serial_source_sep_balance_avg_model,
+    'serial_source_sep_active_sum_norm_p2': create_ml_serial_source_sep_active_sum_norm_model,
+    'serial_source_sep_balance_sum_norm_p2':create_ml_serial_source_sep_balance_sum_norm_model,
     # CAttn-V2 + CRF-MRF: flat / factored / bilinear × CGD SC0-3
     'cnn_gru_dual_cross_attn_v2_crf_flat':            create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_model,
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':     create_ml_cnn_gru_dual_cross_attn_v2_crf_flat_supcon_model,
@@ -2997,6 +3005,8 @@ _SERIAL_SS_ML_KEYS = frozenset({
     'serial_source_sep_balance_p2',
     'serial_source_sep_active_avg_p2',
     'serial_source_sep_balance_avg_p2',
+    'serial_source_sep_active_sum_norm_p2',
+    'serial_source_sep_balance_sum_norm_p2',
 })
 
 # Models using CRF output — evaluate loop calls predict_marginals/predict_binary instead of model.predict
@@ -3182,10 +3192,12 @@ ML_MODEL_PRINT_MAP = {
     'cnn_gru_source_sep_precon_crf_supcon2_p3':  'SrcSep B CRF SC2 p3',
     'cnn_gru_source_sep_precon_crf_supcon3_p3':  'SrcSep B CRF SC3 p3',
     # Source sep serial — 03c (sum-consist and avg-consist)
-    'serial_source_sep_active_p2':      'SrcSep Serial Active p2',
-    'serial_source_sep_balance_p2':     'SrcSep Serial Balance p2',
-    'serial_source_sep_active_avg_p2':  'SrcSep Serial Active Avg p2',
-    'serial_source_sep_balance_avg_p2': 'SrcSep Serial Balance Avg p2',
+    'serial_source_sep_active_p2':           'SrcSep Serial Active p2',
+    'serial_source_sep_balance_p2':          'SrcSep Serial Balance p2',
+    'serial_source_sep_active_avg_p2':       'SrcSep Serial Active Avg p2',
+    'serial_source_sep_balance_avg_p2':      'SrcSep Serial Balance Avg p2',
+    'serial_source_sep_active_sum_norm_p2':  'SrcSep Serial Active SumNorm p2',
+    'serial_source_sep_balance_sum_norm_p2': 'SrcSep Serial Balance SumNorm p2',
     # CAttn-V2 + CRF-MRF flat (CGD SC0-3)
     'cnn_gru_dual_cross_attn_v2_crf_flat':          'CNN+GRU CAttn-V2 CRF-flat SC0',
     'cnn_gru_dual_cross_attn_v2_crf_flat_supcon':   'CNN+GRU CAttn-V2 CRF-flat SC1',

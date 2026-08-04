@@ -380,7 +380,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
         "baseline_value": baseline_value,
         "window_size_ori": window_size_ori,
         "window_size_1stder": window_size_1stder if compute_sigmoid_fits else None,
-        "margin": margin
+        "margin": margin,
+        "concentration": config.get_conc_array(Path(save_exp_path).name, Y_well),
     }
 
     save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
@@ -562,37 +563,48 @@ if __name__ == "__main__":
 
         # --- PART B: NC Subtraction ---
         print("      -> Performing Negative Control (NC) Subtraction...")
-        
+
         unique_vrefs = np.unique(vref_idx)
         unique_labels = np.unique(y_label)
-        
-        # Isolate the base classes (e.g., extracts 'C' if 'NC-C' exists)
-        base_labels = list(dict.fromkeys([str(lbl).replace('NC-', '') for lbl in unique_labels]))
-        
+
         subtracted_curves = X_2d_bs_active.copy()
-        
-        for vref_val in unique_vrefs:
-            vref_mask = (vref_idx == vref_val)
-            
-            for b_lbl in base_labels:
-                nc_target = f"NC-{b_lbl}"
-                
-                # Check if both Sample and corresponding NC exist for this specific VREF
-                if b_lbl in unique_labels and nc_target in unique_labels:
-                    nc_mask = vref_mask & (y_label == nc_target)
-                    sample_mask = vref_mask & (y_label == b_lbl)
-                    
-                    if np.any(nc_mask) and np.any(sample_mask):
-                        # 3.1 Get Mean of NCs
-                        nc_baseline = np.mean(X_2d_bs_active[nc_mask], axis=0)
-                        
-                        # 3.2 Subtract from corresponding Samples
-                        subtracted_curves[sample_mask] = X_2d_bs_active[sample_mask] - nc_baseline
-                        
-                        # 3.3 Subtract from the NCs themselves (centers the control noise floor at 0)
-                        subtracted_curves[nc_mask] = X_2d_bs_active[nc_mask] - nc_baseline
-                        
-                        print(f"         -> Slice VREF {vref_val}: Subtracted '{nc_target}' mean from '{b_lbl}' ({np.sum(sample_mask)} curves) and normalized NCs ({np.sum(nc_mask)} curves)")
+
+        if 'NC-ALL' in unique_labels:
+            # Universal NC: NC-ALL mean subtracted from every well in each VREF slice
+            for vref_val in unique_vrefs:
+                vref_mask   = (vref_idx == vref_val)
+                nc_all_mask = vref_mask & (y_label == 'NC-ALL')
+                if np.any(nc_all_mask):
+                    nc_baseline = np.mean(X_2d_bs_active[nc_all_mask], axis=0)
+                    subtracted_curves[vref_mask] = X_2d_bs_active[vref_mask] - nc_baseline
+                    print(f"         -> Slice VREF {vref_val}: Subtracted 'NC-ALL' mean from all wells ({np.sum(vref_mask)} curves)")
+        else:
+            # Per-label NC: subtract NC-{b_lbl} mean from matching {b_lbl} wells only
+            # Isolate the base classes (e.g., extracts 'C' if 'NC-C' exists)
+            base_labels = list(dict.fromkeys([str(lbl).replace('NC-', '') for lbl in unique_labels]))
+
+            for vref_val in unique_vrefs:
+                vref_mask = (vref_idx == vref_val)
+
+                for b_lbl in base_labels:
+                    nc_target = f"NC-{b_lbl}"
+
+                    # Check if both Sample and corresponding NC exist for this specific VREF
+                    if b_lbl in unique_labels and nc_target in unique_labels:
+                        nc_mask = vref_mask & (y_label == nc_target)
+                        sample_mask = vref_mask & (y_label == b_lbl)
+
+                        if np.any(nc_mask) and np.any(sample_mask):
+                            # 3.1 Get Mean of NCs
+                            nc_baseline = np.mean(X_2d_bs_active[nc_mask], axis=0)
+
+                            # 3.2 Subtract from corresponding Samples
+                            subtracted_curves[sample_mask] = X_2d_bs_active[sample_mask] - nc_baseline
+
+                            # 3.3 Subtract from the NCs themselves (centers the control noise floor at 0)
+                            subtracted_curves[nc_mask] = X_2d_bs_active[nc_mask] - nc_baseline
+
+                            print(f"         -> Slice VREF {vref_val}: Subtracted '{nc_target}' mean from '{b_lbl}' ({np.sum(sample_mask)} curves) and normalized NCs ({np.sum(nc_mask)} curves)")
 
         # Update main tracking array for the rest of the pipeline
         X_2d_bs_active = subtracted_curves

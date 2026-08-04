@@ -28,11 +28,11 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_Multiplex
 P1_ARGS=(
     --task_id "$SLURM_ARRAY_TASK_ID"
     --exp_folder "$EXP_FOLDER"
-    --force_rerun
+    # --force_rerun
     --validate
     --train_phase2
     --n_splits 5
-    --force_rerun_phase2
+    # --force_rerun_phase2
 )
 
 # Variant A: L_active, sum L_consist

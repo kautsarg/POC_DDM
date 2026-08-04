@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+import numpy as np
 
 # model_utils.py lives alongside this file's package; ensure it is importable
 # regardless of the caller's own sys.path setup.
@@ -41,6 +42,7 @@ DEFAULT_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_chip_init")
 LAB_EXP_FOLDER = os.path.join(BASE_FOLDER, "LAB_DDM_paper")
 LAB_1TO1_EXP_FOLDER = os.path.join(BASE_FOLDER, "LAB_OneToOne")
 MULTI_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_multi")
+FINAL_EXP_FOLDER = os.path.join(BASE_FOLDER, "POC_DDM_final")
 
 def get_viz_dir(path, subdir):
     """Mirror `path` (a folder under BASE_FOLDER) under VIZ_BASE_FOLDER and append `subdir`."""
@@ -417,6 +419,11 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_supcon3_staged":              ("y_preds_AC_cnn_gru_dual_supcon3_staged_",              "y_probs_AC_cnn_gru_dual_supcon3_staged_",              "classes_AC_cnn_gru_dual_supcon3_staged_"),
     "cnn_gru_dual_cosine_recon_supcon3_staged": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_staged_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_staged_", "classes_AC_cnn_gru_dual_cosine_recon_supcon3_staged_"),
     "cnn_gru_dual_attn_recon_supcon3_staged":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_staged_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_staged_",   "classes_AC_cnn_gru_dual_attn_recon_supcon3_staged_"),
+    # CCGD arch-poc ST (from 03g, available in 03 single-task mode)
+    "ccgd_arch_poc_st":     ("y_preds_AC_ccgd_arch_poc_st_",     "y_probs_AC_ccgd_arch_poc_st_",     "classes_AC_ccgd_arch_poc_st_"),
+    "ccgd_arch_poc_st_sc1": ("y_preds_AC_ccgd_arch_poc_st_sc1_", "y_probs_AC_ccgd_arch_poc_st_sc1_", "classes_AC_ccgd_arch_poc_st_sc1_"),
+    "ccgd_arch_poc_st_sc2": ("y_preds_AC_ccgd_arch_poc_st_sc2_", "y_probs_AC_ccgd_arch_poc_st_sc2_", "classes_AC_ccgd_arch_poc_st_sc2_"),
+    "ccgd_arch_poc_st_sc3": ("y_preds_AC_ccgd_arch_poc_st_sc3_", "y_probs_AC_ccgd_arch_poc_st_sc3_", "classes_AC_ccgd_arch_poc_st_sc3_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -480,10 +487,11 @@ _STAGED_SUPCON_MODEL_KEYS = {
     "cnn_gru_dual_supcon2_staged", "cnn_gru_dual_cosine_recon_supcon2_staged", "cnn_gru_dual_attn_recon_supcon2_staged",
     "cnn_gru_dual_supcon3_staged", "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
 }
+_CCGD_ST_KEYS = {"ccgd_arch_poc_st", "ccgd_arch_poc_st_sc1", "ccgd_arch_poc_st_sc2", "ccgd_arch_poc_st_sc3"}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
            | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS
-           | _STAGED_SUPCON_MODEL_KEYS)
+           | _STAGED_SUPCON_MODEL_KEYS | _CCGD_ST_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -587,6 +595,11 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_supcon3_staged":              "CNN+GRU SC3 Staged",
     "cnn_gru_dual_cosine_recon_supcon3_staged": "CNN+GRU CosRecon SC3 Staged",
     "cnn_gru_dual_attn_recon_supcon3_staged":   "CNN+GRU AttnRecon SC3 Staged",
+    # CCGD arch-poc ST
+    "ccgd_arch_poc_st":     "CCGD ST",
+    "ccgd_arch_poc_st_sc1": "CCGD SC1 ST",
+    "ccgd_arch_poc_st_sc2": "CCGD SC2 ST",
+    "ccgd_arch_poc_st_sc3": "CCGD SC3 ST",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({
@@ -987,6 +1000,57 @@ LABEL_MAPPINGS = {
 		8: 'RealTarget',
 		9: 'NC-RealTarget',
 	},
+	'D20260731_E00_C00_F4500KHz_U_DDM_01_01':{
+        0: 'IAV',
+        1: 'IAV',
+        2: 'IAV',
+        3: 'IBV',
+        4: 'Kp',
+        5: 'Cov',
+        6: 'Hadv',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+	},
+	'D20260731_E00_C00_F4500KHz_U_DDM_01_04':{
+        0: 'IAV',
+        1: 'IAV',
+        2: 'IAV',
+        3: 'IBV',
+        4: 'Kp',
+        5: 'Cov',
+        6: 'Hadv',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+	},
+}
+
+CONC_MAPPINGS = {
+    'D20260731_E00_C00_F4500KHz_U_DDM_01_01':{
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 10000,
+        4: 100000,
+        5: 1000000,
+        6: 1000000,
+        7: 100000,
+        8: 0,
+        9: 0,
+    },
+    'D20260731_E00_C00_F4500KHz_U_DDM_01_04':{
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 10000,
+        4: 100000,
+        5: 1000000,
+        6: 1000000,
+        7: 100000,
+        8: 0,
+        9: 0,
+    },
 }
 
 def get_label_mappings(exp_path):
@@ -1005,6 +1069,25 @@ def get_label_mappings(exp_path):
             for dataset, mapping in LABEL_MAPPINGS.items()
         }
     return LABEL_MAPPINGS
+
+
+def get_conc_array(folder_name, Y_well):
+    """Expand CONC_MAPPINGS[folder_name] to a per-sample object array aligned to Y_well.
+
+    Returns None if folder_name is not in CONC_MAPPINGS or all mapped values are
+    empty / None — so datasets with no entry behave identically to before.
+    Empty string '' maps to None and becomes REG_SENTINEL in 03's float-conversion pass.
+    """
+    mapping = CONC_MAPPINGS.get(folder_name, {})
+    if not mapping:
+        return None
+    arr = np.array(
+        [(v if (v is not None and v != '') else None)
+         for v in (mapping.get(int(w), None) for w in Y_well)],
+        dtype=object,
+    )
+    return None if all(x is None for x in arr) else arr
+
 
 # ==========================================
 # CROSS-DATASET ROBUSTNESS CV (04)

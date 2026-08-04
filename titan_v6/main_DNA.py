@@ -224,15 +224,15 @@ if __name__ == '__main__':
     # (The previous relative path depended on running from a specific folder.)
     # onedrive_path = Path.home() / "OneDrive - ProtonDx"
     # exp_folder = Path(onedrive_path,"Data","Multi_Vref")  # CHANGE THE NAME OF THE DATA FOLDER HERE
-    exp_folder = Path("/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi")  # OR THIS TO RUN ON TEST DATA (IGNORES ONE DRIVE PATH)
+    exp_folder = Path("/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final")  # OR THIS TO RUN ON TEST DATA (IGNORES ONE DRIVE PATH)
     # exp_folder = Path(onedrive_path, "Master Data Folder", "Lacewing - 25_Zambia_Malaria")
 
-    #exp_paths = [f for f in exp_folder.glob('*') if f.is_dir()]  # USE THIS TO RUN ALL EXPERIMENTS IN A FOLDER
+    exp_paths = [f for f in exp_folder.glob('*') if f.is_dir()]  # USE THIS TO RUN ALL EXPERIMENTS IN A FOLDER
     # exp_paths = [Path(exp_folder, "D20260320_E00_C00_F4500KHz_U_Elena_steap_cv")]  # OR THIS TO RUN ONE EXPERIMENT
     # exp_paths = [Path(exp_folder, "D20260522_E00_C00_F4500KHz_U_manifold_test_05")]  # OR THIS TO RUN ONE EXPERIMENT
     # exp_paths = [Path(exp_folder, "D20260608_E00_C00_F4500KHz_U_norm_temp_04")]  # OR THIS TO RUN ONE EXPERIMENT
     # exp_paths = [Path(exp_folder, "D20260609_E00_C00_F4500KHz_U_norm_temp_read_06")]  # OR THIS TO RUN ONE EXPERIMENT
-    exp_paths = [Path(exp_folder, "D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01")]  # OR THIS TO RUN ONE EXPERIMENT
+    # exp_paths = [Path(exp_folder, "D20260611_E00_C00_F4500KHz_U_lambda_test_manifold_01")]  # OR THIS TO RUN ONE EXPERIMENT
     
     # Optional: overlay several runs on one plot (t=0 at vref jump / idx_settled).
     # Set enabled=True and list folders in overlay_paths (or None to reuse exp_paths).

@@ -575,13 +575,13 @@ if __name__ == "__main__":
         # SINGLE-TASK (ST) MODELS
         else:
             if args.supcon == 1:
-                models = ['cnn_gru_dual_supcon', 'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon']
+                models = ['cnn_gru_dual_supcon', 'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon', 'ccgd_arch_poc_st_sc1']
             elif args.supcon == 2:
-                models = ['cnn_gru_dual_supcon2', 'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2']
+                models = ['cnn_gru_dual_supcon2', 'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2', 'ccgd_arch_poc_st_sc2']
             elif args.supcon == 3:
-                models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3']
+                models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3', 'ccgd_arch_poc_st_sc3']
             else:
-                models = ['cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
+                models = ['cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'ccgd_arch_poc_st']
 
 
         if args.rerun_models:
