@@ -474,15 +474,24 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
             x_tf_curve = x_tf_curve_scaled
         else:
             x_tf_curve = x_tf_curve_raw
+        # Neighbor-stack models (e.g. cnn_gru_dual_attn_recon) take (N, k+1, T) as input;
+        # detected before the name-based flags to prevent them from hitting supcon/base paths.
+        is_neighbor_stack = (
+            not isinstance(model.input, (list, tuple))
+            and hasattr(model.input, 'name')
+            and 'neighbor_stack' in model.input.name
+        )
+
         # More specific checks first to avoid substring collision with supcon2/supcon3.
         is_supcon_mtl3 = 'supcon3_mtl' in _base_name   # 5 outputs: cls, reg, p1, p2, p3
         is_supcon_mtl2 = 'supcon2_mtl' in _base_name   # 4 outputs: cls, reg, p1, p2
-        is_supcon3     = 'supcon3' in _base_name and not is_supcon_mtl3   # 4 outputs: cls, p1, p2, p3
-        is_supcon2     = 'supcon2' in _base_name and not is_supcon_mtl2   # 3 outputs: cls, p1, p2
+        is_supcon3     = 'supcon3' in _base_name and not is_supcon_mtl3 and not is_neighbor_stack
+        is_supcon2     = 'supcon2' in _base_name and not is_supcon_mtl2 and not is_neighbor_stack
         is_supcon_mtl  = 'supcon_mtl' in _base_name and not is_supcon_mtl3 and not is_supcon_mtl2
         is_supcon      = ('supcon' in _base_name and not is_supcon_mtl
                           and not is_supcon2 and not is_supcon3
-                          and not is_supcon_mtl2 and not is_supcon_mtl3)
+                          and not is_supcon_mtl2 and not is_supcon_mtl3
+                          and not is_neighbor_stack)
         is_mtl  = (('mtl' in _base_name or 'rcfd' in _base_name)
                    and not is_supcon_mtl and not is_supcon_mtl2 and not is_supcon_mtl3)
         is_lf   = '_lf' in _base_name and not is_mtl and not is_supcon_mtl
@@ -785,6 +794,35 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
                 "is_type": "dual", "master_saliency": master_sal,
                 "z_curve": z_cnn.numpy(), "curve_order": cnn_order, "curve_imp_shape": cnn_imp_shape, "raw_saliency_curve": raw_saliency_cnn,
                 "z_rnn": z_rnn.numpy(), "rnn_order": rnn_order, "rnn_imp_shape": rnn_imp_shape, "raw_saliency_rnn": raw_saliency_rnn
+            }
+
+        # --------------------------------------------------------
+        # NEIGHBOR-STACK MODELS (e.g. cnn_gru_dual_attn_recon, *_supcon variants)
+        # Input is (N, k+1, T) — repeat each curve k+1 times to form a dummy stack,
+        # then average the gradient over all neighbor positions to get a (T,) saliency.
+        elif is_neighbor_stack:
+            try:
+                k_plus_1 = model.input.shape[1]
+                x_center = x_tf_curve_raw[:, :, 0]                         # (N, T)
+                x_stack  = tf.stack([x_center] * k_plus_1, axis=1)         # (N, k+1, T)
+                with tf.GradientTape() as tape:
+                    tape.watch(x_stack)
+                    raw_out = model(x_stack, training=False)
+                    cls_t   = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
+                    target_cls = tf.reduce_max(cls_t, axis=1)
+                grad         = tape.gradient(target_cls, x_stack)           # (N, k+1, T)
+                per_sample   = np.abs(grad.numpy()).mean(axis=1)            # (N, T) — avg over neighbors
+                master_sal   = per_sample.mean(axis=0)                      # (T,)
+                del tape
+            except Exception as e:
+                print(f"      [!] NeighborStack gradient failed for {model_name}: {e} — skipping.")
+                continue
+            artifacts[model_name] = {
+                "is_type": "base", "master_saliency": master_sal,
+                "z_curve": per_sample,
+                "curve_order": np.array([0]),
+                "curve_imp_shape": per_sample.shape,
+                "raw_saliency_curve": [per_sample],       # list of (N, T) — one "latent dim"
             }
 
         # --------------------------------------------------------
