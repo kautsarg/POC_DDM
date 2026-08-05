@@ -155,7 +155,10 @@ if __name__ == "__main__":
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Regenerate the HTML reports even if they already exist")
-    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"], help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--curve_type", type=str, nargs="+",
+                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8",
+                                 "ori_curve_wavelet_bior35", "ori_curve_sg_p4"],
+                        help="Which curve dataset(s) to report on (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     args = parser.parse_args()
 
     exp_paths = sorted([

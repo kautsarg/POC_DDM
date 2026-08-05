@@ -700,7 +700,8 @@ if __name__ == "__main__":
     parser.add_argument("--n_splits", type=int, default=1,
                         help="Must match the --n_splits used for the corresponding 03 training run")
     parser.add_argument("--curve_type", type=str, nargs="+",
-                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"],
+                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8",
+                                 "ori_curve_wavelet_bior35", "ori_curve_sg_p4"],
                         help="Which curve dataset(s) to report on")
     args = parser.parse_args()
 

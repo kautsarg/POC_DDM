@@ -59,10 +59,12 @@ EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_o
 # resolve a `--curve_type` CLI value to its index in the joblib dataset list.
 
 CURVE_TYPE_ALIASES = {
-    "ori_curve": "ori_curves",
-    "ori_curve_avg": "ori_curves_avg",
-    "ori_curve_norm": "ori_curves_norm",
+    "ori_curve":              "ori_curves",
+    "ori_curve_avg":          "ori_curves_avg",
+    "ori_curve_norm":         "ori_curves_norm",
     "ori_curve_wavelet_sym8": "ori_curves_wavelet_sym8",
+    "ori_curve_wavelet_bior35": "ori_curves_wavelet_bior35",
+    "ori_curve_sg_p4":          "ori_curves_sg_p4",
 }
 
 def resolve_curve_dataset_idx(curve_type, dataset_name_list):
@@ -619,8 +621,11 @@ FILTER_PRINT_MAP = {
 }
 
 CURVE_PRINT_MAP = {
-    "ori_curves":     "Ori Curves (raw)",
-    "ori_curves_avg": "Ori Curves (avg)",
+    "ori_curves":              "Ori Curves (raw)",
+    "ori_curves_avg":          "Ori Curves (avg)",
+    "ori_curves_wavelet_sym8": "Wavelet sym8",
+    "ori_curves_wavelet_bior35": "Wavelet bior3.5",
+    "ori_curves_sg_p4":          "SG p=4 (auto-w)",
 }
 
 METRIC_LABEL = {"accuracy": "Accuracy", "macro_f1": "Macro-F1", "mcc": "MCC"}

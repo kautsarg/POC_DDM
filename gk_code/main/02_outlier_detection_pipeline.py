@@ -222,6 +222,14 @@ def _build_variant_lists(data):
         dataset_name.append("ori_curves_wavelet_sym8")
         dataset.append(data["curves"]["ori_curves_wavelet_sym8"])
 
+    if "ori_curves_wavelet_bior35" in data["curves"]:
+        dataset_name.append("ori_curves_wavelet_bior35")
+        dataset.append(data["curves"]["ori_curves_wavelet_bior35"])
+
+    if "ori_curves_sg_p4" in data["curves"]:
+        dataset_name.append("ori_curves_sg_p4")
+        dataset.append(data["curves"]["ori_curves_sg_p4"])
+
     for k, v in data["sigmoid_curves"].items():
         dataset_name.append(f"{k}_fitted_full")
         dataset.append(v["fitted_full"])
@@ -625,7 +633,8 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
 
     # AE methods run on all standard curve variants (raw, avg, wavelet).
     ae_names = [n for n in dataset_name
-                if n in ('ori_curves', 'ori_curves_avg', 'ori_curves_wavelet_sym8')]
+                if n in ('ori_curves', 'ori_curves_avg', 'ori_curves_wavelet_sym8',
+                         'ori_curves_wavelet_bior35', 'ori_curves_sg_p4')]
     ae_dataset = [dataset[list(dataset_name).index(n)] for n in ae_names]
     ae_idx = [list(dataset_name).index(n) for n in ae_names]
 

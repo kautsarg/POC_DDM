@@ -10,6 +10,7 @@ from scipy.ndimage import convolve1d
 from joblib import Parallel, delayed
 
 import pywt
+from scipy.signal import savgol_filter
 import config
 
 # Add custom paths
@@ -313,6 +314,45 @@ def normalize_curves_minmax(curves):
     return (curves - row_min) / denom
 
 
+def _ensure_odd(w):
+    return w + (1 - w % 2)
+
+
+def _sg_derivative_scores(curves, windows, polyorder, sample_size=400, seed=0):
+    """PRS / ROS sweep matching the notebook's _derivative_scores algorithm."""
+    rng    = np.random.default_rng(seed)
+    sample = curves[rng.choice(len(curves), size=min(sample_size, len(curves)), replace=False)]
+    _ref_w = max(polyorder + 2, _ensure_odd(int(sample.shape[1] * 0.03)))
+    ref    = savgol_filter(sample, window_length=_ref_w, polyorder=2, axis=1)
+    peak_r = np.abs(np.diff(ref, axis=1)).max(axis=1)
+    ro_raw = np.std(np.diff(np.diff(sample, axis=1), axis=1), axis=1)
+    prs, ros = [], []
+    for w in windows:
+        w_  = max(_ensure_odd(int(w)), polyorder + 2)
+        df  = np.diff(savgol_filter(sample, window_length=w_, polyorder=polyorder, axis=1), axis=1)
+        prs.append(np.mean(np.abs(df).max(axis=1) / np.where(peak_r > 0, peak_r, 1)))
+        ros.append(np.mean(np.std(np.diff(df, axis=1), axis=1) / np.where(ro_raw > 0, ro_raw, 1)))
+    return np.array(prs), np.array(ros)
+
+
+def _sg_sweet_spot(windows, roughnesses):
+    """First window where ROS <= 2x 10th-percentile floor (matches notebook)."""
+    floor = np.percentile(roughnesses, 10)
+    sweet = np.where(roughnesses <= 2.0 * floor)[0]
+    return int(windows[sweet[0]] if len(sweet) else windows[np.argmin(roughnesses)])
+
+
+def sg_p4_denoise_curves(curves):
+    """Auto-sweep optimal window for SG polyorder=4, return (denoised, optimal_w)."""
+    T       = curves.shape[1]
+    windows = np.unique([_ensure_odd(int(w))
+                         for w in np.linspace(5, max(7, int(T * 0.25)), 40)])
+    windows = windows[windows >= 6]   # polyorder=4 needs w >= 6
+    _, ros  = _sg_derivative_scores(curves, windows.astype(float), polyorder=4)
+    opt_w   = _sg_sweet_spot(windows, ros)
+    return savgol_filter(curves, window_length=opt_w, polyorder=4, axis=1), opt_w
+
+
 def wavelet_denoise_curves(curves, wavelet="sym8", level=5):
     curves = np.asarray(curves, dtype=np.float64)
     out = np.empty_like(curves)
@@ -329,7 +369,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
                                      indices_dict, pixel_temp_dfs, baseline_value,
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
                                      window_size_ori, window_size_1stder, margin, max_significant_index,
-                                     compute_sigmoid_fits=False, normalize_curves=False, wavelet_sym8=False):
+                                     compute_sigmoid_fits=False, normalize_curves=False,
+                                     wavelet_sym8=False, wavelet_bior35=False, sg_p4=False):
     """
     Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
     (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
@@ -353,6 +394,13 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
         curves_dict["ori_curves_norm"] = normalize_curves_minmax(processed_curves[0])
     if wavelet_sym8:
         curves_dict["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(processed_curves[0])
+    _sg_w = None   # set unconditionally so save_data can always reference it
+    if wavelet_bior35:
+        curves_dict["ori_curves_wavelet_bior35"] = wavelet_denoise_curves(
+            processed_curves[0], wavelet="bior3.5", level=5)
+    if sg_p4:
+        curves_dict["ori_curves_sg_p4"], _sg_w = sg_p4_denoise_curves(processed_curves[0])
+        print(f"  -> SG p=4 optimal window: {_sg_w}")
 
     save_data = {
         "curves": curves_dict,
@@ -382,6 +430,7 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
         "window_size_1stder": window_size_1stder if compute_sigmoid_fits else None,
         "margin": margin,
         "concentration": config.get_conc_array(Path(save_exp_path).name, Y_well),
+        "sg_p4_optimal_w": _sg_w,
     }
 
     save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
@@ -420,6 +469,12 @@ if __name__ == "__main__":
     parser.add_argument("--wavelet_sym8", action="store_true",
                         help="Add an 'ori_curves_wavelet_sym8' variant: sym8 wavelet denoising with "
                              "Donoho-Johnstone universal threshold. Selectable via --curve_type ori_curve_wavelet_sym8.")
+    parser.add_argument("--wavelet_bior35", action="store_true",
+                        help="Add an 'ori_curves_wavelet_bior35' variant: bior3.5 wavelet denoising with "
+                             "Donoho-Johnstone universal threshold. Selectable via --curve_type ori_curve_wavelet_bior35.")
+    parser.add_argument("--sg_p4", action="store_true",
+                        help="Add an 'ori_curves_sg_p4' variant: SG polyorder=4 with auto window sweep "
+                             "(PRS/ROS scoring). Selectable via --curve_type ori_curve_sg_p4.")
     args = parser.parse_args()
 
     n_wells = args.n_wells
@@ -466,11 +521,14 @@ if __name__ == "__main__":
             existing_data = None
 
         if existing_data is not None and "curves" in existing_data:
-            needs_avg_patch = not ("ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data)
-            needs_norm_patch = args.normalize_curves and "ori_curves_norm" not in existing_data["curves"]
-            needs_wavelet_patch = args.wavelet_sym8 and "ori_curves_wavelet_sym8" not in existing_data["curves"]
+            needs_avg_patch     = not ("ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data)
+            needs_norm_patch    = args.normalize_curves  and "ori_curves_norm"             not in existing_data["curves"]
+            needs_wavelet_patch = args.wavelet_sym8      and "ori_curves_wavelet_sym8"     not in existing_data["curves"]
+            needs_bior35_patch  = args.wavelet_bior35    and "ori_curves_wavelet_bior35"   not in existing_data["curves"]
+            needs_sg_p4_patch   = args.sg_p4             and "ori_curves_sg_p4"            not in existing_data["curves"]
 
-            if not needs_avg_patch and not needs_norm_patch and not needs_wavelet_patch:
+            if not any([needs_avg_patch, needs_norm_patch, needs_wavelet_patch,
+                        needs_bior35_patch, needs_sg_p4_patch]):
                 print(f"Cache hit: {save_exp_path}")
                 print("  ✓ Experiment complete!\n")
                 sys.exit(0)
@@ -488,6 +546,14 @@ if __name__ == "__main__":
             if needs_wavelet_patch:
                 existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
                 patched_fields.append("ori_curves_wavelet_sym8")
+            if needs_bior35_patch:
+                existing_data["curves"]["ori_curves_wavelet_bior35"] = wavelet_denoise_curves(
+                    existing_data["curves"]["ori_curves"], wavelet="bior3.5", level=5)
+                patched_fields.append("ori_curves_wavelet_bior35")
+            if needs_sg_p4_patch:
+                existing_data["curves"]["ori_curves_sg_p4"], existing_data["sg_p4_optimal_w"] = \
+                    sg_p4_denoise_curves(existing_data["curves"]["ori_curves"])
+                patched_fields.append("ori_curves_sg_p4")
 
             print(f"Cache hit: {save_exp_path} (patching missing {', '.join(patched_fields)})")
             safe_joblib_dump(existing_data, save_path, compress=3)
@@ -639,7 +705,9 @@ if __name__ == "__main__":
                                     config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin, max_significant_index,
                                     compute_sigmoid_fits=args.compute_sigmoid_fits,
                                     normalize_curves=args.normalize_curves,
-                                    wavelet_sym8=args.wavelet_sym8)
+                                    wavelet_sym8=args.wavelet_sym8,
+                                    wavelet_bior35=args.wavelet_bior35,
+                                    sg_p4=args.sg_p4)
     
     unique_wells = np.unique(Y_well)
 

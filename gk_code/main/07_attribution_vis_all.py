@@ -2217,7 +2217,10 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER, help="Path to experiment datasets")
     parser.add_argument("--filter_key", type=str, default=None, help="kinetic_features column used to mask samples (default: None = no filtering)")
     parser.add_argument("--force_rerun", action="store_true", help="Rerun and overwrite outputs even if they already exist")
-    parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8"], help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
+    parser.add_argument("--curve_type", type=str, nargs="+",
+                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8",
+                                 "ori_curve_wavelet_bior35", "ori_curve_sg_p4"],
+                        help="Which curve dataset(s) to interpret (e.g. 'ori_curve', 'ori_curve_avg', or a raw dataset_name entry)")
     parser.add_argument("--top_n", type=int, default=10, help="Unique-feature latent rows to show per branch in the latent->feature mapping plot (default: 10)")
     parser.add_argument("--model_names", type=str, nargs="+", default=None, help="Restrict to these saved models only (default: all available). Use _inc suffix for inception-smoothed variants (e.g. 'cnn_gru_dual_inc').")
 

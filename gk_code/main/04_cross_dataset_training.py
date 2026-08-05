@@ -171,7 +171,10 @@ if __name__ == "__main__":
     parser.add_argument("--task_id", type=int, default=0, help="Array Job ID -> index into CROSS_DATASET_GROUPS")
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
-    parser.add_argument("--curve_type", type=str, nargs='+', default=['ori_curve', 'ori_curve_avg', 'ori_curve_wavelet_sym8'], help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
+    parser.add_argument("--curve_type", type=str, nargs='+',
+                        default=['ori_curve', 'ori_curve_avg', 'ori_curve_wavelet_sym8',
+                                 'ori_curve_wavelet_bior35', 'ori_curve_sg_p4'],
+                        help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
     parser.add_argument("--fast_mode", action="store_true",
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
@@ -218,9 +221,7 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    # for curve_type in args.curve_type:
-    # for curve_type in reversed(args.curve_type):
-    ordered = [args.curve_type[i] for i in [2, 1, 0] if i < len(args.curve_type)]
+    ordered = list(reversed(args.curve_type))
     for curve_type in ordered:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 

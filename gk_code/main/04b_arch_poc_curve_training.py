@@ -5,7 +5,7 @@ Own model classes / Keras packages / result keys (suffix _lofo) — distinct fro
 
 LOFO structure (mirrors 04_cross_dataset_training.py):
   task_id       → config.CROSS_DATASET_GROUPS group index
-  curve_type_id → 0=ori_curve · 1=ori_curve_avg · 2=ori_curve_wavelet_sym8
+  curve_type_id → 0=ori_curve · 1=ori_curve_avg · 2=ori_curve_wavelet_sym8 · 3=ori_curve_wavelet_bior35 · 4=ori_curve_sg_p4
 
 All folders in the group are combined + resampled (CurveResampler), then each
 folder is left out in turn as the test set.  Single-task classification only —
@@ -57,7 +57,8 @@ from model_utils_supcon import SupConModel, SupConBranch2STModel, SupConBranch3S
 import joblib
 import config
 
-CURVE_TYPES = ['ori_curve', 'ori_curve_avg', 'ori_curve_wavelet_sym8']
+CURVE_TYPES = ['ori_curve', 'ori_curve_avg', 'ori_curve_wavelet_sym8',
+               'ori_curve_wavelet_bior35', 'ori_curve_sg_p4']
 
 
 # ======================================================================
@@ -408,8 +409,9 @@ if __name__ == '__main__':
                         help='Index into config.CROSS_DATASET_GROUPS')
     parser.add_argument('--exp_folder',    type=str,
                         default='/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_multi_nc_subtract')
-    parser.add_argument('--curve_type_id', type=int, default=0, choices=[0, 1, 2],
-                        help='0=ori_curve  1=ori_curve_avg  2=ori_curve_wavelet_sym8')
+    parser.add_argument('--curve_type_id', type=int, default=0, choices=[0, 1, 2, 3, 4],
+                        help='0=ori_curve  1=ori_curve_avg  2=ori_curve_wavelet_sym8  '
+                             '3=ori_curve_wavelet_bior35  4=ori_curve_sg_p4')
     parser.add_argument('--force_rerun',   action='store_true')
     args = parser.parse_args()
 

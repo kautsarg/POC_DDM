@@ -32,10 +32,10 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final
 # PREPROCESSING AND OUTLIER DETECTION
 for nc_subtract in 0 1; do
     if [ "$nc_subtract" -eq 1 ]; then
-        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --nc_subtract --wavelet_sym8
+        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --nc_subtract --wavelet_sym8 --wavelet_bior35 --sg_p4
         TRAIN_FOLDER="${EXP_FOLDER}_nc_subtract"
     else
-        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --wavelet_sym8
+        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --wavelet_sym8 --wavelet_bior35 --sg_p4
         TRAIN_FOLDER="$EXP_FOLDER"
     fi
 
@@ -56,7 +56,7 @@ for nc_subtract in 0 1; do
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 2
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 3
 
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/05_outlier_visualization_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER"  --force_rerun
     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06_model_prediction_report.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun
     # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/07_attribution_vis_all.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --force_rerun 
 
