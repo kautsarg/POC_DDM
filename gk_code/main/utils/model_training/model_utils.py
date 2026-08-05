@@ -746,6 +746,7 @@ _XAI_SAVE_NAME.update({k: k for k in CL_BRANCH_SUPCON3_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_RCFD_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_STAGED_SUPCON_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CCGD_ST_ALL_KEYS})
 
 
 
@@ -1578,6 +1579,10 @@ def evaluate_outlier_filters(
                         y_fit_ = y_train if is_sc0 else {'cls_out': y_train}
                         model.fit(X_train_curve, y_fit_,
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
                     cls_prob = raw_out if is_sc0 else raw_out[0]
                     pred = np.argmax(cls_prob, axis=1)
