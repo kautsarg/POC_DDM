@@ -197,6 +197,13 @@ if __name__ == "__main__":
                         help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
     parser.add_argument("--supcon_staged", action="store_true",
                         help="2-stage SupCon: Stage 1 SC-only until plateau, Stage 2 CE-only frozen backbone.")
+    parser.add_argument("--models", type=str, nargs='+', default=None,
+                        help="Filter model list by base name (e.g. 'cnn_gru_dual' 'cnn_gru_dual_attn_recon'). "
+                             "Strips _supconN/_lc/_mtl suffixes before matching.")
+    parser.add_argument("--train_full", action="store_true",
+                        help="After LOFO, train one final model on ALL data (no holdout) and save to "
+                             "model_interpretation/full_data/. Metrics in result are train-set accuracy "
+                             "(inflated) — use LOFO metrics for evaluation.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
@@ -377,6 +384,11 @@ if __name__ == "__main__":
             else:
                 models = ['cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
 
+        if args.models:
+            import re
+            _req = set(args.models)
+            models = [m for m in models
+                      if m in _req or re.sub(r'_(supcon\d*|lc)(_mtl)?$', '', m) in _req]
 
         # Concentration for MTL regression head (sentinel-encoded; combined across all group folders).
         y_concentration = None
@@ -618,4 +630,37 @@ if __name__ == "__main__":
                 save_prefix=os.path.join(plot_dir, fold_label),
             )
 
+            gc.collect()
+
+        if getattr(args, 'train_full', False):
+            all_idx = np.arange(len(y_full))
+            full_model_dir = out_dir / "model_interpretation" / "full_data"
+            full_model_dir.mkdir(parents=True, exist_ok=True)
+            print(f"\n{'='*75}")
+            print(f"[FULL DATA] Training on all {len(y_full)} samples (no holdout) | curve={curve_type}")
+            print(f"{'='*75}")
+            res_full = evaluate_outlier_filters(
+                X_curves=combined["curves"],
+                features_df=combined["features_df"],
+                y_encoded=y_full,
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name="full_data",
+                cached_results=lofo_results.get("full_data", {}),
+                models=models,
+                checkpoint_fn=None,
+                KFS=top_10_features,
+                rerun_models=config.RERUN_MODELS,
+                cv_splits=[(all_idx, all_idx)],
+                save_model_dir=full_model_dir,
+                save_model_curve_type=curve_type,
+                coords=combined["coords"],
+                well_ids=combined["well_ids"],
+                k_neighbors=args.k_neighbors,
+                multitask=args.mtl,
+                y_concentration=y_concentration,
+                cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+            )
+            lofo_results["full_data"] = res_full
+            safe_joblib_dump(lofo_results, results_file_path, compress=3)
             gc.collect()

@@ -334,7 +334,7 @@ def _run_lofo_fold(
                 optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
                 jit_compile=False)
 
-        model.fit(X_tr, fit_y,
+        _hist = model.fit(X_tr, fit_y,
                   validation_data=val_data, callbacks=callbacks,
                   epochs=500, batch_size=512, shuffle=True, verbose=0)
 
@@ -354,6 +354,7 @@ def _run_lofo_fold(
         res_entry[preds_key]   = [pred]
         res_entry[probs_key]   = [cls_probs]
         res_entry[classes_key] = [encoder_classes]
+        res_entry['train_history'] = [_hist.history]
 
         lofo_results[fold_label] = {None: res_entry}
         checkpoint_fn(lofo_results[fold_label])

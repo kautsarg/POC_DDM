@@ -1018,6 +1018,7 @@ def evaluate_outlier_filters(
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
             reg_preds_per_fold, reg_trues_per_fold = [], []  # populated only for MTL models
+            histories = []
             start_time = time.perf_counter()
             _lstm_ae_failed = False
 
@@ -1109,12 +1110,14 @@ def evaluate_outlier_filters(
                         epochs = 500
 
                     if _val_split_ok:
-                        model.fit([X_train_curve_fit, X_train_man_fit], y_train_fit,
+                        _hist = model.fit([X_train_curve_fit, X_train_man_fit], y_train_fit,
                                  validation_data=([X_val_curve, X_val_man], y_val),
                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                  callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit([X_train_curve, X_train_man], y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -1150,12 +1153,14 @@ def evaluate_outlier_filters(
 
                     # Notice we only pass X_train_curve here, not a list of inputs!
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, y_train_fit,
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
                                  validation_data=(X_val_curve, y_val),
                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                  callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -1180,12 +1185,14 @@ def evaluate_outlier_filters(
                     epochs = 500
 
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, y_train_fit,
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
                                  validation_data=(X_val_curve, y_val),
                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                  callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
@@ -1211,12 +1218,14 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_model(X_train_curve.shape[1], n_classes)
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, y_train_fit,
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
                                   validation_data=(X_val_curve, y_val),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1289,18 +1298,20 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
-                        model.fit(
+                        _hist = model.fit(
                             _x_tr_fit,
                             {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                             validation_data=(_x_val_in,
                                              {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                             callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(
+                        _hist = model.fit(
                             _x_tr,
                             {'cls_out': y_train, 'reg_out': conc_train_scaled},
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
@@ -1357,18 +1368,20 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
-                        model.fit(
+                        _hist = model.fit(
                             X_train_curve_fit,
                             {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                             validation_data=(X_val_curve,
                                              {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                             callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(
+                        _hist = model.fit(
                             X_train_curve,
                             {'cls_out': y_train, 'reg_out': conc_train_scaled},
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
@@ -1410,15 +1423,17 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
 
                     if _val_split_ok:
-                        model.fit(
+                        _hist = model.fit(
                             X_train_curve_fit,
                             {'cls_out': y_train_fit},
                             validation_data=(X_val_curve, {'cls_out': y_val}),
                             epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                             callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
@@ -1450,13 +1465,15 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1498,16 +1515,18 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1538,13 +1557,15 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1571,14 +1592,16 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         y_fit_  = y_train_fit if is_sc0 else {'cls_out': y_train_fit}
                         y_val_  = y_val       if is_sc0 else {'cls_out': y_val}
-                        model.fit(X_train_curve_fit, y_fit_,
+                        _hist = model.fit(X_train_curve_fit, y_fit_,
                                   validation_data=(X_val_curve, y_val_),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
                         y_fit_ = y_train if is_sc0 else {'cls_out': y_train}
-                        model.fit(X_train_curve, y_fit_,
+                        _hist = model.fit(X_train_curve, y_fit_,
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1620,16 +1643,18 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1656,13 +1681,15 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1685,13 +1712,15 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1715,13 +1744,15 @@ def evaluate_outlier_filters(
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1774,18 +1805,20 @@ def evaluate_outlier_filters(
                             AutoPhaseTransitionSTCallback(
                                 min_phase1_epochs=30, patience=15,
                                 early_stop_cb=_st_es, rlrp_cb=_st_rlrp))
-                        model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
+                        _hist = model.fit(X_train_curve_fit, {'cls_out': y_train_fit},
                                   validation_data=(X_val_curve, {'cls_out': y_val}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_st_es, _st_rlrp, _st_phase_cb])
+                        histories.append(_hist.history)
                     else:
                         if not cl_phase1_epochs:
                             raise ValueError(
                                 f'[{_base_m}] No val split; set --cl_phase1_epochs for Stage 1.')
                         _st_phase_cb = FixedPhaseTransitionSTCallback(cl_phase1_epochs)
-                        model.fit(X_train_curve, {'cls_out': y_train},
+                        _hist = model.fit(X_train_curve, {'cls_out': y_train},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_st_phase_cb])
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1829,21 +1862,23 @@ def evaluate_outlier_filters(
                             FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                        histories.append(_hist.history)
                     else:
                         _cl_phase_cb = (
                             FixedPhaseTransitionCallback(cl_phase1_epochs)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_phase_cb])
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1889,21 +1924,23 @@ def evaluate_outlier_filters(
                             FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                        histories.append(_hist.history)
                     else:
                         _cl_phase_cb = (
                             FixedPhaseTransitionCallback(cl_phase1_epochs)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_phase_cb])
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -1950,21 +1987,23 @@ def evaluate_outlier_filters(
                             FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                        histories.append(_hist.history)
                     else:
                         _cl_phase_cb = (
                             FixedPhaseTransitionCallback(cl_phase1_epochs)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_phase_cb])
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -2011,21 +2050,23 @@ def evaluate_outlier_filters(
                             FixedPhaseTransitionCallback(cl_phase1_epochs, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10, early_stop_cb=_cl_es, rlrp_cb=_cl_rlrp))
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_es, _cl_rlrp, _cl_phase_cb])
+                        histories.append(_hist.history)
                     else:
                         _cl_phase_cb = (
                             FixedPhaseTransitionCallback(cl_phase1_epochs)
                             if cl_phase1_epochs else
                             AutoPhaseTransitionCallback(min_phase1_epochs=30, patience=10))
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=[_cl_phase_cb])
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -2063,16 +2104,18 @@ def evaluate_outlier_filters(
                     if _val_split_ok:
                         conc_train_fit_scaled = conc_train_scaled[_tr_sub]
                         conc_val_scaled = conc_train_scaled[_val_sub]
-                        model.fit(X_train_curve_fit,
+                        _hist = model.fit(X_train_curve_fit,
                                   {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
                                   validation_data=(X_val_curve,
                                                    {'cls_out': y_val, 'reg_out': conc_val_scaled}),
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                   callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve,
+                        _hist = model.fit(X_train_curve,
                                   {'cls_out': y_train, 'reg_out': conc_train_scaled},
                                   epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
                         safe_keras_save(model, _xai_path)
@@ -2098,12 +2141,14 @@ def evaluate_outlier_filters(
                     epochs = 500
 
                     if _val_split_ok:
-                        model.fit(X_train_curve_fit, y_train_fit,
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
                                  validation_data=(X_val_curve, y_val),
                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                  callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -2153,12 +2198,14 @@ def evaluate_outlier_filters(
                     X_test_curve_scaled = _scale(X_test_curve)
 
                     if _val_split_ok:
-                        model.fit(X_train_curve_scaled, y_train_fit,
+                        _hist = model.fit(X_train_curve_scaled, y_train_fit,
                                  validation_data=(_scale(X_val_curve), y_val),
                                  epochs=epochs, batch_size=512, shuffle=True, verbose=0,
                                  callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
                     else:
-                        model.fit(X_train_curve_scaled, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        _hist = model.fit(X_train_curve_scaled, y_train, epochs=epochs, batch_size=512, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
 
                     if _do_xai_save:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -2190,8 +2237,12 @@ def evaluate_outlier_filters(
                         clf.fit(X_train_curve_fit, y_train_fit,
                                validation_data=(X_val_curve, y_val),
                                callbacks=_fit_callbacks)
+                        if hasattr(clf, 'history_') and clf.history_:
+                            histories.append(clf.history_)
                     else:
                         clf.fit(X_train_curve, y_train)
+                        if hasattr(clf, 'history_') and clf.history_:
+                            histories.append(clf.history_)
 
                     if _do_xai_save and _base_m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
                         _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
@@ -2215,6 +2266,8 @@ def evaluate_outlier_filters(
             res_entry[preds_key] = preds
             res_entry[probs_key] = probs
             res_entry[classes_key] = classes_list
+            if histories:
+                res_entry[f'train_history_{_base_m}_'] = histories
             _is_any_mtl = (_base_m in MTL_MODEL_KEYS or _base_m in SUPCON_MTL_MODEL_KEYS
                            or _base_m in BRANCH_SUPCON2_MTL_MODEL_KEYS
                            or _base_m in BRANCH_SUPCON3_MTL_MODEL_KEYS
