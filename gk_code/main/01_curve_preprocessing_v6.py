@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from pathlib import Path
-from scipy.ndimage import convolve1d
+from scipy.ndimage import convolve1d, uniform_filter1d
 from joblib import Parallel, delayed
 
 import pywt
@@ -370,7 +370,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
                                      window_size_ori, window_size_1stder, margin, max_significant_index,
                                      compute_sigmoid_fits=False, normalize_curves=False,
-                                     wavelet_sym8=False, wavelet_bior35=False, sg_p4=False):
+                                     wavelet_sym8=False, wavelet_bior35=False, sg_p4=False,
+                                     moving_avg=False):
     """
     Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
     (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
@@ -384,14 +385,13 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
     # (light_pipeline reconstructs well_2d_bs_active independently, never reads it here).
     curves_dict = {
         "ori_curves": processed_curves[0],
-        "ori_curves_avg": ori_curves_avg,
         "ori_curve_dydx": processed_curves[1],
         "ori_dydx_avg": processed_curves[2],
         "cleaned_std": processed_curves[3],
         "cleaned_lowest": processed_curves[4],
     }
-    if normalize_curves:
-        curves_dict["ori_curves_norm"] = normalize_curves_minmax(processed_curves[0])
+    if moving_avg:
+        curves_dict["ori_curves_avg"] = ori_curves_avg
     if wavelet_sym8:
         curves_dict["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(processed_curves[0])
     _sg_w = None   # set unconditionally so save_data can always reference it
@@ -401,6 +401,12 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
     if sg_p4:
         curves_dict["ori_curves_sg_p4"], _sg_w = sg_p4_denoise_curves(processed_curves[0])
         print(f"  -> SG p=4 optimal window: {_sg_w}")
+    if normalize_curves:
+        _norm_bases = [k for k in curves_dict
+                       if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
+        for k in _norm_bases:
+            curves_dict[f"{k}_norm"] = normalize_curves_minmax(curves_dict[k])
+        print(f"  -> Added norm variants: {[k + '_norm' for k in _norm_bases]}")
 
     save_data = {
         "curves": curves_dict,
@@ -458,6 +464,11 @@ if __name__ == "__main__":
     parser.add_argument("--n_wells", type=int, default=config.N_WELLS, help="Number of wells")
     parser.add_argument("--n_a_type", type=str, default=config.N_A_TYPE, help="Type of n_a")
     parser.add_argument("--nc_subtract", action="store_true", help="Apply baseline subtraction based on derivatives")
+    parser.add_argument("--drop_pc", action="store_true",
+                        help="Remove PC-labeled wells from the saved output after using them for truncation.")
+    parser.add_argument("--moving_avg", action="store_true",
+                        help="Save the moving-average variant (ori_curves_avg) in the output. "
+                             "If omitted, only raw curves and denoising variants are stored.")
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if a presaved file already exists")
     parser.add_argument("--compute_sigmoid_fits", action="store_true",
                         help="Compute the derivative/cleaning chain (ori_curve_dydx, ori_dydx_avg, cleaned_std, "
@@ -521,8 +532,11 @@ if __name__ == "__main__":
             existing_data = None
 
         if existing_data is not None and "curves" in existing_data:
-            needs_avg_patch     = not ("ori_curves_avg" in existing_data["curves"] and "window_size_ori" in existing_data)
-            needs_norm_patch    = args.normalize_curves  and "ori_curves_norm"             not in existing_data["curves"]
+            needs_avg_patch     = args.moving_avg and "ori_curves_avg" not in existing_data["curves"]
+            _cached_norm_bases  = [k for k in existing_data["curves"]
+                                   if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
+            needs_norm_patch    = args.normalize_curves and any(
+                                   f"{k}_norm" not in existing_data["curves"] for k in _cached_norm_bases)
             needs_wavelet_patch = args.wavelet_sym8      and "ori_curves_wavelet_sym8"     not in existing_data["curves"]
             needs_bior35_patch  = args.wavelet_bior35    and "ori_curves_wavelet_bior35"   not in existing_data["curves"]
             needs_sg_p4_patch   = args.sg_p4             and "ori_curves_sg_p4"            not in existing_data["curves"]
@@ -541,8 +555,13 @@ if __name__ == "__main__":
                 existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
                 patched_fields.append("ori_curves_avg/window_size_ori")
             if needs_norm_patch:
-                existing_data["curves"]["ori_curves_norm"] = normalize_curves_minmax(existing_data["curves"]["ori_curves"])
-                patched_fields.append("ori_curves_norm")
+                _norm_bases = [k for k in existing_data["curves"]
+                               if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
+                for k in _norm_bases:
+                    nk = f"{k}_norm"
+                    if nk not in existing_data["curves"]:
+                        existing_data["curves"][nk] = normalize_curves_minmax(existing_data["curves"][k])
+                        patched_fields.append(nk)
             if needs_wavelet_patch:
                 existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
                 patched_fields.append("ori_curves_wavelet_sym8")
@@ -582,52 +601,59 @@ if __name__ == "__main__":
     X_time, Y_well, X_2d_bs_active = reconstruct_data(all_exp_data, attr_str="well_2d_bs_active")
     
     max_significant_index = None
-    
+
     # -------------------------------------------------------------
-    # TRUNCATION AND NEGATIVE CONTROL (NC) SUBTRACTION LOGIC
+    # TRUNCATION (always runs)
+    # -------------------------------------------------------------
+    exp_folder = os.path.basename(exp_path)
+    mapping    = config.LABEL_MAPPINGS.get(exp_folder) if hasattr(config, "LABEL_MAPPINGS") else None
+    y_label    = np.array([mapping.get(w, w) for w in Y_well]) if mapping is not None else None
+
+    print("  -> Calculating truncation index...")
+    pc_mask = (y_label == 'PC') if y_label is not None else np.zeros(len(Y_well), dtype=bool)
+
+    if np.any(pc_mask):
+        # PC argmin: argmin of smoothed mean of PC-labelled wells
+        smoothed = uniform_filter1d(np.mean(X_2d_bs_active[pc_mask], axis=0).squeeze(), size=20)
+        max_significant_index = int(np.argmin(smoothed))
+        print(f"      -> [PC argmin] MSI={max_significant_index} ({int(pc_mask.sum())} PC wells)")
+    else:
+        # Derivative vote fallback (original method)
+        ori_curve_dydx = np.array(get_derivatives(X_2d_bs_active, X_time))
+        min_indices    = np.argmin(ori_curve_dydx, axis=1)
+        unique_indices, counts = np.unique(min_indices, return_counts=True)
+        significant_indices = unique_indices[counts > (len(ori_curve_dydx) / 3)]
+        max_significant_index = int(np.max(significant_indices)) if len(significant_indices) > 0 else None
+        print(f"      -> [Deriv. vote] MSI={max_significant_index}")
+
+    if max_significant_index is not None:
+        if (max_significant_index + 1) < (len(X_time) - 100):
+            truncated_curves = X_2d_bs_active[:, max_significant_index + 1:]
+            truncated_timestamps = X_time[max_significant_index + 1:]
+            X_2d_bs_active = truncated_curves - truncated_curves[:, 0:1]
+            X_time = truncated_timestamps
+            print(f"      -> Truncated X_time from {len(X_time) + max_significant_index + 1} to {len(X_time)}")
+        else:
+            print(f"      -> [!] MSI {max_significant_index} too close to end (len={len(X_time)}). Skipping.")
+            max_significant_index = None
+    else:
+        print("      -> No truncation index found. Proceeding with original data.")
+
+    # -------------------------------------------------------------
+    # NEGATIVE CONTROL (NC) SUBTRACTION (--nc_subtract only)
     # -------------------------------------------------------------
     if args.nc_subtract:
-        print("  -> [nc_subtract=True] Initiating Truncation and NC Subtraction...")
-        exp_folder = os.path.basename(exp_path)
+        print("  -> [nc_subtract=True] Initiating NC Subtraction...")
 
-        # 1. & 2. Check configuration constraints and ABORT if missing
-        if not hasattr(config, "LABEL_MAPPINGS") or exp_folder not in config.LABEL_MAPPINGS:
+        if mapping is None:
             print(f"  [!] CRITICAL: Missing mapping rules for '{exp_folder}' in config.LABEL_MAPPINGS.")
             print("  [!] Aborting processing as requested.")
             sys.exit(1)
 
-        # Apply Label Mapping to get y_label
-        mapping = config.LABEL_MAPPINGS[exp_folder]
-        y_label = np.array([mapping.get(w, w) for w in Y_well])
+        # y_label already computed above from mapping
         vref_idx = pixel_temp_dfs["well_2d_bs_active_df"]['vref_idx'].values
 
-        # --- PART A: Truncation ---
-        print("      -> Calculating derivatives for truncation...")
-        ori_curve_dydx = np.array(get_derivatives(X_2d_bs_active, X_time))
-        min_indices = np.argmin(ori_curve_dydx, axis=1)
-
-        unique_indices, counts = np.unique(min_indices, return_counts=True)
-        threshold = len(ori_curve_dydx) / 3
-        significant_indices = unique_indices[counts > threshold]
-
-        max_significant_index = np.max(significant_indices) if len(significant_indices) > 0 else None
-
-        if max_significant_index is not None:
-            if (max_significant_index + 1) < (len(X_time) - 100):           # Do not truncate if the index is too close to the end to avoid losing critical data or crashing
-                truncated_curves = X_2d_bs_active[:, max_significant_index + 1:]
-                truncated_timestamps = X_time[max_significant_index + 1:]
-                
-                # Baseline subtract the truncated curves (zeroing to start)
-                X_2d_bs_active = truncated_curves - truncated_curves[:, 0:1]
-                X_time = truncated_timestamps
-                print(f"      -> Truncated X_time from {len(X_time) + max_significant_index + 1} to {len(X_time)}")
-            else:
-                print(f"      -> [!] Truncation index {max_significant_index} is too close to the end (Total len: {len(X_time)}). Skipping truncation to prevent crash.")
-                max_significant_index = None 
-        else:
-            print("      -> No significant index found for truncation. Proceeding with original data.")
-
-        # --- PART B: NC Subtraction ---
+        # --- NC Subtraction ---
         print("      -> Performing Negative Control (NC) Subtraction...")
 
         unique_vrefs = np.unique(vref_idx)
@@ -674,10 +700,30 @@ if __name__ == "__main__":
 
         # Update main tracking array for the rest of the pipeline
         X_2d_bs_active = subtracted_curves
-        print("  [✓] Truncation and NC baseline subtraction complete.")
+        print("  [✓] NC baseline subtraction complete.")
 
     # Shift timestamps so they start from 0 (post-truncation, if any)
     X_time = X_time - X_time[0]
+
+    # -------------------------------------------------------------
+    # DROP PC (--drop_pc): remove PC wells now that truncation is done
+    # -------------------------------------------------------------
+    if args.drop_pc:
+        if y_label is None:
+            print("  [!] --drop_pc: no LABEL_MAPPINGS for this experiment — skipping PC removal.")
+        elif not np.any(y_label == 'PC'):
+            print("  [!] --drop_pc: no PC-labeled wells found.")
+        else:
+            keep_mask = (y_label != 'PC')
+            n_dropped = int(np.sum(~keep_mask))
+            X_2d_bs_active = X_2d_bs_active[keep_mask]
+            Y_well         = Y_well[keep_mask]
+            y_label        = y_label[keep_mask]
+            keep_idx       = np.where(keep_mask)[0]
+            for key, df in pixel_temp_dfs.items():
+                if len(df) == len(keep_mask):
+                    pixel_temp_dfs[key] = df.iloc[keep_idx].reset_index(drop=True)
+            print(f"  -> [drop_pc] Removed {n_dropped} PC samples. {len(Y_well)} samples remain.")
 
     baseline_value = 0
 
@@ -688,7 +734,7 @@ if __name__ == "__main__":
     #     X_2d_bs_active = X_2d_bs_active + baseline_value
     ##############################################################
     ##############################################################
-    
+
     processed_curves, indices_dict, ori_curves_avg = process_experiment_data(
         X_2d_bs_active, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin,
         compute_sigmoid_fits=args.compute_sigmoid_fits
@@ -707,7 +753,8 @@ if __name__ == "__main__":
                                     normalize_curves=args.normalize_curves,
                                     wavelet_sym8=args.wavelet_sym8,
                                     wavelet_bior35=args.wavelet_bior35,
-                                    sg_p4=args.sg_p4)
+                                    sg_p4=args.sg_p4,
+                                    moving_avg=args.moving_avg)
     
     unique_wells = np.unique(Y_well)
 

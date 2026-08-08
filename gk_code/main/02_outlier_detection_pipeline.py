@@ -208,27 +208,14 @@ def _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_sa
 def _build_variant_lists(data):
     """Enumerate every curve variant currently present in data['curves']/data['sigmoid_curves']."""
     dataset_name = ["ori_curves"]
-    dataset = [data["curves"]["ori_curves"]]   # same object — not a copy
+    dataset = [data["curves"]["ori_curves"]]
 
-    if "ori_curves_avg" in data["curves"]:
-        dataset_name.append("ori_curves_avg")
-        dataset.append(data["curves"]["ori_curves_avg"])
-
-    if "ori_curves_norm" in data["curves"]:
-        dataset_name.append("ori_curves_norm")
-        dataset.append(data["curves"]["ori_curves_norm"])
-
-    if "ori_curves_wavelet_sym8" in data["curves"]:
-        dataset_name.append("ori_curves_wavelet_sym8")
-        dataset.append(data["curves"]["ori_curves_wavelet_sym8"])
-
-    if "ori_curves_wavelet_bior35" in data["curves"]:
-        dataset_name.append("ori_curves_wavelet_bior35")
-        dataset.append(data["curves"]["ori_curves_wavelet_bior35"])
-
-    if "ori_curves_sg_p4" in data["curves"]:
-        dataset_name.append("ori_curves_sg_p4")
-        dataset.append(data["curves"]["ori_curves_sg_p4"])
+    # Dynamically include all ori_curves* variants (skip raw dydx variants; they're not curve signals)
+    for k in sorted(data["curves"]):
+        if k == "ori_curves" or not k.startswith("ori_curves") or "dydx" in k:
+            continue
+        dataset_name.append(k)
+        dataset.append(data["curves"][k])
 
     for k, v in data["sigmoid_curves"].items():
         dataset_name.append(f"{k}_fitted_full")
@@ -631,10 +618,9 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
     def flush():
         _flush_and_save(features_to_concat, pipeline_state, dataset_name, unified_save_path)
 
-    # AE methods run on all standard curve variants (raw, avg, wavelet).
+    # AE methods run on all ori_curves* variants (including _norm).
     ae_names = [n for n in dataset_name
-                if n in ('ori_curves', 'ori_curves_avg', 'ori_curves_wavelet_sym8',
-                         'ori_curves_wavelet_bior35', 'ori_curves_sg_p4')]
+                if n.startswith("ori_curves") and "dydx" not in n]
     ae_dataset = [dataset[list(dataset_name).index(n)] for n in ae_names]
     ae_idx = [list(dataset_name).index(n) for n in ae_names]
 

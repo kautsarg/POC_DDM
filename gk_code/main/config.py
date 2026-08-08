@@ -59,12 +59,16 @@ EXCLUDED_FOLDERS = ['.DS_Store', 'model_interpretation', 'model_interpretation_o
 # resolve a `--curve_type` CLI value to its index in the joblib dataset list.
 
 CURVE_TYPE_ALIASES = {
-    "ori_curve":              "ori_curves",
-    "ori_curve_avg":          "ori_curves_avg",
-    "ori_curve_norm":         "ori_curves_norm",
-    "ori_curve_wavelet_sym8": "ori_curves_wavelet_sym8",
-    "ori_curve_wavelet_bior35": "ori_curves_wavelet_bior35",
-    "ori_curve_sg_p4":          "ori_curves_sg_p4",
+    "ori_curve":                      "ori_curves",
+    "ori_curve_avg":                  "ori_curves_avg",
+    "ori_curve_norm":                 "ori_curves_norm",
+    "ori_curve_avg_norm":             "ori_curves_avg_norm",
+    "ori_curve_wavelet_sym8":         "ori_curves_wavelet_sym8",
+    "ori_curve_wavelet_sym8_norm":    "ori_curves_wavelet_sym8_norm",
+    "ori_curve_wavelet_bior35":       "ori_curves_wavelet_bior35",
+    "ori_curve_wavelet_bior35_norm":  "ori_curves_wavelet_bior35_norm",
+    "ori_curve_sg_p4":                "ori_curves_sg_p4",
+    "ori_curve_sg_p4_norm":           "ori_curves_sg_p4_norm",
 }
 
 def resolve_curve_dataset_idx(curve_type, dataset_name_list):
@@ -1065,6 +1069,18 @@ LABEL_MAPPINGS = {
         8: 'PC',
         9: 'NC-ALL',
     },
+    'D20260807_E00_C00_F4500KHz_U_DDM_02_07': {
+        0: 'IBV',
+        1: 'IBV',
+        2: 'IBV',
+        3: 'IAV',
+        4: 'IAV',
+        5: 'Kp',
+        6: 'Cov',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
     'D20260804_E00_C00_F4500KHz_U_DDM_02_04': {
         0: 'IBV',
         1: 'IBV',
@@ -1140,6 +1156,18 @@ CONC_MAPPINGS = {
         8: 0,
         9: 0,
     },
+    'D20260807_E00_C00_F4500KHz_U_DDM_02_07': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 1000000,
+        4: 100000,
+        5: 10000,
+        6: 100000,
+        7: 10000,
+        8: 0,
+        9: 0,
+    },
     'D20260804_E00_C00_F4500KHz_U_DDM_02_04': {
         0: 1000000,
         1: 100000,
@@ -1200,7 +1228,8 @@ CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
     'init_oneplex_v6': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
-    'final_chip_1_2': ['D20260731_E00_C00_F4500KHz_U_DDM_01_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_04', 'D20260731_E00_C00_F4500KHz_U_DDM_01_04', 'D20260804_E00_C00_F4500KHz_U_DDM_02_03', 'D20260806_E00_C00_F4500KHz_U_DDM_01_06']
+    'final_chip_1_2': ['D20260731_E00_C00_F4500KHz_U_DDM_01_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_04', 'D20260731_E00_C00_F4500KHz_U_DDM_01_04', 'D20260804_E00_C00_F4500KHz_U_DDM_02_03', 'D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07'],
+    'final_chip_1_2_clean': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07']
 }
 
 
