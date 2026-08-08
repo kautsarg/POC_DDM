@@ -8,9 +8,10 @@
 .ipynb_checkpoints/
 *.ipynb_checkpoints/
 
+*.joblib
+
 .DS_Store
 **/.DS_Store
-
 
 classifiers/
 linearisation/
