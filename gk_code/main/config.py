@@ -1093,6 +1093,18 @@ LABEL_MAPPINGS = {
         8: 'PC',
         9: 'NC-ALL',
     },
+    'D20260808_E00_C00_F4500KHz_U_DDM_03_01': {
+        0: 'Kp',
+        1: 'Kp',
+        2: 'Kp',
+        3: 'IAV',
+        4: 'IBV',
+        5: 'IBV',
+        6: 'Cov',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    }
 }
 
 CONC_MAPPINGS = {
@@ -1180,6 +1192,18 @@ CONC_MAPPINGS = {
         8: 0,
         9: 0,
     },
+    'D20260808_E00_C00_F4500KHz_U_DDM_03_01': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 10000,
+        4: 1000000,
+        5: 100000,
+        6: 10000,
+        7: 1000000,
+        8: 0,
+        9: 0,
+    }
 }
 
 def get_label_mappings(exp_path):
@@ -1229,7 +1253,7 @@ CROSS_DATASET_GROUPS = {
     'init_oneplex_v6': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'final_chip_1_2': ['D20260731_E00_C00_F4500KHz_U_DDM_01_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_04', 'D20260731_E00_C00_F4500KHz_U_DDM_01_04', 'D20260804_E00_C00_F4500KHz_U_DDM_02_03', 'D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07'],
-    'final_chip_1_2_clean': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07']
+    'final_chip_clean': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01']
 }
 
 

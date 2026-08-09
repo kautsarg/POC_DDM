@@ -28,6 +28,11 @@ from model_utils_rcfd import (RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
 import config
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import tensorflow as tf
+tf.keras.mixed_precision.set_global_policy('mixed_float16')  # 2-3x speedup on A100 Tensor Cores
+tf.config.optimizer.set_jit(True)                            # XLA JIT compilation
+
 # set_global_determinism() is called inside __main__ after argparse, so --fast_mode
 # can control strictness (see LOFO speed-up plan Change 1). Other scripts are unaffected.
 
@@ -172,9 +177,12 @@ if __name__ == "__main__":
     parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--curve_type", type=str, nargs='+',
-                        default=['ori_curve', 'ori_curve_avg', 'ori_curve_wavelet_sym8',
-                                 'ori_curve_wavelet_bior35', 'ori_curve_sg_p4'],
-                        help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_avg').")
+                        default=['ori_curve', 'ori_curve_norm',
+                                 'ori_curve_avg', 'ori_curve_avg_norm',
+                                 'ori_curve_wavelet_sym8', 'ori_curve_wavelet_sym8_norm',
+                                 'ori_curve_wavelet_bior35', 'ori_curve_wavelet_bior35_norm',
+                                 'ori_curve_sg_p4', 'ori_curve_sg_p4_norm'],
+                        help="Which curve dataset(s) to train on. Accepts one or more values (e.g. 'ori_curve' 'ori_curve_norm').")
     parser.add_argument("--fast_mode", action="store_true",
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
@@ -197,6 +205,9 @@ if __name__ == "__main__":
                         help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
     parser.add_argument("--supcon_staged", action="store_true",
                         help="2-stage SupCon: Stage 1 SC-only until plateau, Stage 2 CE-only frozen backbone.")
+    parser.add_argument("--outlier_filter", type=str, nargs='+', default=["none"],
+                        help="Outlier filters to evaluate. Use 'none' for no filter. "
+                             "E.g. --outlier_filter none lstm_ae_glb_ds1_label_elbow")
     parser.add_argument("--models", type=str, nargs='+', default=None,
                         help="Filter model list by base name (e.g. 'cnn_gru_dual' 'cnn_gru_dual_attn_recon'). "
                              "Strips _supconN/_lc/_mtl suffixes before matching.")
@@ -258,8 +269,7 @@ if __name__ == "__main__":
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
-        # outlier_filters = [None, 'lstm_ae_glb_ds1_label_elbow', 'spatial_knn_label_elbow', 'spatial_grid_label_elbow']
-        outlier_filters = [None]
+        outlier_filters = [None if f.lower() == "none" else f for f in args.outlier_filter]
 
         # if getattr(args, 'supcon_staged', False):
         #     if args.supcon == 1:
@@ -578,6 +588,7 @@ if __name__ == "__main__":
                 multitask=args.mtl,
                 y_concentration=y_concentration,
                 cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                batch_size=2048,
             )
 
             lofo_results[fold_label] = res
@@ -660,6 +671,7 @@ if __name__ == "__main__":
                 multitask=args.mtl,
                 y_concentration=y_concentration,
                 cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                batch_size=2048,
             )
             lofo_results["full_data"] = res_full
             safe_joblib_dump(lofo_results, results_file_path, compress=3)

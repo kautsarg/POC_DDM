@@ -31,7 +31,11 @@ import pandas as pd
 
 import config
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import tensorflow as tf
+tf.keras.mixed_precision.set_global_policy('mixed_float16')  # speedup on GPU Tensor Cores
+tf.config.optimizer.set_jit(True)                            # XLA JIT compilation
 
 # ============================================================
 # HELPERS
@@ -89,9 +93,12 @@ if __name__ == "__main__":
     parser.add_argument("--force_rerun", action="store_true", help="Recompute and overwrite even if presaved results already exist")
     parser.add_argument("--training_mode", type=str, nargs="+", choices=["native", "reference"], default=["native"], help="Which training mode(s) to run: 'native' (train on this dataset's own curves) and/or 'reference' (train on the original ori_curves, using this dataset's outlier filters)")
     parser.add_argument("--curve_type", type=str, nargs="+",
-                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8",
-                                 "ori_curve_wavelet_bior35", "ori_curve_sg_p4"],
-                        help="Which curve variant(s) to train on and save XAI models for (e.g. 'ori_curve' 'ori_curve_avg')")
+                        default=["ori_curve", "ori_curve_norm",
+                                 "ori_curve_avg", "ori_curve_avg_norm",
+                                 "ori_curve_wavelet_sym8", "ori_curve_wavelet_sym8_norm",
+                                 "ori_curve_wavelet_bior35", "ori_curve_wavelet_bior35_norm",
+                                 "ori_curve_sg_p4", "ori_curve_sg_p4_norm"],
+                        help="Which curve variant(s) to train on and save XAI models for (e.g. 'ori_curve' 'ori_curve_norm')")
     parser.add_argument("--fast_mode", action="store_true",
                         help="Disable strict TF determinism (TF_CUDNN_DETERMINISTIC/enable_op_determinism) "
                              "for faster GRU/LSTM/Transformer training. RNG seeds are still set, but reruns "
