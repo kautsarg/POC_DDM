@@ -371,7 +371,7 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
                                      window_size_ori, window_size_1stder, margin, max_significant_index,
                                      compute_sigmoid_fits=False, normalize_curves=False,
                                      wavelet_sym8=False, wavelet_bior35=False, sg_p4=False,
-                                     moving_avg=False):
+                                     moving_avg=False, pc_wells_data=None):
     """
     Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
     (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
@@ -438,6 +438,8 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
         "concentration": config.get_conc_array(Path(save_exp_path).name, Y_well),
         "sg_p4_optimal_w": _sg_w,
     }
+    if pc_wells_data is not None:
+        save_data["pc_wells"] = pc_wells_data
 
     save_path = os.path.join(save_exp_path, config.TRAINING_DATA_PATH)
     existing_state = {}
@@ -708,6 +710,11 @@ if __name__ == "__main__":
     # -------------------------------------------------------------
     # DROP PC (--drop_pc): remove PC wells now that truncation is done
     # -------------------------------------------------------------
+    _pc_snapshot = None
+    if args.drop_pc and y_label is not None and np.any(y_label == 'PC'):
+        _pc_mask = (y_label == 'PC')
+        _pc_snapshot = (X_2d_bs_active[_pc_mask].copy(), Y_well[_pc_mask].copy())
+
     if args.drop_pc:
         if y_label is None:
             print("  [!] --drop_pc: no LABEL_MAPPINGS for this experiment — skipping PC removal.")
@@ -740,6 +747,28 @@ if __name__ == "__main__":
         compute_sigmoid_fits=args.compute_sigmoid_fits
     )
 
+    pc_wells_data = None
+    if _pc_snapshot is not None:
+        _pc_X, _pc_yw = _pc_snapshot
+        _pc_proc, _, _pc_avg = process_experiment_data(
+            _pc_X, X_time, config.WINDOW_SIZE_ORI, config.WINDOW_SIZE_1STDER, margin,
+            compute_sigmoid_fits=False)
+        _pc_curves = {"ori_curves": _pc_proc[0]}
+        if args.moving_avg:
+            _pc_curves["ori_curves_avg"] = _pc_avg
+        if args.wavelet_sym8:
+            _pc_curves["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(_pc_proc[0])
+        if args.wavelet_bior35:
+            _pc_curves["ori_curves_wavelet_bior35"] = wavelet_denoise_curves(
+                _pc_proc[0], wavelet="bior3.5", level=5)
+        if args.sg_p4:
+            _pc_curves["ori_curves_sg_p4"], _ = sg_p4_denoise_curves(_pc_proc[0])
+        if args.normalize_curves:
+            for _k in [k for k in list(_pc_curves) if k.startswith("ori_curves") and not k.endswith("_norm")]:
+                _pc_curves[f"{_k}_norm"] = normalize_curves_minmax(_pc_curves[_k])
+        pc_wells_data = {"curves": _pc_curves, "Y_well": _pc_yw}
+        print(f"  -> [drop_pc] Saved {len(_pc_yw)} PC curve variants: {list(_pc_curves.keys())}")
+
     if args.compute_sigmoid_fits:
         fitting_results = run_all_fits(processed_curves, indices_dict, X_time)
     else:
@@ -754,7 +783,8 @@ if __name__ == "__main__":
                                     wavelet_sym8=args.wavelet_sym8,
                                     wavelet_bior35=args.wavelet_bior35,
                                     sg_p4=args.sg_p4,
-                                    moving_avg=args.moving_avg)
+                                    moving_avg=args.moving_avg,
+                                    pc_wells_data=pc_wells_data)
     
     unique_wells = np.unique(Y_well)
 
