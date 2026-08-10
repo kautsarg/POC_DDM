@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import mutual_info_classif
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
@@ -167,6 +168,19 @@ def build_lofo_splits(dataset_id):
     return splits
 
 
+def build_random_split(y, test_size=0.1, random_state=0):
+    """Stratified single random train/test split."""
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    train_idx, test_idx = next(sss.split(np.zeros(len(y)), y))
+    return {"random_split": (train_idx, test_idx)}
+
+
+def build_nfold_splits(y, n_splits=5, random_state=0):
+    """Stratified N-fold cross-validation splits."""
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    return {f"fold_{i}": (tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), y))}
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -215,6 +229,14 @@ if __name__ == "__main__":
                         help="After LOFO, train one final model on ALL data (no holdout) and save to "
                              "model_interpretation/full_data/. Metrics in result are train-set accuracy "
                              "(inflated) — use LOFO metrics for evaluation.")
+    parser.add_argument("--mode", type=str, choices=["lofo", "random_split", "kfold"],
+                        default="lofo",
+                        help="Split strategy: lofo=leave-one-folder-out, "
+                             "random_split=stratified single split, kfold=stratified N-fold.")
+    parser.add_argument("--n_splits", type=int, default=5,
+                        help="Number of folds for --mode kfold.")
+    parser.add_argument("--test_size", type=float, default=0.1,
+                        help="Test fraction for --mode random_split.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
@@ -268,7 +290,8 @@ if __name__ == "__main__":
         top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
         print(f"  [*] Selected Top 10 Features: {top_10_features}")
 
-        results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode="lofo", curve_type=curve_type)
+        _mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
+        results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=_mode_str, curve_type=curve_type)
         outlier_filters = [None if f.lower() == "none" else f for f in args.outlier_filter]
 
         # if getattr(args, 'supcon_staged', False):
@@ -548,10 +571,14 @@ if __name__ == "__main__":
                         elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys:
                             del _filter_res[_rk]
 
-        lofo_splits = build_lofo_splits(combined["dataset_id"])
-        total_folds = len(lofo_splits)
-        # for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(lofo_splits.items()):
-        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(lofo_splits.items()))):
+        if args.mode == "lofo":
+            cv_splits = build_lofo_splits(combined["dataset_id"])
+        elif args.mode == "random_split":
+            cv_splits = build_random_split(y_full, test_size=args.test_size)
+        else:
+            cv_splits = build_nfold_splits(y_full, n_splits=args.n_splits)
+        total_folds = len(cv_splits)
+        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
             progress_pct = ((fold_idx + 1) / total_folds) * 100
             print(f"\n{'='*75}")
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
