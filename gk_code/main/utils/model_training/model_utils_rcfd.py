@@ -5,6 +5,7 @@ import tensorflow as tf
 from model_utils_mtl import (
     MTLModel, REG_SENTINEL,
     _build_cnn_gru_dual_branches_mtl, _build_cnn_trans_dual_branches_mtl,
+    _build_cnn_gru_dual_attn_recon_embedding_mtl,
 )
 from model_utils_supcon import (
     SupConMTLModel, SupConBranch2MTLModel, SupConBranch3MTLModel,
@@ -125,6 +126,35 @@ def _build_rcfd_backbone(inputs, enc_type, dual_type, return_branches=False):
     return z_cond, reg_out
 
 
+def _build_rcfd_attn_recon_backbone(stack_input, T, enc_type, attn_dim=16, return_branches=False):
+    """RCFD backbone for the attn_recon architecture.
+
+    The early (regression) encoder has no use for neighbour curves -- it only
+    predicts this sample's own concentration, so it runs on just the center/
+    query curve (stack_input[:, 0, :]), reused unmodified from _build_early_encoder.
+    The classification backbone uses the full neighbour stack via the existing
+    attention-reconstruction embedding, then FiLM-conditions it exactly like
+    every other RCFD variant.
+    Returns (z_cond, reg_out) or (z_cond, reg_out, cnn_emb, seq_emb).
+    """
+    center_curve = tf.keras.layers.Lambda(
+        lambda x: x[:, 0, :], name='center_curve')(stack_input)
+    center_curve = tf.keras.layers.Reshape((T, 1))(center_curve)
+    _, reg_out = _build_early_encoder(center_curve, enc_type)
+
+    if return_branches:
+        cnn_emb, seq_emb, z_raw = _build_cnn_gru_dual_attn_recon_embedding_mtl(
+            stack_input, T, attn_dim, return_branches=True)
+    else:
+        z_raw = _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim)
+
+    z_cond = tf.keras.layers.Dropout(0.2, name='film_drop')(
+        _apply_film_scalar(reg_out, z_raw, emb_dim=96))
+    if return_branches:
+        return z_cond, reg_out, cnn_emb, seq_emb
+    return z_cond, reg_out
+
+
 def _cls_head(z_cond, n_classes):
     h = tf.keras.layers.Dense(16, activation='relu', name='cls_feat')(z_cond)
     return tf.keras.layers.Dense(n_classes, activation='softmax', name='cls_out')(h)
@@ -139,6 +169,13 @@ def _build_rcfd_model(T, n_classes, enc_type, dual_type):
     z_cond, reg_out = _build_rcfd_backbone(inputs, enc_type, dual_type)
     cls_out = _cls_head(z_cond, n_classes)
     return RCFDModel(inputs=inputs, outputs=[cls_out, reg_out])
+
+
+def _build_rcfd_attn_recon_model(k_plus_1, T, n_classes, enc_type):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    z_cond, reg_out = _build_rcfd_attn_recon_backbone(stack_input, T, enc_type)
+    cls_out = _cls_head(z_cond, n_classes)
+    return RCFDModel(inputs=stack_input, outputs=[cls_out, reg_out])
 
 
 def _build_rcfd_supcon_model(T, n_classes, enc_type, dual_type):
@@ -171,7 +208,7 @@ def _build_rcfd_supcon3_model(T, n_classes, enc_type, dual_type):
 
 
 # ======================================================================
-# FACTORY FUNCTIONS (24 total)
+# FACTORY FUNCTIONS (27 total)
 # ======================================================================
 
 # --- Base (6)
@@ -181,6 +218,12 @@ def create_gru_rcfd_cgd_model(T, n):   return _build_rcfd_model(T, n, 'gru', 'cg
 def create_gru_rcfd_ctd_model(T, n):   return _build_rcfd_model(T, n, 'gru', 'ctd')
 def create_trans_rcfd_cgd_model(T, n): return _build_rcfd_model(T, n, 'transformer', 'cgd')
 def create_trans_rcfd_ctd_model(T, n): return _build_rcfd_model(T, n, 'transformer', 'ctd')
+
+# --- Base attn_recon (3) -- signature (k_plus_1, T, n), matching the other
+# attn_recon factories (create_cnn_gru_dual_attn_recon_mtl_model, etc.)
+def create_cnn_rcfd_attn_recon_model(k_plus_1, T, n):   return _build_rcfd_attn_recon_model(k_plus_1, T, n, 'cnn')
+def create_gru_rcfd_attn_recon_model(k_plus_1, T, n):   return _build_rcfd_attn_recon_model(k_plus_1, T, n, 'gru')
+def create_trans_rcfd_attn_recon_model(k_plus_1, T, n): return _build_rcfd_attn_recon_model(k_plus_1, T, n, 'transformer')
 
 # --- SupCon v1 (6)
 def create_cnn_rcfd_cgd_supcon_mtl_model(T, n):   return _build_rcfd_supcon_model(T, n, 'cnn', 'cgd')
@@ -218,7 +261,15 @@ _RCFD_BASE_FACTORIES = {
     'gru_rcfd_ctd':   create_gru_rcfd_ctd_model,
     'trans_rcfd_cgd': create_trans_rcfd_cgd_model,
     'trans_rcfd_ctd': create_trans_rcfd_ctd_model,
+    'cnn_rcfd_attn_recon':   create_cnn_rcfd_attn_recon_model,
+    'gru_rcfd_attn_recon':   create_gru_rcfd_attn_recon_model,
+    'trans_rcfd_attn_recon': create_trans_rcfd_attn_recon_model,
 }
+# attn_recon factories take (k_plus_1, T, n) instead of (T, n) -- callers
+# dispatching through _RCFD_ALL_FACTORIES need to check this set first.
+RCFD_ATTN_RECON_MODEL_KEYS = (
+    'cnn_rcfd_attn_recon', 'gru_rcfd_attn_recon', 'trans_rcfd_attn_recon',
+)
 _RCFD_SC1_FACTORIES = {
     'cnn_rcfd_cgd_supcon_mtl':   create_cnn_rcfd_cgd_supcon_mtl_model,
     'cnn_rcfd_ctd_supcon_mtl':   create_cnn_rcfd_ctd_supcon_mtl_model,

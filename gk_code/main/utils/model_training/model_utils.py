@@ -83,7 +83,7 @@ from model_utils_rcfd import (
     RCFDModel, RCFDSupConMTLModel, RCFDBranch2MTLModel, RCFDBranch3MTLModel,
     RCFD_MODEL_KEYS, RCFD_SUPCON_MTL_MODEL_KEYS,
     RCFD_BRANCH2_MTL_MODEL_KEYS, RCFD_BRANCH3_MTL_MODEL_KEYS,
-    ALL_RCFD_KEYS, _RCFD_ALL_FACTORIES,
+    ALL_RCFD_KEYS, _RCFD_ALL_FACTORIES, RCFD_ATTN_RECON_MODEL_KEYS,
 )
 from model_utils_arch_poc_st import (
     CCGD_ST_ALL_KEYS, _CCGD_FACTORIES,
@@ -822,6 +822,8 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_cosine_recon_supcon_staged",  "cnn_gru_dual_attn_recon_supcon_staged",
         "cnn_gru_dual_cosine_recon_supcon2_staged", "cnn_gru_dual_attn_recon_supcon2_staged",
         "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
+        # RCFD attn_recon variants
+        *RCFD_ATTN_RECON_MODEL_KEYS,
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -1045,7 +1047,7 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_attn_recon_lc', 'cnn_gru_dual_attn_recon_supcon_lc',
                                   'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc',
                                   'cnn_gru_dual_attn_recon_supcon_staged', 'cnn_gru_dual_attn_recon_supcon2_staged',
-                                  'cnn_gru_dual_attn_recon_supcon3_staged'):
+                                  'cnn_gru_dual_attn_recon_supcon3_staged') or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
@@ -2086,10 +2088,15 @@ def evaluate_outlier_filters(
                     tf.keras.backend.clear_session()
 
                 elif _base_m in ALL_RCFD_KEYS:
-                    # RCFD: simultaneous MTL (no phase callbacks); factory dict covers all 24 keys.
+                    # RCFD: simultaneous MTL (no phase callbacks); factory dict covers all 27 keys.
                     tf.keras.backend.clear_session()
-                    T = X_train_curve.shape[1]
-                    model = _RCFD_ALL_FACTORIES[_base_m](T, n_classes)
+                    if _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
+                        # X_train_curve is a (n, k+1, T) neighbour stack, not a plain curve.
+                        model = _RCFD_ALL_FACTORIES[_base_m](
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    else:
+                        T = X_train_curve.shape[1]
+                        model = _RCFD_ALL_FACTORIES[_base_m](T, n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
                                   jit_compile=False)
                     epochs = 500
