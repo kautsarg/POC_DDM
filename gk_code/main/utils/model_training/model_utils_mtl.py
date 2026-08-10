@@ -27,33 +27,40 @@ MTL_MODEL_KEYS = [
 class MTLModel(tf.keras.Model):
     """Shared-backbone model with classification + regression heads.
 
-    Active loss — Kendall (2018) uncertainty weighting (2 learnable scalars):
-        L = exp(-s_cls)*CE + s_cls + exp(-s_reg)*MSE_masked + s_reg
+    Active loss — UW-SO (Kirchdorfer et al. 2026), Strategy 3 (gradient-learned T):
+        w_k = softmax(a_k / T), a_k = 1 / sg[L_k]        (Eq. 17)
+        L   = w_cls*CE + w_reg*MSE_masked + 1/T           (Eq. 24)
+        T = softplus(T_raw) keeps the temperature positive; T_raw is learned.
+        Ref: "Investigating Uncertainty Weighting for Multi-Task Learning:
+        Insights and Analytical Alternative" (Kirchdorfer et al., IJCV 2026)
 
-    UW-SO alternative (commented out below) — single trainable temperature T:
-        Analytical weights w_i ∝ 1/L_i (stop_gradient); only global scale T is learned.
-        L = exp(-log_T) * (w_cls*CE + w_reg*MSE_masked) + log_T
-        Ref: "Investigating Uncertainty Weighting for MTL: Insights and Analytical Alternative"
-        To switch: comment out the Kendall blocks and uncomment the UW-SO blocks.
+    Kendall (2018) 2-sigma uncertainty weighting is scaffolded below but inactive.
     """
 
     def __init__(self, *args, reg_sentinel=REG_SENTINEL, **kwargs):
         super().__init__(*args, **kwargs)
         self.reg_sentinel = reg_sentinel
-        # ── Kendall (2018): 2 learnable log-variance scalars ─────────────────
+        # ── Kendall (2018): 2 learnable log-variance scalars (inactive) ──────
         # self.log_var_cls = self.add_weight(
         #     name='log_var_cls', shape=(), initializer='zeros', trainable=True)
         # self.log_var_reg = self.add_weight(
         #     name='log_var_reg', shape=(), initializer='zeros', trainable=True)
-        # ── UW-SO: single temperature scalar (replace the two above) ─────────
-        self.log_T = self.add_weight(
-            name='log_T', shape=(), initializer='zeros', trainable=True)
+        # ── UW-SO temperature T, softplus-reparameterized to stay positive ───
+        # softplus(ln(e-1)) == 1.0, matching the paper's default T init of 1.
+        self._T_raw = self.add_weight(
+            name='T_raw', shape=(), trainable=True,
+            initializer=tf.keras.initializers.Constant(float(np.log(np.e - 1.0))))
+
+    @property
+    def T(self):
+        return tf.nn.softplus(self._T_raw)
 
     def _compute_loss(self, y_cls, y_reg, cls_out, reg_out):
         ce = tf.reduce_mean(
             tf.keras.losses.sparse_categorical_crossentropy(y_cls, cls_out))
         mask = tf.cast(tf.not_equal(y_reg, self.reg_sentinel), tf.float32)
         n_valid = tf.reduce_sum(mask)
+        has_reg = n_valid > 0
         mse = (tf.reduce_sum(mask * tf.square(y_reg - reg_out[:, 0]))
                / (n_valid + 1e-8))
 
@@ -61,19 +68,27 @@ class MTLModel(tf.keras.Model):
         # loss = (tf.exp(-self.log_var_cls) * ce + self.log_var_cls
         #         + tf.exp(-self.log_var_reg) * mse + self.log_var_reg)
 
-        # ── UW-SO: analytical inverse-loss weights, single temperature scalar ──
+        # ── UW-SO (Kirchdorfer et al. 2026), Strategy 3: tempered softmax over
+        # analytically-optimal inverse-loss weights a_k = 1/sg[L_k] (Eq. 17),
+        # plus a 1/T regularizer against temperature collapse (Eq. 24). ───────
         eps = 1e-8
-        ce_sg  = tf.stop_gradient(ce)
-        mse_sg = tf.stop_gradient(mse)
-        inv_ce  = 1.0 / (ce_sg + eps)
-        inv_mse = tf.cond(n_valid > 0,
-                          lambda: 1.0 / (mse_sg + eps),
-                          lambda: tf.constant(0.0))
-        Z      = inv_ce + inv_mse + eps
-        w_cls  = inv_ce  / Z
-        w_reg  = inv_mse / Z
+        T = self.T
+        a_cls = 1.0 / (tf.stop_gradient(ce) + eps)
+        a_reg = 1.0 / (tf.stop_gradient(mse) + eps)
+
+        logit_cls = a_cls / T
+        logit_reg = a_reg / T
+        m = tf.maximum(logit_cls, logit_reg)
+        exp_cls = tf.exp(logit_cls - m)
+        exp_reg = tf.exp(logit_reg - m)
+        # No valid regression target this batch: force w_reg=0 (mse would
+        # otherwise collapse toward 0, making a_reg explode and wrongly
+        # dominate the softmax).
+        w_reg = tf.where(has_reg, exp_reg / (exp_cls + exp_reg), tf.zeros_like(exp_reg))
+        w_cls = 1.0 - w_reg
+
         weighted = w_cls * ce + w_reg * mse
-        loss = tf.exp(-self.log_T) * weighted + self.log_T
+        loss = weighted + 1.0 / T
 
         return loss, ce, mse
 
@@ -87,7 +102,7 @@ class MTLModel(tf.keras.Model):
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'T': self.T})
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -96,7 +111,7 @@ class MTLModel(tf.keras.Model):
             y_dict['cls_out'], y_dict['reg_out'], cls_out, reg_out)
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'T': self.T})
 
     def get_config(self):
         config = super().get_config()

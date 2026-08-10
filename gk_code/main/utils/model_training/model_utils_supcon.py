@@ -182,7 +182,7 @@ class SupConMTLModel(MTLModel):
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -193,7 +193,7 @@ class SupConMTLModel(MTLModel):
         loss = mtl_loss + self.supcon_lambda * sc
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
 
 # ======================================================================
@@ -379,7 +379,7 @@ class SupConBranch2MTLModel(MTLModel):
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -391,7 +391,7 @@ class SupConBranch2MTLModel(MTLModel):
         loss = mtl_loss + self.supcon_lambda_each * sc
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
 
 @tf.keras.utils.register_keras_serializable(package='supcon')
@@ -452,7 +452,7 @@ class SupConBranch3MTLModel(MTLModel):
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
     def test_step(self, data):
         x, y_dict, _ = tf.keras.utils.unpack_x_y_sample_weight(data)
@@ -465,7 +465,7 @@ class SupConBranch3MTLModel(MTLModel):
         loss = mtl_loss + self.supcon_lambda_each * sc
         self.compiled_metrics.update_state(y_dict['cls_out'], cls_out)
         return ({m.name: m.result() for m in self.metrics}
-                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'log_T': self.log_T})
+                | {'loss': loss, 'cls_ce': ce, 'reg_mse': mse, 'supcon': sc, 'T': self.T})
 
 
 # ======================================================================
