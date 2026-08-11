@@ -7,6 +7,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=INFO, 1=WARN, 2=ERROR, 3=FATAL
 import gc
 import time
 import random
+import hashlib
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -911,13 +912,16 @@ def evaluate_outlier_filters(
             # balance) instead of grouping by well -- leak safety for cosine_recon/
             # attn_recon comes from restricting build_neighbor_curve_stack's input to
             # one split side at a time (below), not from constraining this split.
-            calculated_test_size = max(len(y_true) * 0.10, n_classes) / len(y_true)
+            # Sized/clamped by well count (the actual stratify key), not label count --
+            # StratifiedShuffleSplit needs test_size >= n_wells or it raises, and
+            # StratifiedKFold needs n_splits <= n_wells or small wells silently miss folds.
+            n_wells = len(np.unique(well_ids_m))
+            calculated_test_size = max(len(y_true) * 0.10, n_wells) / len(y_true)
             if n_splits == 1:
                 splits = list(build_well_stratified_random_split(
                     y_true, well_ids_m, test_size=calculated_test_size).values())
             else:
-                min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
-                actual_splits = min(n_splits, min_class_count)
+                actual_splits = min(n_splits, n_wells)
                 splits = list(build_well_stratified_nfold_splits(
                     y_true, well_ids_m, n_splits=actual_splits).values())
         else:
@@ -939,36 +943,16 @@ def evaluate_outlier_filters(
                   f"{cached_mask_count} filtered samples; current data has {current_mask_count} "
                   f"(likely changed upstream). Discarding stale cache for this filter.")
             res_entry = {}
+        
+        _split_signature = tuple(hashlib.md5(np.sort(test_index).tobytes()).hexdigest() for _, test_index in splits)
+        if res_entry.get("_split_signature") not in (None, _split_signature):
+            print(f"     [Warning] Cached results for filter '{filter_name}' were built from a "
+                  f"different train/test split (splitter changed upstream). Discarding stale "
+                  f"cache for this filter.")
+            res_entry = {}
+        res_entry["_split_signature"] = _split_signature
 
-        # Same as the mask_count check above, but for the split itself (a splitter change can
-        # alter fold sizes without changing mask_count).
-        _cached_y_trues = res_entry.get("y_trues_")
-        if _cached_y_trues is not None:
-            _current_test_sizes = [len(te) for _, te in splits]
-            if [len(a) for a in _cached_y_trues] != _current_test_sizes:
-                print(f"     [Warning] Cached y_trues_ for filter '{filter_name}' don't match "
-                      f"the current split's fold sizes (likely a splitter change upstream). "
-                      f"Discarding stale cache for this filter.")
-                res_entry = {}
-
-        if "y_trues_" not in res_entry:
-            res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
-
-        # Purge any stored preds whose fold count or fold sizes no longer match y_trues_.
-        # This catches old runs with a different n_splits or valid_class_mask that left
-        # inconsistent data in the cache.
-        _expected_sizes = [len(a) for a in res_entry["y_trues_"]]
-        _stale = [k for k, v in res_entry.items()
-                  if k.startswith('y_preds_') and isinstance(v, list)
-                  and [len(a) for a in v] != _expected_sizes]
-        if _stale:
-            for k in _stale:
-                base = k[len('y_preds_'):]
-                res_entry.pop(k, None)
-                res_entry.pop('y_probs_' + base, None)
-                res_entry.pop('classes_' + base, None)
-            print(f"     [Warning] Dropped {len(_stale)} stale cached prediction(s) "
-                  f"with mismatched fold shapes: {_stale}")
+        res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
 
         res_entry["mask_count"] = current_mask_count
         res_entry["y_true_count"] = len(y_true)
@@ -2503,9 +2487,14 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
         r2 = 1.0 - float(np.sum((t - p) ** 2)) / ss_tot if ss_tot > 0 else 0.0
         return rmse, mae, r2
 
-    # Collect MTL models that have regression results in at least one filter.
+    # Collect MTL models that have regression results in at least one filter. Only AC-family
+    # keys (y_preds_AC_*) ever have a matching y_reg_preds_*/y_reg_trues_* pair -- for anything
+    # else (e.g. "y_preds_FFI_") .replace() would silently no-op and fabricate a fake regression
+    # result by diffing the model's classification predictions against themselves.
     mtl_reg_info = []
     for title, m_key in method_info:
+        if not m_key.startswith('y_preds_AC_'):
+            continue
         reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1)
         if any(reg_key in results_dict.get(f, {}) for f in outlier_filters):
             mtl_reg_info.append((title, m_key))
@@ -2595,8 +2584,8 @@ def plot_ml_results(results_dict, outlier_filters, dataset_name, mode_name, tota
             std_acc  = np.std(fold_accs)
             filt_name = str(f) if f is not None else "Baseline (None)"
             rmse_str = mae_str = r2_str = ""
-            reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1)
-            tru_key = m_key.replace('y_preds_AC_', 'y_reg_trues_', 1)
+            reg_key = m_key.replace('y_preds_AC_', 'y_reg_preds_', 1) if m_key.startswith('y_preds_AC_') else None
+            tru_key = m_key.replace('y_preds_AC_', 'y_reg_trues_', 1) if m_key.startswith('y_preds_AC_') else None
             if reg_key in res and tru_key in res:
                 _rm = _reg_metrics(res[reg_key], res[tru_key])
                 if _rm is not None:

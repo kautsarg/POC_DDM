@@ -10,7 +10,8 @@ sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 from pipeline_utils import get_exp_paths, check_task_id
 sys.path.insert(0, 'utils/model_training')
-from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
+from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_determinism,
+                          build_well_stratified_random_split)
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
@@ -336,6 +337,16 @@ if __name__ == "__main__":
             if _k_staged_sc == args.supcon:
                 _staged_sc_result_keys.update([_pk, _probk, _clsk])
 
+        # Exact model-name membership (not substring match against result keys -- e.g.
+        # "cnn_gru_dual" is a literal substring of "cnn_gru_dual_attn_recon"'s keys, which
+        # would over-clear a model --rerun_models never named).
+        _rerun_result_keys = set()
+        if args.rerun_models:
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in args.rerun_models:
+                    _rerun_result_keys.update([_pk, _probk, _clsk,
+                                               f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+
         _is_cl = getattr(args, 'mtl_cl', False)
         if getattr(args, 'supcon_staged', False):
             _which = f'Staged SupCon SC{args.supcon}'
@@ -394,8 +405,8 @@ if __name__ == "__main__":
                                            and not _is_supcon_mtl and not _is_bsc_all
                                            and not _is_any_cl and not _is_rcfd and not _is_lc
                                            and not _is_staged
-                                           and (not args.rerun_models or any(_m in _rk for _m in args.rerun_models)))
-                        _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
+                                           and (not args.rerun_models or _rk in _rerun_result_keys))
+                        _mm = not args.rerun_models or _rk in _rerun_result_keys
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 1 and _is_cl_supcon and _mm:
@@ -461,16 +472,23 @@ if __name__ == "__main__":
             all_ml_results[clean_title] = {}
 
         # --- FEATURE SELECTION (MUTUAL INFORMATION) on training data only ---
-        # MI is computed on the same 90/10 split used for the None-filter baseline,
-        # so test-set labels never influence feature selection.
+        # MI is computed on the same split evaluate_outlier_filters actually uses for the
+        # None-filter baseline (well-stratified when well_ids_full is available, label-
+        # stratified otherwise), so test-set labels never influence feature selection.
         print(f"\n  [*] Calculating Mutual Information for Top 10 Features (train split only)...")
         X_candidates = features_df[config.LD_FEATURES].values
         X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
 
         n_classes = len(np.unique(y_full))
-        mi_test_size = max(int(len(y_full) * 0.10), n_classes)
-        mi_splitter = StratifiedShuffleSplit(n_splits=1, test_size=mi_test_size, random_state=0)
-        mi_train_idx, _ = next(mi_splitter.split(X_candidates_clean, y_full))
+        if well_ids_full is not None:
+            n_wells = len(np.unique(well_ids_full))
+            mi_test_size = max(len(y_full) * 0.10, n_wells) / len(y_full)
+            mi_train_idx, _ = build_well_stratified_random_split(
+                y_full, well_ids_full, test_size=mi_test_size)["random_split"]
+        else:
+            mi_test_size = max(int(len(y_full) * 0.10), n_classes)
+            mi_splitter = StratifiedShuffleSplit(n_splits=1, test_size=mi_test_size, random_state=0)
+            mi_train_idx, _ = next(mi_splitter.split(X_candidates_clean, y_full))
         mi_scores = mutual_info_classif(X_candidates_clean[mi_train_idx], y_full[mi_train_idx], random_state=0)
 
         top_10_idx = np.argsort(mi_scores)[-10:][::-1]

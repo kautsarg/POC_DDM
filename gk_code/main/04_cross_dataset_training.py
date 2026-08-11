@@ -442,8 +442,20 @@ if __name__ == "__main__":
         if args.models:
             import re
             _req = set(args.models)
+            _suffix_re = re.compile(r'_(supcon\d*|lc|staged|mtl)$')
+
+            def _strip_variant_suffixes(name):
+                # Repeatedly strip one suffix token at a time so compound suffixes
+                # (e.g. "_supcon_lc", "_supcon3_staged") fully reduce to the base name,
+                # regardless of order.
+                while True:
+                    stripped = _suffix_re.sub('', name)
+                    if stripped == name:
+                        return name
+                    name = stripped
+
             models = [m for m in models
-                      if m in _req or re.sub(r'_(supcon\d*|lc)(_mtl)?$', '', m) in _req]
+                      if m in _req or _strip_variant_suffixes(m) in _req]
 
         # Concentration for MTL regression head (sentinel-encoded; combined across all group folders).
         y_concentration = None
@@ -517,6 +529,15 @@ if __name__ == "__main__":
                 if _k_staged_sc == args.supcon:
                     _staged_sc_result_keys.update([_pk, _probk, _clsk])
 
+            # Exact model-name membership (not substring match against result keys -- e.g.
+            # "cnn_gru_dual" is a literal substring of "cnn_gru_dual_attn_recon"'s keys).
+            _rerun_result_keys = set()
+            if args.rerun_models:
+                for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                    if _k in args.rerun_models:
+                        _rerun_result_keys.update([_pk, _probk, _clsk,
+                                                   f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
+
             _is_cl = getattr(args, 'mtl_cl', False)
             if getattr(args, 'supcon_staged', False):
                 _which = f'Staged SupCon SC{args.supcon}'
@@ -565,7 +586,7 @@ if __name__ == "__main__":
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
-                        _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
+                        _mm = not args.rerun_models or _rk in _rerun_result_keys
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
                                           and not _is_any_cl and not _is_rcfd and not _is_staged and _mm)

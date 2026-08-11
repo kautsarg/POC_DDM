@@ -67,13 +67,15 @@ def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits, well_
         return None
 
     if well_ids_masked is not None:
-        calculated_test_size = max(len(y_masked) * 0.10, n_classes) / len(y_masked)
+        # Sized/clamped by well count (the stratify key), not label count -- see
+        # model_utils.evaluate_outlier_filters' matching well_ids_m branch.
+        n_wells = len(np.unique(well_ids_masked))
+        calculated_test_size = max(len(y_masked) * 0.10, n_wells) / len(y_masked)
         if n_splits == 1:
             splits = list(build_well_stratified_random_split(
                 y_masked, well_ids_masked, test_size=calculated_test_size).values())
         else:
-            min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
-            actual_splits = min(n_splits, min_class_count)
+            actual_splits = min(n_splits, n_wells)
             splits = list(build_well_stratified_nfold_splits(
                 y_masked, well_ids_masked, n_splits=actual_splits).values())
     else:
