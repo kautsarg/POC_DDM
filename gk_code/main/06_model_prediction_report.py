@@ -8,8 +8,10 @@ sys.path.insert(0, 'utils/model_training')
 from html_utils import _fig_to_buf, _buf_to_img_html, _panel, build_tabbed_html
 from pipeline_utils import get_exp_paths, check_task_id
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
+from model_utils import build_well_stratified_random_split, build_well_stratified_nfold_splits
 
 import numpy as np
+import pandas as pd
 import joblib
 import matplotlib
 matplotlib.use("Agg")
@@ -32,9 +34,14 @@ MODEL_PRINT_MAP = config.MODEL_PRINT_MAP
 
 
 
-def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits):
+def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits, well_ids=None):
     """Recreate the deterministic mask + rare-class filter + split used by evaluate_outlier_filters
-    so cached predictions/y_trues_ can be mapped back to original curve indices."""
+    so cached predictions/y_trues_ can be mapped back to original curve indices.
+
+    well_ids (if given) makes this stratified by well, mirroring evaluate_outlier_filters'
+    well-stratified default (see model_utils.build_well_stratified_random_split) -- without it,
+    a reconstructed split for any run that was actually trained with well-stratified splitting
+    would silently diverge from what the model actually saw."""
     if outlier_filter is None:
         mask = np.ones(len(y_full), dtype=bool)
     elif outlier_filter in features_df.columns:
@@ -44,6 +51,7 @@ def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits):
 
     global_idx = np.where(mask)[0]
     y_masked = y_full[mask]
+    well_ids_masked = well_ids[mask] if well_ids is not None else None
 
     unique_classes, class_counts = np.unique(y_masked, return_counts=True)
     rare_classes = unique_classes[class_counts < 2]
@@ -51,20 +59,34 @@ def compute_filtered_splits(y_full, features_df, outlier_filter, n_splits):
         valid = ~np.isin(y_masked, rare_classes)
         global_idx = global_idx[valid]
         y_masked = y_masked[valid]
+        if well_ids_masked is not None:
+            well_ids_masked = well_ids_masked[valid]
 
     n_classes = len(np.unique(y_masked))
     if n_classes < 2 or len(y_masked) < 2 * n_classes:
         return None
 
-    calculated_test_size = max(int(len(y_masked) * 0.10), n_classes)
-    if n_splits == 1:
-        splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+    if well_ids_masked is not None:
+        calculated_test_size = max(len(y_masked) * 0.10, n_classes) / len(y_masked)
+        if n_splits == 1:
+            splits = list(build_well_stratified_random_split(
+                y_masked, well_ids_masked, test_size=calculated_test_size).values())
+        else:
+            min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
+            actual_splits = min(n_splits, min_class_count)
+            splits = list(build_well_stratified_nfold_splits(
+                y_masked, well_ids_masked, n_splits=actual_splits).values())
     else:
-        min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
-        actual_splits = min(n_splits, min_class_count)
-        splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
+        calculated_test_size = max(int(len(y_masked) * 0.10), n_classes)
+        if n_splits == 1:
+            splitter = StratifiedShuffleSplit(n_splits=1, test_size=calculated_test_size, random_state=0)
+        else:
+            min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
+            actual_splits = min(n_splits, min_class_count)
+            splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
 
-    splits = list(splitter.split(np.zeros((len(y_masked), 1)), y_masked))
+        splits = list(splitter.split(np.zeros((len(y_masked), 1)), y_masked))
+
     return global_idx, y_masked, splits
 
 
@@ -489,6 +511,16 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
     Y_well_raw        = np.asarray(state["Y_well"])
     kinetic_features  = state["kinetic_features"]
 
+    # well_ids: same derivation as 03_main_training.py, needed so compute_filtered_splits
+    # can reconstruct a well-stratified split matching what evaluate_outlier_filters actually
+    # trained on (see model_utils.build_well_stratified_random_split).
+    well_ids_full = None
+    if "metadata" in state:
+        metadata_df = pd.DataFrame(state["metadata"])
+        if {"pixel_row_idx", "pixel_col_idx"}.issubset(metadata_df.columns):
+            well_ids_full = (metadata_df["well_id"].values if "well_id" in metadata_df.columns
+                              else Y_well_raw.copy())
+
     try:
         curve_idx, resolved_name = config.resolve_curve_dataset_idx(curve_type, dataset_name)
     except ValueError as e:
@@ -518,7 +550,8 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
         return
 
     res_entry  = results_dict[outlier_filter]
-    split_info = compute_filtered_splits(y_full, features_df, outlier_filter, n_splits)
+    split_info = compute_filtered_splits(y_full, features_df, outlier_filter, n_splits,
+                                          well_ids=well_ids_full)
     if split_info is None:
         print(f"  -> Could not reconstruct splits (filter={outlier_filter}). Skipping.")
         return

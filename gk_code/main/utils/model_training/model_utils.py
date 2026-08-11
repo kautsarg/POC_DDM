@@ -10,7 +10,9 @@ import random
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold, train_test_split
+from sklearn.model_selection import (
+    StratifiedShuffleSplit, StratifiedKFold, train_test_split
+)
 from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -717,6 +719,26 @@ def _remap_global_splits(global_splits, mask, valid_mask=None):
     return remapped
 
 
+def build_well_stratified_random_split(y, well_ids, test_size=0.1, random_state=0):
+    """Stratified single train/test split, stratified by well_id (not label). Since
+    one well = one label always, this preserves label balance automatically while also
+    giving every well proportional train/test representation -- including singleton-
+    well classes, which a well-*grouped* split would dump entirely on one side. Leak
+    safety for spatial-recon models (cnn_gru_dual_cosine_recon/attn_recon) comes from
+    restricting build_neighbor_curve_stack's input to one split side at a time, not
+    from constraining this split -- see evaluate_outlier_filters."""
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    train_idx, test_idx = next(sss.split(np.zeros(len(y)), well_ids))
+    return {"random_split": (train_idx, test_idx)}
+
+
+def build_well_stratified_nfold_splits(y, well_ids, n_splits=5, random_state=0):
+    """N-fold CV splits, stratified by well_id — see build_well_stratified_random_split."""
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    return {f"fold_{i}": (tr, te)
+            for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), well_ids))}
+
+
 # Maps evaluate_outlier_filters internal model keys to the canonical names used
 # when saving .keras files for 07_attribution_vis_all.
 _XAI_SAVE_NAME = {
@@ -884,6 +906,20 @@ def evaluate_outlier_filters(
             if not splits:
                 print(f"     [Warning] No samples remain for this filter under the given CV splits. Skipping.")
                 continue
+        elif well_ids_m is not None:
+            # Stratified by well_id (one well = one label, so this also preserves label
+            # balance) instead of grouping by well -- leak safety for cosine_recon/
+            # attn_recon comes from restricting build_neighbor_curve_stack's input to
+            # one split side at a time (below), not from constraining this split.
+            calculated_test_size = max(len(y_true) * 0.10, n_classes) / len(y_true)
+            if n_splits == 1:
+                splits = list(build_well_stratified_random_split(
+                    y_true, well_ids_m, test_size=calculated_test_size).values())
+            else:
+                min_class_count = np.min(class_counts[~np.isin(unique_classes, rare_classes)])
+                actual_splits = min(n_splits, min_class_count)
+                splits = list(build_well_stratified_nfold_splits(
+                    y_true, well_ids_m, n_splits=actual_splits).values())
         else:
             calculated_test_size = max(int(len(y_true) * 0.10), n_classes)
 
@@ -895,7 +931,7 @@ def evaluate_outlier_filters(
                 splitter = StratifiedKFold(n_splits=actual_splits, shuffle=True, random_state=0)
 
             splits = list(splitter.split(X_AC, y_true))
-        
+
         current_mask_count = int(np.sum(mask))
         cached_mask_count = res_entry.get("mask_count")
         if cached_mask_count is not None and cached_mask_count != current_mask_count:
@@ -903,6 +939,17 @@ def evaluate_outlier_filters(
                   f"{cached_mask_count} filtered samples; current data has {current_mask_count} "
                   f"(likely changed upstream). Discarding stale cache for this filter.")
             res_entry = {}
+
+        # Same as the mask_count check above, but for the split itself (a splitter change can
+        # alter fold sizes without changing mask_count).
+        _cached_y_trues = res_entry.get("y_trues_")
+        if _cached_y_trues is not None:
+            _current_test_sizes = [len(te) for _, te in splits]
+            if [len(a) for a in _cached_y_trues] != _current_test_sizes:
+                print(f"     [Warning] Cached y_trues_ for filter '{filter_name}' don't match "
+                      f"the current split's fold sizes (likely a splitter change upstream). "
+                      f"Discarding stale cache for this filter.")
+                res_entry = {}
 
         if "y_trues_" not in res_entry:
             res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
@@ -928,18 +975,10 @@ def evaluate_outlier_filters(
 
         # --- Spatial neighbour reconstruction setup ---
         _wanted_recon = [m for m in models if m.removesuffix('_inc') in _SPATIAL_RECON_MODELS]
-        _wanted_recon_bases = {m.removesuffix('_inc') for m in _wanted_recon}
         _recon_unavailable = bool(_wanted_recon) and (coords_m is None or well_ids_m is None)
         if _recon_unavailable:
             print(f"     [SKIP] {', '.join(_wanted_recon)}: no coords/well_ids provided "
                   f"(pass coords=/well_ids= to evaluate_outlier_filters). Skipping for this filter.")
-        X_AC_cosine_recon, X_AC_stack = None, None
-        _recon_models_left = set(_wanted_recon)  # shrinks as each is reached below
-
-        def _free_spatial_recon():
-            nonlocal X_AC_cosine_recon, X_AC_stack
-            X_AC_cosine_recon, X_AC_stack = None, None
-            gc.collect()
 
         for m in models:
             tf.keras.backend.clear_session()
@@ -1001,25 +1040,8 @@ def evaluate_outlier_filters(
                         if _vm.sum() >= 2:
                             _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
                     print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: Cached")
-                    if m in _recon_models_left:
-                        _recon_models_left.discard(m)
-                        if not _recon_models_left:
-                            _free_spatial_recon()
                     continue
                 print(f"     [XAI-RETRAIN] {m.upper()} cached but .keras missing — retraining to save model.")
-
-            # Lazily build the (N, k+1, T) neighbour stack the first time it's actually
-            # needed for training (not on a cache hit, see above) -- see the comment where
-            # _recon_models_left is defined for why this isn't done eagerly.
-            if _base_m in _SPATIAL_RECON_MODELS and X_AC_cosine_recon is None and X_AC_stack is None:
-                neighbor_stack = build_neighbor_curve_stack(
-                    X_AC.astype(np.float32, copy=False), coords_m, well_ids_m, k=k_neighbors)
-                if any('cosine_recon' in b for b in _wanted_recon_bases):
-                    X_AC_cosine_recon = reconstruct_curves_cosine(neighbor_stack)
-                if any('attn_recon' in b for b in _wanted_recon_bases):
-                    X_AC_stack = neighbor_stack
-                else:
-                    del neighbor_stack
 
             # --- TRAIN NEW MODEL ---
             preds, probs, classes_list = [], [], []
@@ -1039,7 +1061,15 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc',
                                   'cnn_gru_dual_cosine_recon_supcon_staged', 'cnn_gru_dual_cosine_recon_supcon2_staged',
                                   'cnn_gru_dual_cosine_recon_supcon3_staged'):
-                    X_train_curve, X_test_curve = X_AC_cosine_recon[train_idx], X_AC_cosine_recon[test_idx]
+                    # Built separately per split side (train-only / test-only candidate pools)
+                    # so a side's reconstructed curves can never draw on the other side's data --
+                    # see build_neighbor_curve_stack.
+                    X_train_curve = reconstruct_curves_cosine(build_neighbor_curve_stack(
+                        X_AC[train_idx].astype(np.float32, copy=False),
+                        coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors))
+                    X_test_curve = reconstruct_curves_cosine(build_neighbor_curve_stack(
+                        X_AC[test_idx].astype(np.float32, copy=False),
+                        coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors))
                 elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
@@ -1050,7 +1080,13 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_attn_recon_supcon3_staged') or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
-                    X_train_curve, X_test_curve = X_AC_stack[train_idx], X_AC_stack[test_idx]
+                    # Built separately per split side -- see the cosine_recon branch above.
+                    X_train_curve = build_neighbor_curve_stack(
+                        X_AC[train_idx].astype(np.float32, copy=False),
+                        coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors)
+                    X_test_curve = build_neighbor_curve_stack(
+                        X_AC[test_idx].astype(np.float32, copy=False),
+                        coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors)
                 else:
                     X_train_curve, X_test_curve = X_AC[train_idx], X_AC[test_idx]
                 y_train = y_true[train_idx]
@@ -2306,11 +2342,6 @@ def evaluate_outlier_filters(
                 if _vm.sum() >= 2:
                     _reg_suffix = f" | RMSE: {np.sqrt(np.mean((_rp[_vm]-_rt[_vm])**2)):.4f}"
             print(f"     [+] {mode_name}-{dataset_name}-{filter_name[:30]} | {print_name} | {acc:5.2f}% ± {std:5.2f}%{_reg_suffix} | Duration: {formatted_time}")
-
-            if m in _recon_models_left:
-                _recon_models_left.discard(m)
-                if not _recon_models_left:
-                    _free_spatial_recon()
 
         results_dict[f] = res_entry
 

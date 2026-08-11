@@ -12,7 +12,8 @@ from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
 sys.path.insert(0, 'utils/model_training')
-from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism, CurveResampler
+from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_determinism,
+                          CurveResampler, build_well_stratified_random_split, build_well_stratified_nfold_splits)
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
@@ -168,15 +169,26 @@ def build_lofo_splits(dataset_id):
     return splits
 
 
-def build_random_split(y, test_size=0.1, random_state=0):
-    """Stratified single random train/test split."""
+def build_random_split(y, well_ids=None, test_size=0.1, random_state=0):
+    """Stratified single random train/test split. Stratified by well_id when
+    well_ids is available (one well = one label, so this also preserves label
+    balance) instead of by label alone -- leak safety for cosine_recon/attn_recon
+    comes from restricting model_utils.build_neighbor_curve_stack's input to one
+    split side at a time, not from this split. Falls back to plain label-stratified
+    otherwise (safe in that case since those models require well_ids and get
+    skipped without it)."""
+    if well_ids is not None:
+        return build_well_stratified_random_split(y, well_ids, test_size=test_size, random_state=random_state)
     sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
     train_idx, test_idx = next(sss.split(np.zeros(len(y)), y))
     return {"random_split": (train_idx, test_idx)}
 
 
-def build_nfold_splits(y, n_splits=5, random_state=0):
-    """Stratified N-fold cross-validation splits."""
+def build_nfold_splits(y, well_ids=None, n_splits=5, random_state=0):
+    """Stratified N-fold cross-validation splits — see build_random_split
+    for the well-stratification rationale."""
+    if well_ids is not None:
+        return build_well_stratified_nfold_splits(y, well_ids, n_splits=n_splits, random_state=random_state)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     return {f"fold_{i}": (tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), y))}
 
@@ -225,6 +237,14 @@ if __name__ == "__main__":
     parser.add_argument("--models", type=str, nargs='+', default=None,
                         help="Filter model list by base name (e.g. 'cnn_gru_dual' 'cnn_gru_dual_attn_recon'). "
                              "Strips _supconN/_lc/_mtl suffixes before matching.")
+    parser.add_argument("--rerun_models", type=str, nargs='+', default=None,
+                        help="Restrict --force_rerun's cache-clearing to result keys matching these "
+                             "model keys (substring match, so a base name also matches its supcon-"
+                             "suffixed variants), instead of clearing every standard-track model. "
+                             "Independent of --models -- e.g. --models cnn_gru_dual cnn_gru_dual_attn_recon "
+                             "--rerun_models cnn_gru_dual_attn_recon --force_rerun trains/evaluates both "
+                             "models but only force-clears+retrains cnn_gru_dual_attn_recon; cnn_gru_dual "
+                             "still trains only if missing. No effect without --force_rerun.")
     parser.add_argument("--train_full", action="store_true",
                         help="After LOFO, train one final model on ALL data (no holdout) and save to "
                              "model_interpretation/full_data/. Metrics in result are train-set accuracy "
@@ -246,6 +266,8 @@ if __name__ == "__main__":
         sys.exit('[!] --supcon_staged is ST-only; incompatible with --mtl.')
     if getattr(args, 'supcon_staged', False) and args.supcon == 0:
         sys.exit('[!] --supcon_staged requires --supcon 1, 2, or 3.')
+    if args.rerun_models and not args.force_rerun:
+        args.rerun_models = None  # --rerun_models has no effect without --force_rerun
 
     set_global_determinism(0, strict=not args.fast_mode)
 
@@ -543,40 +565,41 @@ if __name__ == "__main__":
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
+                        _mm = not args.rerun_models or any(_m in _rk for _m in args.rerun_models)
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                          and not _is_any_cl and not _is_rcfd and not _is_staged)
-                        if _is_cl and args.supcon == 0 and _is_cl_base:
+                                          and not _is_any_cl and not _is_rcfd and not _is_staged and _mm)
+                        if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
                             del _filter_res[_rk]
-                        elif _is_cl and args.supcon == 1 and _is_cl_supcon:
+                        elif _is_cl and args.supcon == 1 and _is_cl_supcon and _mm:
                             del _filter_res[_rk]
-                        elif _is_cl and args.supcon == 2 and _is_cl_bsc2:
+                        elif _is_cl and args.supcon == 2 and _is_cl_bsc2 and _mm:
                             del _filter_res[_rk]
-                        elif _is_cl and args.supcon == 3 and _is_cl_bsc3:
+                        elif _is_cl and args.supcon == 3 and _is_cl_bsc3 and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and args.mtl and _is_supcon_mtl:
+                        elif args.supcon == 1 and args.mtl and _is_supcon_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_supcon_st:
+                        elif args.supcon == 1 and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_supcon_st and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl:
+                        elif args.supcon in (2, 3) and args.mtl and _is_bsc_mtl and _mm:
                             del _filter_res[_rk]
-                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_bsc_st:
+                        elif args.supcon in (2, 3) and not args.mtl and not getattr(args, 'supcon_staged', False) and _is_bsc_st and _mm:
                             del _filter_res[_rk]
-                        elif args.mtl and args.supcon == 0 and _is_mtl:
+                        elif args.mtl and args.supcon == 0 and _is_mtl and _mm:
                             del _filter_res[_rk]
                         elif args.supcon == 0 and not args.mtl and _is_standard:
                             del _filter_res[_rk]
-                        elif getattr(args, 'condreg', False) and _is_rcfd:
+                        elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
                             del _filter_res[_rk]
-                        elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys:
+                        elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys and _mm:
                             del _filter_res[_rk]
 
         if args.mode == "lofo":
             cv_splits = build_lofo_splits(combined["dataset_id"])
         elif args.mode == "random_split":
-            cv_splits = build_random_split(y_full, test_size=args.test_size)
+            cv_splits = build_random_split(y_full, well_ids=combined["well_ids"], test_size=args.test_size)
         else:
-            cv_splits = build_nfold_splits(y_full, n_splits=args.n_splits)
+            cv_splits = build_nfold_splits(y_full, well_ids=combined["well_ids"], n_splits=args.n_splits)
         total_folds = len(cv_splits)
         for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
             progress_pct = ((fold_idx + 1) / total_folds) * 100

@@ -23,8 +23,9 @@ export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
-MODELS="cnn_gru_dual cnn_gru_dual_cosine_recon cnn_gru_dual_attn_recon"
-FILTERS="none lstm_ae_glb_ds1_label_elbow"
+MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
+# FILTERS="none lstm_ae_glb_ds1_label_elbow"
+FILTERS="none"
 TASK_ID=3
 
 # Task 0: raw curves (ori_curve, ori_curve_wavelet_bior35)
@@ -40,12 +41,14 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py
     --exp_folder ${EXP_FOLDER} --task_id ${TASK_ID} \
     --mode kfold --n_splits 5 \
     --supcon 0 --curve_type ${CURVE_TYPES} --models ${MODELS} \
-    --outlier_filter ${FILTERS} --train_full --fast_mode
+    --outlier_filter ${FILTERS} --train_full --fast_mode \
+    --rerun_models cnn_gru_dual_attn_recon cnn_gru_dual --force_rerun
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${TASK_ID} \
     --mode kfold --n_splits 5 \
     --supcon 3 --curve_type ${CURVE_TYPES} --models ${MODELS} \
-    --outlier_filter ${FILTERS} --train_full --fast_mode
+    --outlier_filter ${FILTERS} --train_full --fast_mode \
+    --rerun_models cnn_gru_dual_attn_recon cnn_gru_dual --force_rerun
 
 deactivate
