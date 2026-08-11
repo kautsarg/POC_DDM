@@ -914,11 +914,6 @@ RERUN_MODELS = [
 # ==========================================
 # DATASET LABEL MAPPINGS
 # ==========================================
-# Used by: 01_curve_preprocessing_v6.py, 03_main_training.py,
-# 04_cross_dataset_training.py, 05_outlier_visualization_report.py,
-# 06_model_prediction_report.py, 07_attribution_vis_all.py,
-# model_for_xai.py, resampling_check.py — maps each experiment folder's raw
-# well index to its class label (per-dataset, since well layout varies).
 LABEL_MAPPINGS = {
 	'D20260320_E00_C00_F4500KHz_U_Elena_steap_cv': {
 		0: 'S',
@@ -1238,6 +1233,11 @@ CONC_MAPPINGS = {
     
 }
 
+EXCLUDE_WELL_MAPPING = {
+    'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7],
+    'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6],
+}
+
 def get_label_mappings(exp_path):
     """Picks LABEL_MAPPINGS based on exp_path's dataset folder (e.g. 'POC_DDM_multi'
     vs 'POC_DDM_multi_nc_subtract'). The nc_subtract preprocessing collapses
@@ -1273,13 +1273,41 @@ def get_conc_array(folder_name, Y_well):
     )
     return None if all(x is None for x in arr) else arr
 
+def apply_well_exclusion(training_data, exp_folder_name):
+    excluded = EXCLUDE_WELL_MAPPING.get(exp_folder_name, [])
+    if not excluded:
+        return training_data
+    Y_well_raw = np.asarray(training_data["Y_well"])
+    keep_idx = np.where(~np.isin(Y_well_raw, excluded))[0]
+    def _fmt_conc(v):
+        try:
+            return f'{float(v):.0e}'
+        except (TypeError, ValueError):
+            return v
+
+    label_map = LABEL_MAPPINGS.get(exp_folder_name, {})
+    conc_map = CONC_MAPPINGS.get(exp_folder_name, {})
+    y_label = {w: label_map.get(w, '?') for w in excluded}
+    y_concentration = {w: _fmt_conc(conc_map.get(w, '?')) for w in excluded}
+    print(f"  [*] EXCLUDE_WELL_MAPPING: dropping {len(Y_well_raw) - len(keep_idx)} "
+          f"samples from wells {excluded} (y_label={y_label}, y_concentration={y_concentration}) "
+          f"for {exp_folder_name}")
+
+    training_data["dataset"] = [d[keep_idx] for d in training_data["dataset"]]
+    training_data["kinetic_features"] = [
+        df.iloc[keep_idx].reset_index(drop=True) for df in training_data["kinetic_features"]
+    ]
+    training_data["Y_well"] = Y_well_raw[keep_idx]
+    if training_data.get("concentration") is not None:
+        training_data["concentration"] = np.asarray(training_data["concentration"], dtype=object)[keep_idx]
+    if training_data.get("metadata") is not None:
+        training_data["metadata"] = {k: np.asarray(v)[keep_idx] for k, v in training_data["metadata"].items()}
+    return training_data
+
 
 # ==========================================
-# CROSS-DATASET ROBUSTNESS CV (04)
+# CROSS-DATASET LOFO CV (04)
 # ==========================================
-# Used by: 04_cross_dataset_training.py, resampling_check.py — groups of
-# experiment folders that share a label mapping, combined for leave-one-
-# folder-out (LOFO) cross-validation.
 CROSS_DATASET_GROUPS = {
     # 'group_name': ['exp_folder_1', 'exp_folder_2', ...],
     'init_oneplex_v6': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],

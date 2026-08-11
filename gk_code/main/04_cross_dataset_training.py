@@ -50,6 +50,7 @@ def load_curve_data(exp_path, curve_type):
         return None
 
     data = joblib.load(data_path)
+    data = config.apply_well_exclusion(data, exp_path.name)
     dataset_name = list(data["dataset_name"])
     try:
         idx, _ = config.resolve_curve_dataset_idx(curve_type, dataset_name)

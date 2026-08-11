@@ -46,7 +46,8 @@ def load_training_data(exp_path):
     if not os.path.exists(data_path):
         print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
         sys.exit(0)
-    return joblib.load(data_path)
+    training_data = joblib.load(data_path)
+    return config.apply_well_exclusion(training_data, exp_path.name)
 
 def filter_datasets(dataset_name, dataset, kinetic_features):
     filtered_names, filtered_dataset, filtered_features = [], [], []
