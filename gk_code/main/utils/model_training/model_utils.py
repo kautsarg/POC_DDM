@@ -91,6 +91,11 @@ from model_utils_rcfd import (
 from model_utils_arch_poc_st import (
     CCGD_ST_ALL_KEYS, _CCGD_FACTORIES,
 )
+from model_utils_dann import (
+    DANN_MODEL_KEYS, GRLLambdaSchedule,
+    create_cnn_gru_dual_dann_model, create_cnn_gru_dual_attn_recon_dann_model,
+    create_cnn_gru_dual_supcon3_dann_model, create_cnn_gru_dual_attn_recon_supcon3_dann_model,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -770,6 +775,7 @@ _XAI_SAVE_NAME.update({k: k for k in ALL_RCFD_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_STAGED_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CCGD_ST_ALL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in DANN_MODEL_KEYS})
 
 
 
@@ -781,7 +787,7 @@ def evaluate_outlier_filters(
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=8,
-    multitask=False, y_concentration=None,
+    multitask=False, y_concentration=None, chip_id_encoded=None,
     cl_phase1_epochs=None,
     lc_classes=None,
     batch_size=512,
@@ -847,6 +853,8 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
         # RCFD attn_recon variants
         *RCFD_ATTN_RECON_MODEL_KEYS,
+        # DANN attn_recon variants
+        "cnn_gru_dual_attn_recon_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -871,6 +879,7 @@ def evaluate_outlier_filters(
         X_manual = X_manual_full[mask] if X_manual_full is not None else None
         coords_m = coords[mask] if coords is not None else None
         well_ids_m = well_ids[mask] if well_ids is not None else None
+        chip_id_m = chip_id_encoded[mask] if chip_id_encoded is not None else None
 
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
@@ -886,6 +895,8 @@ def evaluate_outlier_filters(
             if coords_m is not None:
                 coords_m = coords_m[valid_class_mask]
                 well_ids_m = well_ids_m[valid_class_mask]
+            if chip_id_m is not None:
+                chip_id_m = chip_id_m[valid_class_mask]
 
         n_classes = len(np.unique(y_true))
 
@@ -1063,7 +1074,9 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_attn_recon_lc', 'cnn_gru_dual_attn_recon_supcon_lc',
                                   'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc',
                                   'cnn_gru_dual_attn_recon_supcon_staged', 'cnn_gru_dual_attn_recon_supcon2_staged',
-                                  'cnn_gru_dual_attn_recon_supcon3_staged') or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
+                                  'cnn_gru_dual_attn_recon_supcon3_staged',
+                                  'cnn_gru_dual_attn_recon_dann', 'cnn_gru_dual_attn_recon_supcon3_dann'
+                                  ) or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     # Built separately per split side -- see the cosine_recon branch above.
@@ -1356,6 +1369,70 @@ def evaluate_outlier_filters(
                     classes_list.append(cls)
                     reg_preds_per_fold.append(reg_pred_orig)
                     reg_trues_per_fold.append(conc_test_raw)
+
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in DANN_MODEL_KEYS:
+                    if chip_id_m is None:
+                        print(f"     [SKIP] {m}: no chip_id_encoded provided.")
+                        continue
+                    tf.keras.backend.clear_session()
+                    is_supcon3 = _base_m.endswith('_supcon3_dann')
+                    is_attn_recon = 'attn_recon' in _base_m
+                    n_chips = len(np.unique(chip_id_m))
+                    chip_train_all = chip_id_m[train_idx]
+
+                    if is_attn_recon:
+                        k_plus_1, T = X_train_curve.shape[1], X_train_curve.shape[2]
+                        model = (create_cnn_gru_dual_attn_recon_supcon3_dann_model(k_plus_1, T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_cnn_gru_dual_attn_recon_dann_model(k_plus_1, T, n_classes, n_chips))
+                    else:
+                        T = X_train_curve.shape[1]
+                        model = (create_cnn_gru_dual_supcon3_dann_model(T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_cnn_gru_dual_dann_model(T, n_classes, n_chips))
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                 metrics=['accuracy'])
+                    epochs = 500
+
+                    # val_cls_ce, not val_loss -- chip_ce is meant to plateau near chance, not decrease.
+                    _dann_es = tf.keras.callbacks.EarlyStopping(monitor='val_cls_ce', mode='min', patience=100, restore_best_weights=True)
+                    _dann_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_cls_ce', mode='min', factor=0.5, patience=30, min_lr=1e-5)
+
+                    if _val_split_ok:
+                        chip_train_fit = chip_train_all[_tr_sub]
+                        chip_val = chip_train_all[_val_sub]
+                        steps_per_epoch = max(int(np.ceil(len(X_train_curve_fit) / _bs)), 1)
+                        _grl_cb = GRLLambdaSchedule(model.grl, total_steps=epochs * steps_per_epoch)
+                        _hist = model.fit(X_train_curve_fit,
+                                 {'cls_out': y_train_fit, 'chip_out': chip_train_fit},
+                                 validation_data=(X_val_curve, {'cls_out': y_val, 'chip_out': chip_val}),
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=[_dann_es, _dann_rlrp, _grl_cb])
+                        histories.append(_hist.history)
+                    else:
+                        steps_per_epoch = max(int(np.ceil(len(X_train_curve) / _bs)), 1)
+                        _grl_cb = GRLLambdaSchedule(model.grl, total_steps=epochs * steps_per_epoch)
+                        _hist = model.fit(X_train_curve,
+                                 {'cls_out': y_train, 'chip_out': chip_train_all},
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=[_grl_cb])
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    dann_outputs = model.predict(X_test_curve, verbose=0)
+                    cls_prob = dann_outputs[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
 
                     tf.keras.backend.clear_session()
 

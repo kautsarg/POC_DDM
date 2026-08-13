@@ -6,13 +6,11 @@ import joblib
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from joblib import Memory
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump
-import sigmoid_fitting as sp
 sys.path.insert(0, 'utils/model_training')
 from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_determinism,
                           CurveResampler, build_well_stratified_random_split, build_well_stratified_nfold_splits)
@@ -37,7 +35,8 @@ import tensorflow as tf
 tf.keras.mixed_precision.set_global_policy('mixed_float16')  # 2-3x speedup on A100 Tensor Cores
 tf.config.optimizer.set_jit(True)                            # XLA JIT compilation
 
-PC_TTP_ANCHOR_PCT_DEFAULT = 10
+# set_global_determinism() is called inside __main__ after argparse, so --fast_mode
+# can control strictness (see LOFO speed-up plan Change 1). Other scripts are unaffected.
 
 
 # ============================================================
@@ -68,6 +67,12 @@ def load_curve_data(exp_path, curve_type):
     Y_well_raw = np.asarray(data["Y_well"])
     Y_mapped = np.array([mapping.get(w, w) for w in Y_well_raw])
 
+    # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
+    # model_utils.build_neighbor_curve_stack). Soft-optional, mirrors 03_main_training.py's
+    # derivation -- well_id is made GLOBALLY unique (prefixed with this experiment's name)
+    # since combine_group below concatenates rows from several experiments into one pool;
+    # a bare per-experiment well_id (e.g. "0") would otherwise collide across experiments
+    # and make neighbour-finding mix pixels from physically different wells/chips.
     coords, well_ids = None, None
     if "metadata" in data:
         metadata_df = pd.DataFrame(data["metadata"])
@@ -155,191 +160,6 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
     }
 
 
-# PC-TTP-anchored curve alignment (--curve_alignment pc_ttp)
-def load_pc_wells_snapshot(exp_path, curve_type):
-    """Reads 01's --drop_pc PC snapshot from curve_for_training.joblib's 'pc_wells' key."""
-    data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
-    if not os.path.exists(data_path):
-        return None
-    data = joblib.load(data_path)
-    pc = data.get("pc_wells")
-    if not pc:
-        print(f"  [!] {exp_path.name}: no 'pc_wells' snapshot (--drop_pc not used for this experiment?).")
-        return None
-    resolved = config.CURVE_TYPE_ALIASES.get(curve_type, curve_type)
-    if resolved not in pc["curves"]:
-        print(f"  [!] {exp_path.name}: PC snapshot has no '{resolved}' variant "
-              f"(available: {list(pc['curves'].keys())}).")
-        return None
-    return {
-        "curves": np.asarray(pc["curves"][resolved]),
-        "timestamps": np.asarray(data["timestamps"], dtype=float),
-    }
-
-
-def normalize_curves_minmax(curves):
-    """Per-curve min-max to [0,1], copied from 01_curve_preprocessing_v6.py."""
-    curves = np.asarray(curves, dtype=np.float64)
-    row_min = curves.min(axis=1, keepdims=True)
-    row_max = curves.max(axis=1, keepdims=True)
-    denom = np.where(row_max - row_min == 0, 1, row_max - row_min)
-    return (curves - row_min) / denom
-
-
-def compute_ct_for_curves(curves, timestamps):
-    """Mean Ct across a curve batch, fit fresh (PC has no precomputed Ct)."""
-    cts = []
-    for y in curves:
-        valid = np.isfinite(timestamps) & np.isfinite(y)
-        if valid.sum() < 3:
-            continue
-        try:
-            feats = sp.extract_kinetic_parameters_original(timestamps, y)
-            if "Ct" in feats and np.isfinite(feats["Ct"]):
-                cts.append(feats["Ct"])
-        except Exception:
-            continue
-    return float(np.mean(cts)) if cts else None
-
-
-def _pc_ttp_for_one_chip(exp_path_str, curve_type):
-    exp_path = Path(exp_path_str)
-    pc = load_pc_wells_snapshot(exp_path, curve_type)
-    if pc is None:
-        return None
-    return compute_ct_for_curves(pc["curves"], pc["timestamps"])
-
-
-def pc_ttp_per_chip(exp_paths, curve_type, cache_dir):
-    """{chip_name: mean PC Ct}, disk-cached under cache_dir (sigmoid-fitting is slow)."""
-    cached_fn = Memory(str(cache_dir), verbose=0).cache(_pc_ttp_for_one_chip)
-    ttp = {}
-    for exp_path in exp_paths:
-        ct = cached_fn(str(exp_path), curve_type)
-        if ct is None:
-            print(f"  [!] {exp_path.name}: no PC TTP available for curve_type={curve_type!r}.")
-            continue
-        ttp[exp_path.name] = ct
-    return ttp
-
-
-def shift_to_pc_ttp_anchor(timestamps, curves, chip_ttp, anchor):
-    """Front-truncate so chip_ttp aligns to anchor; shared with 08's inference path."""
-    shift = max(chip_ttp - anchor, 0.0) if chip_ttp is not None else 0.0
-    start_idx = min(int(np.searchsorted(timestamps, timestamps[0] + shift)), len(timestamps) - 1)
-    return timestamps[start_idx:], curves[:, start_idx:], shift
-
-
-def truncate_to_common_duration(timestamps, curves, common_duration):
-    """Back-truncate to common_duration; shared with 08's inference path."""
-    end_time = timestamps[0] + common_duration
-    end_idx = min(int(np.searchsorted(timestamps, end_time)) + 1, len(timestamps))
-    return timestamps[:end_idx], curves[:, :end_idx]
-
-
-def align_parts_to_pc_ttp(parts, pc_ttp, held_out_chip, anchor_method, anchor_pct, verbose=True):
-    """Returns (aligned_parts, anchor, common_duration)."""
-    train_ttps = [v for k, v in pc_ttp.items() if k != held_out_chip]
-    if not train_ttps:
-        raise ValueError("No PC TTP available for any training chip.")
-    if anchor_method == "min":
-        anchor = min(train_ttps)
-    elif anchor_method == "percentile":
-        anchor = float(np.percentile(train_ttps, anchor_pct))
-    else:
-        raise ValueError(f"Unknown anchor_method: {anchor_method!r}")
-
-    aligned = []
-    shifts = {}
-    for p in parts:
-        ttp = pc_ttp.get(p["dataset_id"])
-        t2, c2, shift = shift_to_pc_ttp_anchor(p["timestamps"], p["curves"], ttp, anchor)
-        shifts[p["dataset_id"]] = shift
-        aligned.append({**p, "timestamps": t2, "curves": c2})
-
-    train_lens = [p["timestamps"][-1] - p["timestamps"][0]
-                  for p in aligned if p["dataset_id"] != held_out_chip]
-    common_duration = min(train_lens)
-    for p2 in aligned:
-        p2["timestamps"], p2["curves"] = truncate_to_common_duration(
-            p2["timestamps"], p2["curves"], common_duration)
-
-    if verbose:
-        print(f"  [PC-TTP align] anchor ({anchor_method}) = {anchor:.2f}"
-              + (f" | held_out={held_out_chip}" if held_out_chip else ""))
-        for name, s in shifts.items():
-            flag = " <- CLIPPED (TTP below anchor)" if pc_ttp.get(name, anchor) < anchor else ""
-            print(f"    {name}: shift={s:8.2f}{flag}")
-        print(f"  [PC-TTP align] common_duration = {common_duration:.2f}")
-
-    return aligned, anchor, common_duration
-
-
-def combine_group_pc_aligned(exp_paths, group_name, curve_type, held_out_chip,
-                             anchor_method, anchor_pct, pc_ttp_cache_dir):
-    """Like combine_group(), but zero-references each chip at its PC well's TTP."""
-    parts = []
-    for exp_path in exp_paths:
-        d = load_curve_data(exp_path, curve_type)
-        if d is None:
-            continue
-        parts.append(d)
-
-    if len(parts) < 2:
-        print(f"  -> Skipping group '{group_name}': fewer than 2 usable datasets found.")
-        return None
-
-    pc_ttp = pc_ttp_per_chip(exp_paths, curve_type, pc_ttp_cache_dir)
-    parts, anchor, common_duration = align_parts_to_pc_ttp(parts, pc_ttp, held_out_chip, anchor_method, anchor_pct)
-
-    timestamps_zeroed = [p["timestamps"] - p["timestamps"][0] for p in parts]
-    resampler = CurveResampler.fit(timestamps_zeroed)
-    print(f"  [*] Resampling curves onto common grid: {len(resampler.t_grid)} points, "
-          f"duration={resampler.t_grid[-1]:.4g}")
-    for p in parts:
-        p["curves"] = resampler.transform(p["timestamps"], p["curves"])
-
-    if all(p["coords"] is not None for p in parts):
-        coords_combined = np.concatenate([p["coords"] for p in parts], axis=0)
-        well_ids_combined = np.concatenate([p["well_ids"] for p in parts], axis=0)
-    else:
-        missing = [p["dataset_id"] for p in parts if p["coords"] is None]
-        if missing:
-            print(f"  [*] No pixel_row_idx/pixel_col_idx metadata for: {missing} -- "
-                  f"cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon will be skipped for "
-                  f"group '{group_name}' (all-or-nothing across the group's folders).")
-        coords_combined, well_ids_combined = None, None
-
-    conc_parts = []
-    for p in parts:
-        raw = p.get("concentration_raw")
-        conc_parts.append(np.asarray(raw, dtype=object) if raw is not None
-                          else np.full(len(p["Y_mapped"]), None, dtype=object))
-
-    combined_curves = np.concatenate([p["curves"] for p in parts], axis=0)
-    if curve_type.endswith("_norm"):
-        # Re-normalize the truncated window, not the pre-truncation curve.
-        combined_curves = normalize_curves_minmax(combined_curves)
-        print("  [*] Re-normalized aligned window to [0,1] per curve.")
-
-    return {
-        "curves": combined_curves,
-        "features_df": pd.concat([p["features_df"] for p in parts], axis=0, ignore_index=True),
-        "Y_mapped": np.concatenate([p["Y_mapped"] for p in parts], axis=0),
-        "dataset_id": np.concatenate([np.full(len(p["Y_mapped"]), p["dataset_id"], dtype=object) for p in parts], axis=0),
-        "dataset_names": [p["dataset_id"] for p in parts],
-        "resampler": resampler,
-        "coords": coords_combined,
-        "well_ids": well_ids_combined,
-        "concentration_raw": np.concatenate(conc_parts, axis=0),
-        "pc_ttp_recipe": {
-            "anchor": anchor, "anchor_method": anchor_method,
-            "common_duration": common_duration, "pc_ttp_per_chip": pc_ttp,
-            "held_out_chip": held_out_chip, "curve_type": curve_type,
-        },
-    }
-
-
 def build_lofo_splits(dataset_id):
     """Leave-one-folder-out: each fold holds out one whole dataset as the test set."""
     splits = {}
@@ -372,141 +192,6 @@ def build_nfold_splits(y, well_ids=None, n_splits=5, random_state=0):
         return build_well_stratified_nfold_splits(y, well_ids, n_splits=n_splits, random_state=random_state)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     return {f"fold_{i}": (tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), y))}
-
-
-def _select_top_10_features(X_candidates_clean, y_full, idx, tag):
-    mi_scores = mutual_info_classif(X_candidates_clean[idx], y_full[idx], random_state=0)
-    top_10_idx = np.argsort(mi_scores)[-10:][::-1]
-    feats = [config.LD_FEATURES[i] for i in top_10_idx]
-    print(f"  [*] Selected Top 10 Features ({tag}): {feats}")
-    return feats
-
-
-def _save_alignment_artifacts(combined, out_dir, curve_type, args):
-    """Saves the resampler, plus the pc_ttp recipe when curve_alignment is pc_ttp."""
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
-    safe_joblib_dump(combined["resampler"], resampler_path, compress=3)
-    print(f"  [*] Saved curve resampler -> {resampler_path}")
-    if args.curve_alignment == "pc_ttp":
-        recipe_path = out_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
-        safe_joblib_dump(combined["pc_ttp_recipe"], recipe_path, compress=3)
-        print(f"  [*] Saved pc_ttp alignment recipe -> {recipe_path}")
-
-
-def _derive_pool_labels(combined, args):
-    encoder = LabelEncoder()
-    y_full = encoder.fit_transform(combined["Y_mapped"])
-    chip_id_encoded = LabelEncoder().fit_transform(combined["dataset_id"])
-
-    X_candidates = combined["features_df"][config.LD_FEATURES].values
-    X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
-
-    y_concentration = None
-    if args.mtl:
-        raw_conc = combined.get("concentration_raw")
-        if raw_conc is not None:
-            _float_arr = np.array([float(v) if v is not None else np.nan for v in raw_conc], dtype=float)
-            y_concentration = np.where(np.isnan(_float_arr) | (_float_arr == 0.0),
-                                        _MTL_REG_SENTINEL, _float_arr)
-        else:
-            y_concentration = np.full(len(y_full), _MTL_REG_SENTINEL, dtype=float)
-        _n_valid = int((y_concentration != _MTL_REG_SENTINEL).sum())
-        print(f"  [MTL] Concentration loaded: {_n_valid} / {len(y_concentration)} samples "
-              f"have non-sentinel concentration.")
-
-    return encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded
-
-
-def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
-                  combined, y_full, encoder, X_candidates_clean, curve_type, models,
-                  outlier_filters, out_dir, plot_dir, group_name, total_count,
-                  lofo_results, results_file_path, args, y_concentration, chip_id_encoded):
-    progress_pct = ((fold_idx + 1) / total_folds) * 100
-    print(f"\n{'='*75}")
-    print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
-    print(f"{'='*75}")
-
-    top_10_features = _select_top_10_features(X_candidates_clean, y_full, train_idx, f"{fold_label}, train-only")
-
-    cached_fold = lofo_results.get(fold_label, {})
-
-    def checkpoint(updated_results, fold_label=fold_label):
-        lofo_results[fold_label] = updated_results
-        safe_joblib_dump(lofo_results, results_file_path, compress=3)
-
-    lofo_model_dir = out_dir / "model_interpretation" / fold_label
-    lofo_model_dir.mkdir(parents=True, exist_ok=True)
-
-    res = evaluate_outlier_filters(
-        X_curves=combined["curves"],
-        features_df=combined["features_df"],
-        y_encoded=y_full,
-        outlier_filters=outlier_filters,
-        dataset_name=group_name,
-        mode_name=fold_label,
-        cached_results=cached_fold,
-        models=models,
-        checkpoint_fn=checkpoint,
-        KFS=top_10_features,
-        rerun_models=config.RERUN_MODELS,
-        cv_splits=[(train_idx, test_idx)],
-        save_model_dir=lofo_model_dir,
-        save_model_curve_type=curve_type,
-        coords=combined["coords"],
-        well_ids=combined["well_ids"],
-        k_neighbors=args.k_neighbors,
-        multitask=args.mtl,
-        y_concentration=y_concentration,
-        chip_id_encoded=chip_id_encoded,
-        cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
-        batch_size=2048,
-    )
-
-    lofo_results[fold_label] = res
-
-    # XAI metadata
-    if "top_10_features" not in lofo_results[fold_label]:
-        lofo_results[fold_label]["top_10_features"] = {}
-    for f in outlier_filters:
-        lofo_results[fold_label]["top_10_features"][str(f)] = top_10_features
-
-    lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
-
-    safe_joblib_dump(lofo_results, results_file_path, compress=3)
-
-    features_df_all = combined["features_df"]
-    X_man_train = np.nan_to_num(
-        features_df_all.iloc[train_idx][top_10_features].values,
-        nan=0.0, posinf=0.0, neginf=0.0,
-    ).astype(np.float32)
-    X_man_test = np.nan_to_num(
-        features_df_all.iloc[test_idx][top_10_features].values,
-        nan=0.0, posinf=0.0, neginf=0.0,
-    ).astype(np.float32)
-    snapshot_path = lofo_model_dir / f"xai_data_{curve_type}.joblib"
-    safe_joblib_dump({
-        "X_curves_test": combined["curves"][test_idx].astype(np.float32),
-        "features_df_test": features_df_all.iloc[test_idx].reset_index(drop=True),
-        "X_man_train": X_man_train,
-        "X_man_test": X_man_test,
-        "y_test": y_full[test_idx],
-        "timestamps": combined["resampler"].t_grid,
-        "top_10_features": top_10_features,
-        "group_name": group_name,
-        "fold_label": fold_label,
-    }, snapshot_path, compress=3)
-    print(f"  [XAI] Saved LOFO test snapshot -> {snapshot_path}")
-
-    plot_ml_results(
-        results_dict=lofo_results[fold_label],
-        outlier_filters=outlier_filters,
-        dataset_name=group_name,
-        mode_name=fold_label,
-        total_count=total_count,
-        save_prefix=os.path.join(plot_dir, fold_label),
-    )
-
-    gc.collect()
 
 
 # ============================================================
@@ -547,9 +232,6 @@ if __name__ == "__main__":
                         help="Train RCFD models (Regression-Conditioned Feature Dual). Implies --mtl.")
     parser.add_argument("--supcon_staged", action="store_true",
                         help="2-stage SupCon: Stage 1 SC-only until plateau, Stage 2 CE-only frozen backbone.")
-    parser.add_argument("--dann", action="store_true",
-                        help="Train domain-adversarial (chip-invariance) models instead. "
-                             "Only --supcon 0 or 3 supported (plain or branch-v3 SupCon + DANN).")
     parser.add_argument("--outlier_filter", type=str, nargs='+', default=["none"],
                         help="Outlier filters to evaluate. Use 'none' for no filter. "
                              "E.g. --outlier_filter none lstm_ae_glb_ds1_label_elbow")
@@ -576,25 +258,6 @@ if __name__ == "__main__":
                         help="Number of folds for --mode kfold.")
     parser.add_argument("--test_size", type=float, default=0.1,
                         help="Test fraction for --mode random_split.")
-    parser.add_argument("--curve_alignment", type=str,
-                        choices=config.CURVE_ALIGNMENT_CHOICES,
-                        default="acquisition_start",
-                        help="How to zero-reference each chip's curves before resampling "
-                             "onto a common grid. 'acquisition_start' (default, today's "
-                             "behaviour): zero-reference at raw acquisition start. "
-                             "'pc_ttp': zero-reference at each chip's PC well's "
-                             "time-to-positivity, aligned to a shared anchor -- see "
-                             "_brainstorming/20260813-lofo_domain_shift_combined_implementation_plan.md Part I.")
-    parser.add_argument("--pc_ttp_anchor", type=str, choices=["min", "percentile"],
-                        default="min",
-                        help="Only used when --curve_alignment pc_ttp. Anchor statistic "
-                             "across training chips' PC TTP -- 'min' (strict earliest) or "
-                             "'percentile' (fixed 10th percentile, more robust to a single "
-                             "outlier chip defining the anchor for everyone).")
-    parser.add_argument("--lofo_limit", type=int, default=None,
-                        help="Only run the first N LOFO folds instead of all of them "
-                             "(e.g. 1 out of a 4-chip group) -- for quick iteration/testing. "
-                             "Does not affect --train_full.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
@@ -604,10 +267,6 @@ if __name__ == "__main__":
         sys.exit('[!] --supcon_staged is ST-only; incompatible with --mtl.')
     if getattr(args, 'supcon_staged', False) and args.supcon == 0:
         sys.exit('[!] --supcon_staged requires --supcon 1, 2, or 3.')
-    if getattr(args, 'dann', False) and args.mtl:
-        sys.exit('[!] --dann is ST-only; incompatible with --mtl.')
-    if getattr(args, 'dann', False) and args.supcon not in (0, 3):
-        sys.exit('[!] --dann only supports --supcon 0 or 3.')
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
 
@@ -625,20 +284,39 @@ if __name__ == "__main__":
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
     exp_paths = [Path(args.exp_folder, name) for name in folder_names]
 
-    pc_ttp_cache_dir = None
-    if args.curve_alignment == "pc_ttp":
-        pc_ttp_cache_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name / "_cache_pc_ttp"
-        pc_ttp_cache_dir.mkdir(parents=True, exist_ok=True)
-
     ordered = list(reversed(args.curve_type))
     for curve_type in ordered:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
+        combined = combine_group(exp_paths, group_name, curve_type=curve_type)
+        if combined is None:
+            continue
+
         out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
-        if args.curve_alignment == "pc_ttp":
-            out_dir = out_dir / "curve_alignment_pc_ttp" / f"anchor_{args.pc_ttp_anchor}"
         plot_dir = out_dir / f"model_performance_{curve_type}"
         plot_dir.mkdir(parents=True, exist_ok=True)
+
+        resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+        safe_joblib_dump(combined["resampler"], resampler_path, compress=3)
+        print(f"  [*] Saved curve resampler -> {resampler_path}")
+
+        encoder = LabelEncoder()
+        y_full = encoder.fit_transform(combined["Y_mapped"])
+        total_count = len(y_full)
+
+        # X_candidates_clean is just cleaned raw features, no fitting -- safe to prepare
+        # once. The actual MI *selection* is done per-fold, train-idx-only (see
+        # _select_top_10_features below), so a fold's held-out chip never influences
+        # which features get chosen for evaluating that same chip.
+        X_candidates = combined["features_df"][config.LD_FEATURES].values
+        X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
+
+        def _select_top_10_features(idx, tag):
+            mi_scores = mutual_info_classif(X_candidates_clean[idx], y_full[idx], random_state=0)
+            top_10_idx = np.argsort(mi_scores)[-10:][::-1]
+            feats = [config.LD_FEATURES[i] for i in top_10_idx]
+            print(f"  [*] Selected Top 10 Features ({tag}): {feats}")
+            return feats
 
         _mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=_mode_str, curve_type=curve_type)
@@ -692,7 +370,7 @@ if __name__ == "__main__":
         #         models = list(BRANCH_SUPCON3_MODEL_KEYS)
         #     else:
         #         models = [
-        #             # "knn",
+        #             # "knn", 
         #             "cnn", # "cnn_inc",
         #             # "cnn_lf",
         #             "gru", "cnn_gru_dual", # "cnn_gru_dual_inc",
@@ -725,7 +403,7 @@ if __name__ == "__main__":
 
         # CONDITIONAL REGRESSION (RCFD) MODELS
         elif getattr(args, 'condreg', False):
-            if args.supcon == 0:
+            if args.supcon == 0:    
                 models = ['cnn_rcfd_cgd', 'gru_rcfd_cgd', 'trans_rcfd_cgd']
             elif args.supcon == 1:
                 models = ['cnn_rcfd_cgd_supcon_mtl', 'gru_rcfd_cgd_supcon_mtl', 'trans_rcfd_cgd_supcon_mtl']
@@ -733,12 +411,7 @@ if __name__ == "__main__":
                 models = ['cnn_rcfd_cgd_supcon2_mtl', 'gru_rcfd_cgd_supcon2_mtl', 'trans_rcfd_cgd_supcon2_mtl']
             elif args.supcon == 3:
                 models = ['cnn_rcfd_cgd_supcon3_mtl', 'gru_rcfd_cgd_supcon3_mtl', 'trans_rcfd_cgd_supcon3_mtl']
-
-        # DOMAIN-ADVERSARIAL (DANN) MODELS
-        elif getattr(args, 'dann', False):
-            models = (['cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann'] if args.supcon == 3
-                     else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann'])
-
+        
         # CURRICULUM LEARNING (CL) MTL MODELS
         elif args.mtl and getattr(args, 'mtl_cl', False):
             if args.supcon == 0:
@@ -749,7 +422,7 @@ if __name__ == "__main__":
                 models = ['cnn_gru_dual_cl_supcon2_mtl']
             elif args.supcon == 3:
                 models = ['cnn_gru_dual_cl_supcon3_mtl']
-
+        
         # MULTI-TASK LEARNING (MTL) MODELS
         elif args.mtl:
             if args.supcon == 1:
@@ -760,7 +433,7 @@ if __name__ == "__main__":
                 models = ['cnn_gru_dual_supcon3_mtl', 'cnn_gru_dual_cosine_recon_supcon3_mtl', 'cnn_gru_dual_attn_recon_supcon3_mtl']
             else:
                 models = ['cnn_gru_dual_mtl', 'cnn_gru_dual_cosine_recon_mtl', 'cnn_gru_dual_attn_recon_mtl']
-
+                
         # SINGLE-TASK (ST) MODELS
         else:
             if args.supcon == 1:
@@ -789,6 +462,20 @@ if __name__ == "__main__":
 
             models = [m for m in models
                       if m in _req or _strip_variant_suffixes(m) in _req]
+
+        # Concentration for MTL regression head (sentinel-encoded; combined across all group folders).
+        y_concentration = None
+        if args.mtl:
+            raw_conc = combined.get("concentration_raw")
+            if raw_conc is not None:
+                _float_arr = np.array([float(v) if v is not None else np.nan for v in raw_conc], dtype=float)
+                y_concentration = np.where(np.isnan(_float_arr) | (_float_arr == 0.0),
+                                            _MTL_REG_SENTINEL, _float_arr)
+            else:
+                y_concentration = np.full(len(y_full), _MTL_REG_SENTINEL, dtype=float)
+            _n_valid = int((y_concentration != _MTL_REG_SENTINEL).sum())
+            print(f"  [MTL] Concentration loaded: {_n_valid} / {len(y_concentration)} samples "
+                  f"have non-sentinel concentration.")
 
         lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
         if args.force_rerun:
@@ -835,10 +522,6 @@ if __name__ == "__main__":
                 if _k in config._RCFD_MODEL_KEYS:
                     _rcfd_result_keys.update([_pk, _probk, _clsk,
                                               f'y_reg_preds_{_k}_', f'y_reg_trues_{_k}_'])
-            _dann_result_keys = set()
-            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
-                if _k in config._DANN_MODEL_KEYS:
-                    _dann_result_keys.update([_pk, _probk, _clsk])
             _staged_result_keys = set()
             _staged_sc_result_keys = set()
             for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
@@ -866,8 +549,6 @@ if __name__ == "__main__":
                 _which = f'Staged SupCon SC{args.supcon}'
             elif getattr(args, 'condreg', False):
                 _which = f'RCFD SC{args.supcon}'
-            elif getattr(args, 'dann', False):
-                _which = f'DANN SC{args.supcon}'
             elif _is_cl and args.supcon == 0:
                 _which = 'CL MTL'
             elif _is_cl and args.supcon == 1:
@@ -908,15 +589,13 @@ if __name__ == "__main__":
                         _is_any_cl     = _is_cl_base or _is_cl_supcon or _is_cl_bsc2 or _is_cl_bsc3
                         _is_rcfd       = _rk in _rcfd_result_keys
                         _is_staged     = _rk in _staged_result_keys
-                        _is_dann       = _rk in _dann_result_keys
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
                         _mm = not args.rerun_models or _rk in _rerun_result_keys
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
-                                          and not _is_any_cl and not _is_rcfd and not _is_staged
-                                          and not _is_dann and _mm)
+                                          and not _is_any_cl and not _is_rcfd and not _is_staged and _mm)
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 1 and _is_cl_supcon and _mm:
@@ -939,92 +618,141 @@ if __name__ == "__main__":
                             del _filter_res[_rk]
                         elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
                             del _filter_res[_rk]
-                        elif getattr(args, 'dann', False) and _is_dann and _mm:
-                            del _filter_res[_rk]
                         elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys and _mm:
                             del _filter_res[_rk]
 
-        def _build_pool(held_out_chip):
-            if args.curve_alignment == "pc_ttp":
-                return combine_group_pc_aligned(
-                    exp_paths, group_name, curve_type=curve_type,
-                    held_out_chip=held_out_chip, anchor_method=args.pc_ttp_anchor,
-                    anchor_pct=PC_TTP_ANCHOR_PCT_DEFAULT, pc_ttp_cache_dir=pc_ttp_cache_dir)
-            return combine_group(exp_paths, group_name, curve_type=curve_type)
+        if args.mode == "lofo":
+            cv_splits = build_lofo_splits(combined["dataset_id"])
+        elif args.mode == "random_split":
+            cv_splits = build_random_split(y_full, well_ids=combined["well_ids"], test_size=args.test_size)
+        else:
+            cv_splits = build_nfold_splits(y_full, well_ids=combined["well_ids"], n_splits=args.n_splits)
+        total_folds = len(cv_splits)
+        for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
+            progress_pct = ((fold_idx + 1) / total_folds) * 100
+            print(f"\n{'='*75}")
+            print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
+            print(f"{'='*75}")
 
-        _lofo_pc_ttp = args.mode == "lofo" and args.curve_alignment == "pc_ttp"
-        pool_held_out_chips = list(folder_names) if _lofo_pc_ttp else [None]
-        if _lofo_pc_ttp and args.lofo_limit:
-            pool_held_out_chips = pool_held_out_chips[:args.lofo_limit]
+            top_10_features = _select_top_10_features(train_idx, f"{fold_label}, train-only")
 
-        combined = None
-        for held_out_chip in pool_held_out_chips:
-            combined = _build_pool(held_out_chip)
-            if combined is None:
-                continue
+            cached_fold = lofo_results.get(fold_label, {})
 
-            if not _lofo_pc_ttp:
-                _save_alignment_artifacts(combined, out_dir, curve_type, args)
+            def checkpoint(updated_results, fold_label=fold_label):
+                lofo_results[fold_label] = updated_results
+                safe_joblib_dump(lofo_results, results_file_path, compress=3)
 
-            encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
-            total_count = len(y_full)
+            lofo_model_dir = out_dir / "model_interpretation" / fold_label
+            lofo_model_dir.mkdir(parents=True, exist_ok=True)
 
-            if args.mode == "lofo":
-                cv_splits = build_lofo_splits(combined["dataset_id"])
-                if held_out_chip is not None:
-                    cv_splits = {k: v for k, v in cv_splits.items() if k == f"lofo_{held_out_chip}"}
-                elif args.lofo_limit:
-                    cv_splits = dict(list(cv_splits.items())[:args.lofo_limit])
-            elif args.mode == "random_split":
-                cv_splits = build_random_split(y_full, well_ids=combined["well_ids"], test_size=args.test_size)
-            else:
-                cv_splits = build_nfold_splits(y_full, well_ids=combined["well_ids"], n_splits=args.n_splits)
-            total_folds = len(cv_splits)
-            for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
-                _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
-                              combined, y_full, encoder, X_candidates_clean, curve_type, models,
-                              outlier_filters, out_dir, plot_dir, group_name, total_count,
-                              lofo_results, results_file_path, args, y_concentration, chip_id_encoded)
+            res = evaluate_outlier_filters(
+                X_curves=combined["curves"],
+                features_df=combined["features_df"],
+                y_encoded=y_full,
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name=fold_label,
+                cached_results=cached_fold,
+                # models=reversed(models),
+                models=models,
+                checkpoint_fn=checkpoint,
+                KFS=top_10_features,
+                rerun_models=config.RERUN_MODELS,
+                cv_splits=[(train_idx, test_idx)],
+                save_model_dir=lofo_model_dir,
+                save_model_curve_type=curve_type,
+                coords=combined["coords"],
+                well_ids=combined["well_ids"],
+                k_neighbors=args.k_neighbors,
+                multitask=args.mtl,
+                y_concentration=y_concentration,
+                cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                batch_size=2048,
+            )
+
+            lofo_results[fold_label] = res
+
+            # XAI metadata: folded directly into lofo_results (see joblib_redundancy.md
+            # Change 4) instead of a separate model_interpretation_{curve_type}.joblib —
+            # 07_attribution_vis_all now reads top_10_features from this same file.
+            if "top_10_features" not in lofo_results[fold_label]:
+                lofo_results[fold_label]["top_10_features"] = {}
+            for f in outlier_filters:
+                lofo_results[fold_label]["top_10_features"][str(f)] = top_10_features
+
+            # encoder.classes_ isn't persisted anywhere else for this combined pool --
+            # 06b_cross_dataset_prediction_report.py needs it to label confusion
+            # matrices/class-metrics with real class names instead of integer ids.
+            lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
+
+            safe_joblib_dump(lofo_results, results_file_path, compress=3)
+
+            # Test-fold snapshot so 07 can run attribution without re-running combine_group.
+            features_df_all = combined["features_df"]
+            X_man_train = np.nan_to_num(
+                features_df_all.iloc[train_idx][top_10_features].values,
+                nan=0.0, posinf=0.0, neginf=0.0,
+            ).astype(np.float32)
+            X_man_test = np.nan_to_num(
+                features_df_all.iloc[test_idx][top_10_features].values,
+                nan=0.0, posinf=0.0, neginf=0.0,
+            ).astype(np.float32)
+            snapshot_path = lofo_model_dir / f"xai_data_{curve_type}.joblib"
+            safe_joblib_dump({
+                "X_curves_test": combined["curves"][test_idx].astype(np.float32),
+                "features_df_test": features_df_all.iloc[test_idx].reset_index(drop=True),
+                "X_man_train": X_man_train,
+                "X_man_test": X_man_test,
+                "y_test": y_full[test_idx],
+                "timestamps": combined["resampler"].t_grid,
+                "top_10_features": top_10_features,
+                "group_name": group_name,
+                "fold_label": fold_label,
+            }, snapshot_path, compress=3)
+            print(f"  [XAI] Saved LOFO test snapshot -> {snapshot_path}")
+
+            plot_ml_results(
+                results_dict=lofo_results[fold_label],
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name=fold_label,
+                total_count=total_count,
+                save_prefix=os.path.join(plot_dir, fold_label),
+            )
+
+            gc.collect()
 
         if getattr(args, 'train_full', False):
-            if _lofo_pc_ttp:
-                combined = _build_pool(None)  # fresh group-wide pool
-                if combined is not None:
-                    _save_alignment_artifacts(combined, out_dir, curve_type, args)
-            if combined is not None:
-                encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
-                all_idx = np.arange(len(y_full))
-                top_10_features = _select_top_10_features(X_candidates_clean, y_full, all_idx, "full_data")
-                full_model_dir = out_dir / "model_interpretation" / f"full_data_{_mode_str}"
-                full_model_dir.mkdir(parents=True, exist_ok=True)
-                print(f"\n{'='*75}")
-                print(f"[FULL DATA] Training on all {len(y_full)} samples (no holdout) | curve={curve_type}")
-                print(f"{'='*75}")
-                res_full = evaluate_outlier_filters(
-                    X_curves=combined["curves"],
-                    features_df=combined["features_df"],
-                    y_encoded=y_full,
-                    outlier_filters=outlier_filters,
-                    dataset_name=group_name,
-                    mode_name="full_data",
-                    cached_results=lofo_results.get("full_data", {}),
-                    models=models,
-                    checkpoint_fn=None,
-                    KFS=top_10_features,
-                    rerun_models=config.RERUN_MODELS,
-                    cv_splits=[(all_idx, all_idx)],
-                    save_model_dir=full_model_dir,
-                    save_model_curve_type=curve_type,
-                    coords=combined["coords"],
-                    well_ids=combined["well_ids"],
-                    k_neighbors=args.k_neighbors,
-                    multitask=args.mtl,
-                    y_concentration=y_concentration,
-                    chip_id_encoded=chip_id_encoded,
-                    cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
-                    batch_size=2048,
-                )
-                lofo_results["full_data"] = res_full
-                lofo_results["full_data"]["class_names"] = [str(c) for c in encoder.classes_]
-                safe_joblib_dump(lofo_results, results_file_path, compress=3)
-                gc.collect()
+            all_idx = np.arange(len(y_full))
+            top_10_features = _select_top_10_features(all_idx, "full_data")
+            full_model_dir = out_dir / "model_interpretation" / f"full_data_{_mode_str}"
+            full_model_dir.mkdir(parents=True, exist_ok=True)
+            print(f"\n{'='*75}")
+            print(f"[FULL DATA] Training on all {len(y_full)} samples (no holdout) | curve={curve_type}")
+            print(f"{'='*75}")
+            res_full = evaluate_outlier_filters(
+                X_curves=combined["curves"],
+                features_df=combined["features_df"],
+                y_encoded=y_full,
+                outlier_filters=outlier_filters,
+                dataset_name=group_name,
+                mode_name="full_data",
+                cached_results=lofo_results.get("full_data", {}),
+                models=models,
+                checkpoint_fn=None,
+                KFS=top_10_features,
+                rerun_models=config.RERUN_MODELS,
+                cv_splits=[(all_idx, all_idx)],
+                save_model_dir=full_model_dir,
+                save_model_curve_type=curve_type,
+                coords=combined["coords"],
+                well_ids=combined["well_ids"],
+                k_neighbors=args.k_neighbors,
+                multitask=args.mtl,
+                y_concentration=y_concentration,
+                cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
+                batch_size=2048,
+            )
+            lofo_results["full_data"] = res_full
+            safe_joblib_dump(lofo_results, results_file_path, compress=3)
+            gc.collect()

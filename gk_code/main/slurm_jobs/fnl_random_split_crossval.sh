@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=final_04_random_split
+#SBATCH --job-name=fnl_random_split
 #SBATCH --time=48:00:00
 
 # Request resources for a single job

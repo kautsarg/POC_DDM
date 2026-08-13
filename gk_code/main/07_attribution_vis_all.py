@@ -33,6 +33,7 @@ from model_utils_supcon import (SupConModel, SupConMTLModel,
                                 CurriculumSupConMTLModel,
                                 CurriculumBranch2MTLModel,
                                 CurriculumBranch3MTLModel)
+from model_utils_dann import DANNModel, SupConBranch3DANNModel
 
 import types as _types
 
@@ -208,6 +209,10 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             "cnn_rcfd_cgd_supcon3_mtl", "cnn_rcfd_ctd_supcon3_mtl",
             "gru_rcfd_cgd_supcon3_mtl", "gru_rcfd_ctd_supcon3_mtl",
             "trans_rcfd_cgd_supcon3_mtl", "trans_rcfd_ctd_supcon3_mtl",
+
+            # DANN (domain-adversarial)
+            "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
+            "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
         ]
 
     for name in model_names:
@@ -234,6 +239,8 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
                     'RCFDSupConMTLModel': RCFDSupConMTLModel,
                     'RCFDBranch2MTLModel': RCFDBranch2MTLModel,
                     'RCFDBranch3MTLModel': RCFDBranch3MTLModel,
+                    'DANNModel': DANNModel,
+                    'SupConBranch3DANNModel': SupConBranch3DANNModel,
                 },
             )
             model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]

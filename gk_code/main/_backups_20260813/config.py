@@ -176,8 +176,6 @@ TRAINING_RESULT_PATH = 'classification_performances.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
 CROSS_DATASET_RESULT_PATH = 'cross_dataset_classification_performances_{mode}_{curve_type}.joblib'
 CROSS_DATASET_RESAMPLER_PATH = 'cross_dataset_resampler_classification_performances_{curve_type}.joblib'
-CURVE_ALIGNMENT_CHOICES = ["acquisition_start", "pc_ttp"]
-CROSS_DATASET_PC_TTP_RECIPE_PATH = 'cross_dataset_pc_ttp_recipe_{curve_type}.joblib'
 
 # ==========================================
 # MATPLOTLIB GLOBAL STYLE
@@ -435,11 +433,6 @@ MODEL_KEY_MAP = {
     "ccgd_arch_poc_st_sc1": ("y_preds_AC_ccgd_arch_poc_st_sc1_", "y_probs_AC_ccgd_arch_poc_st_sc1_", "classes_AC_ccgd_arch_poc_st_sc1_"),
     "ccgd_arch_poc_st_sc2": ("y_preds_AC_ccgd_arch_poc_st_sc2_", "y_probs_AC_ccgd_arch_poc_st_sc2_", "classes_AC_ccgd_arch_poc_st_sc2_"),
     "ccgd_arch_poc_st_sc3": ("y_preds_AC_ccgd_arch_poc_st_sc3_", "y_probs_AC_ccgd_arch_poc_st_sc3_", "classes_AC_ccgd_arch_poc_st_sc3_"),
-    # Domain-adversarial (DANN)
-    "cnn_gru_dual_dann":                  ("y_preds_AC_cnn_gru_dual_dann_",                  "y_probs_AC_cnn_gru_dual_dann_",                  "classes_AC_cnn_gru_dual_dann_"),
-    "cnn_gru_dual_attn_recon_dann":       ("y_preds_AC_cnn_gru_dual_attn_recon_dann_",       "y_probs_AC_cnn_gru_dual_attn_recon_dann_",       "classes_AC_cnn_gru_dual_attn_recon_dann_"),
-    "cnn_gru_dual_supcon3_dann":          ("y_preds_AC_cnn_gru_dual_supcon3_dann_",          "y_probs_AC_cnn_gru_dual_supcon3_dann_",          "classes_AC_cnn_gru_dual_supcon3_dann_"),
-    "cnn_gru_dual_attn_recon_supcon3_dann": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_dann_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -505,14 +498,10 @@ _STAGED_SUPCON_MODEL_KEYS = {
     "cnn_gru_dual_supcon3_staged", "cnn_gru_dual_cosine_recon_supcon3_staged", "cnn_gru_dual_attn_recon_supcon3_staged",
 }
 _CCGD_ST_KEYS = {"ccgd_arch_poc_st", "ccgd_arch_poc_st_sc1", "ccgd_arch_poc_st_sc2", "ccgd_arch_poc_st_sc3"}
-_DANN_MODEL_KEYS = {
-    "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
-    "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
-}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
            | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS
-           | _STAGED_SUPCON_MODEL_KEYS | _CCGD_ST_KEYS | _DANN_MODEL_KEYS)
+           | _STAGED_SUPCON_MODEL_KEYS | _CCGD_ST_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -624,10 +613,6 @@ MODEL_PRINT_MAP = {
     "ccgd_arch_poc_st_sc1": "CCGD SC1 ST",
     "ccgd_arch_poc_st_sc2": "CCGD SC2 ST",
     "ccgd_arch_poc_st_sc3": "CCGD SC3 ST",
-    "cnn_gru_dual_dann": "CNN+GRU Dual DANN",
-    "cnn_gru_dual_attn_recon_dann": "CNN+GRU AttnRecon DANN",
-    "cnn_gru_dual_supcon3_dann": "CNN+GRU Dual SC3 DANN",
-    "cnn_gru_dual_attn_recon_supcon3_dann": "CNN+GRU AttnRecon SC3 DANN",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({
