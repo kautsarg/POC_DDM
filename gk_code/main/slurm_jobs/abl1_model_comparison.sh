@@ -11,7 +11,7 @@
 # task_id 0 = LAB_DDM_paper (folders 01,02,03,09,10, looped internally by the
 # script), task_id 1 = every POC_DDM_final subfolder (looped internally). One
 # task per phase now, instead of one array task per subfolder.
-#SBATCH --array=0-1
+#SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out

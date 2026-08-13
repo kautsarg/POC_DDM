@@ -12,7 +12,7 @@
 # script; *_attn_recon* models soft-skipped -- no pixel-grid metadata), task_id 1 =
 # every POC_DDM_final subfolder (looped internally, all 8 models train). One task
 # per phase now, instead of one array task per subfolder.
-#SBATCH --array=0-1
+#SBATCH --array=0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
