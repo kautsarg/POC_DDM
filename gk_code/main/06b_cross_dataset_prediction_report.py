@@ -52,9 +52,9 @@ def get_group_paths(exp_folder):
     ])
 
 
-def get_fold_labels(group_dir, curve_type):
-    """Fold labels = top-level keys of the LOFO results dict for this curve_type."""
-    results_path = find_results_path(group_dir, "lofo", curve_type)
+def get_fold_labels(group_dir, curve_type, mode_str):
+    """Fold labels = top-level keys of the 04 results dict for this curve_type/mode."""
+    results_path = find_results_path(group_dir, mode_str, curve_type)
     if results_path is None:
         return []
     try:
@@ -172,7 +172,7 @@ def render_fold_curve_plot(curves, result, y_true_by_local):
 # MAIN PROCESSOR -- one HTML report per (group, fold, curve_type, filter)
 # ============================================================
 
-def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, force_rerun):
+def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, force_rerun, mode_str):
     group_name = group_dir.name
     out_dir = config.get_viz_dir(Path(exp_folder), "model_performance_viz_cross_dataset_cv") / group_name
     filter_tag = "none" if outlier_filter is None else re.sub(r"[^A-Za-z0-9._-]+", "_", outlier_filter)
@@ -182,9 +182,9 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
         print(f"  -> [SKIP] Report already exists: {out_path}")
         return
 
-    results_path = find_results_path(group_dir, "lofo", curve_type)
+    results_path = find_results_path(group_dir, mode_str, curve_type)
     if results_path is None:
-        print(f"  -> [SKIP] {group_name}/{fold_label}: no LOFO results file for curve_type={curve_type}.")
+        print(f"  -> [SKIP] {group_name}/{fold_label}: no '{mode_str}' results file for curve_type={curve_type}.")
         return
 
     snapshot_path = group_dir / "model_interpretation" / fold_label / f"xai_data_{curve_type}.joblib"
@@ -329,7 +329,8 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
 
     os.makedirs(out_dir, exist_ok=True)
     filter_label = outlier_filter if outlier_filter else "None (Baseline)"
-    title = (f"Cross-Dataset LOFO Report: {group_name} | Held-out: {fold_label} "
+    mode_label = {"lofo": "LOFO", "random_split": "Random Split"}.get(mode_str, mode_str)
+    title = (f"Cross-Dataset {mode_label} Report: {group_name} | Fold: {fold_label} "
              f"| Curve: {curve_type} | Filter: {filter_label}")
     build_tabbed_html(title, tabs, out_path)
     print(f"  -> [SAVED] {out_path}")
@@ -349,9 +350,18 @@ if __name__ == "__main__":
                                  "spatial_knn_label_elbow", "spatial_grid_label_elbow"],
                         help="Outlier filter(s) to visualize. Pass 'None' for baseline.")
     parser.add_argument("--curve_type", type=str, nargs="+", default=["ori_curve", "ori_curve_avg"])
+    parser.add_argument("--mode", type=str, choices=["lofo", "random_split", "kfold"],
+                        default="lofo",
+                        help="Which 04_cross_dataset_training.py --mode's results to report on: "
+                             "lofo=leave-one-folder-out, random_split=stratified single split, "
+                             "kfold=stratified N-fold.")
+    parser.add_argument("--n_splits", type=int, default=5,
+                        help="Must match the --n_splits used for the corresponding 04 kfold run "
+                             "(only used when --mode kfold).")
     args = parser.parse_args()
 
     outlier_filters = [None if f == "None" else f for f in args.outlier_filter]
+    mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
 
     group_paths = get_group_paths(args.exp_folder)
     if args.group is not None:
@@ -362,11 +372,11 @@ if __name__ == "__main__":
     pairs = []
     for group_dir in group_paths:
         for curve_type in args.curve_type:
-            for fold_label in get_fold_labels(group_dir, curve_type):
+            for fold_label in get_fold_labels(group_dir, curve_type, mode_str):
                 pairs.append((group_dir, fold_label, curve_type))
 
     if not pairs:
-        print(f"No cross-dataset LOFO results found under {args.exp_folder}/cross_dataset_cv/. Exiting.")
+        print(f"No cross-dataset '{mode_str}' results found under {args.exp_folder}/cross_dataset_cv/. Exiting.")
         sys.exit(0)
 
     if args.task_id is not None:
@@ -377,4 +387,5 @@ if __name__ == "__main__":
 
     for group_dir, fold_label, curve_type in pairs:
         for outlier_filter in outlier_filters:
-            process_fold(args.exp_folder, group_dir, fold_label, outlier_filter, curve_type, args.force_rerun)
+            process_fold(args.exp_folder, group_dir, fold_label, outlier_filter, curve_type,
+                         args.force_rerun, mode_str)

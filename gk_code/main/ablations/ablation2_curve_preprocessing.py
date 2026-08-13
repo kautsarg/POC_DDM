@@ -58,6 +58,21 @@ def load_training_data(exp_path):
     return joblib.load(data_path)
 
 
+def load_or_init_results(results_file_path):
+    if os.path.exists(results_file_path):
+        try:
+            return joblib.load(results_file_path)
+        except Exception as e:
+            print(f"  [WARNING] Results file corrupt ({e}), starting fresh: {results_file_path}")
+    return {}
+
+
+def make_checkpoint_fn(results_file_path):
+    def _checkpoint(updated_results):
+        safe_joblib_dump(updated_results, results_file_path, compress=3)
+    return _checkpoint
+
+
 def filter_datasets(dataset_name, dataset, kinetic_features):
     filtered_names, filtered_dataset, filtered_features = [], [], []
     for name, data, features in zip(dataset_name, dataset, kinetic_features):
@@ -86,7 +101,8 @@ def load_spatial_metadata(training_data, Y_well):
     return coords, well_ids
 
 
-def run_variant(exp_path, curve_type, n_splits, batch_size, tag, out_dir, outlier_filter=None):
+def run_variant(exp_path, curve_type, n_splits, batch_size, tag, out_dir, outlier_filter=None,
+                 force_rerun=False):
     """Load + train MODELS for one preprocessing variant. Returns None if the
     dataset folder / training data doesn't exist (caller decides whether that's fatal)."""
     training_data = load_training_data(exp_path)
@@ -128,6 +144,12 @@ def run_variant(exp_path, curve_type, n_splits, batch_size, tag, out_dir, outlie
     # Filter-suffixed filename so a filtered run doesn't clobber the baseline
     # (outlier_filter=None) results -- default case keeps the original clean name.
     _suffix = f"_{outlier_filter}" if outlier_filter else ""
+    results_file_path = out_dir / f"ablation2_curve_preprocessing_{tag}{_suffix}_performances.joblib"
+
+    cached_results = {} if force_rerun else load_or_init_results(results_file_path)
+    if cached_results:
+        print(f"  [*] Found existing results at {results_file_path} -- "
+              f"already-trained models will be skipped (use --force_rerun to retrain).")
 
     results_dict = evaluate_outlier_filters(
         X_curves=curves_2d,
@@ -143,9 +165,11 @@ def run_variant(exp_path, curve_type, n_splits, batch_size, tag, out_dir, outlie
         save_model_dir=model_interp_dir,
         save_model_curve_type=curve_type,
         batch_size=batch_size,
+        cached_results=cached_results,
+        checkpoint_fn=make_checkpoint_fn(results_file_path),
+        rerun_models=config.RERUN_MODELS,
     )
 
-    results_file_path = out_dir / f"ablation2_curve_preprocessing_{tag}{_suffix}_performances.joblib"
     safe_joblib_dump(results_dict, results_file_path, compress=3)
     print(f"  [+] Saved ablation 2 [{tag}] results -> {results_file_path}")
 
@@ -160,11 +184,13 @@ def run_variant(exp_path, curve_type, n_splits, batch_size, tag, out_dir, outlie
     return results_dict
 
 
-def run_one(exp_path, exp_folder, curve_type, n_splits, batch_size, outlier_filter=None):
+def run_one(exp_path, exp_folder, curve_type, n_splits, batch_size, outlier_filter=None,
+            force_rerun=False):
     out_dir = exp_path / "ablations"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    run_variant(exp_path, curve_type, n_splits, batch_size, "plain", out_dir, outlier_filter)
+    run_variant(exp_path, curve_type, n_splits, batch_size, "plain", out_dir, outlier_filter,
+                force_rerun)
 
     # nc_subtract sibling, same subfolder name under <exp_folder>_nc_subtract
     nc_exp_folder = exp_folder.rstrip('/') + '_nc_subtract'
@@ -179,7 +205,8 @@ def run_one(exp_path, exp_folder, curve_type, n_splits, batch_size, outlier_filt
         print(f"  [!] No subfolder named '{exp_path.name}' under {nc_exp_folder} "
               f"-- skipping the nc_subtract half.")
         return
-    run_variant(nc_exp_path, curve_type, n_splits, batch_size, "nc_subtract", out_dir, outlier_filter)
+    run_variant(nc_exp_path, curve_type, n_splits, batch_size, "nc_subtract", out_dir, outlier_filter,
+                force_rerun)
 
 
 if __name__ == "__main__":
@@ -205,6 +232,9 @@ if __name__ == "__main__":
                              "02_outlier_detection_pipeline.py. Default: no filtering.")
     parser.add_argument("--fast_mode", action="store_true",
                         help="Disable strict TF determinism for faster training.")
+    parser.add_argument("--force_rerun", action="store_true",
+                        help="Ignore any existing <results>.joblib checkpoint and retrain "
+                             "every model from scratch instead of skipping cached ones.")
     args = parser.parse_args()
     outlier_filter = None if args.outlier_filter in (None, 'None') else args.outlier_filter
 
@@ -225,7 +255,8 @@ if __name__ == "__main__":
     for exp_path in exp_paths_to_run:
         print(f"\n{'-'*70}\n[{exp_path.name}]\n{'-'*70}")
         try:
-            run_one(exp_path, exp_folder, args.curve_type, args.n_splits, args.batch_size, outlier_filter)
+            run_one(exp_path, exp_folder, args.curve_type, args.n_splits, args.batch_size,
+                    outlier_filter, args.force_rerun)
         except Exception as e:
             print(f"  [ERROR] {exp_path.name} failed: {type(e).__name__}: {e}")
 

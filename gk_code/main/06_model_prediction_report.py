@@ -603,7 +603,9 @@ def process_experiment(exp_path, mode, outlier_filter, n_splits, force_rerun, cu
             wrong_idx_list.append(gidx[~mask])
 
         if mismatch or not fold_accs:
-            print(f"  -> [WARNING] {m}: split mismatch (try a different --n_splits). Skipping.")
+            print(f"  -> [WARNING] {m}: cached results don't match the current split "
+                  f"(likely trained under an older splitter — rerun 03_main_training.py "
+                  f"for this experiment). Skipping.")
             continue
 
         y_prob_all = np.concatenate(y_prob_list) if y_prob_list else None
@@ -735,8 +737,10 @@ if __name__ == "__main__":
     parser.add_argument("--n_splits", type=int, default=1,
                         help="Must match the --n_splits used for the corresponding 03 training run")
     parser.add_argument("--curve_type", type=str, nargs="+",
-                        default=["ori_curve", "ori_curve_avg", "ori_curve_wavelet_sym8",
-                                 "ori_curve_wavelet_bior35", "ori_curve_sg_p4"],
+                        default=["ori_curve",
+                                 "ori_curve_norm",
+                                 "ori_curve_wavelet_bior35",
+                                 "ori_curve_wavelet_bior35_norm"],
                         help="Which curve dataset(s) to report on")
     args = parser.parse_args()
 

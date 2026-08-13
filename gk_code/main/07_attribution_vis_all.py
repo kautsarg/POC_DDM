@@ -363,7 +363,7 @@ def rank_latents(dy_dz_np):
 
 def compute_latent_saliency_batch(extractor, x_tf, order, imp_shape, input_tensor):
     """Computes dZ/dX but preserves the Batch dimension. Returns shape (Batch, Time)."""
-    is_3d = len(imp_shape) == 2   
+    is_3d = len(imp_shape) == 2
     saliency_maps = []
     for flat_dim in order:
         with tf.GradientTape() as tape:
@@ -371,15 +371,67 @@ def compute_latent_saliency_batch(extractor, x_tf, order, imp_shape, input_tenso
             z = extractor(input_tensor)
             if is_3d:
                 row, col = np.unravel_index(int(flat_dim), imp_shape)
-                target = z[:, row, col] 
+                target = z[:, row, col]
             else:
                 target = z[:, int(flat_dim)]
-                
+
         grad = tape.gradient(target, x_tf).numpy()
         # Safely squeeze only the last dimension if it's the channel dimension
         if grad.ndim == 3 and grad.shape[-1] == 1:
             grad = grad.squeeze(axis=-1)
-        saliency_maps.append(np.abs(grad)) 
+        saliency_maps.append(np.abs(grad))
+    return saliency_maps
+
+_NEIGHBOR_STACK_CHUNK = 64  # batch chunk size for neighbor-stack models -- see docstring below
+
+def compute_latent_saliency_batch_neighbor_stack(extractor, x_tf, order, imp_shape, chunk_size=_NEIGHBOR_STACK_CHUNK):
+    is_3d = len(imp_shape) == 2
+    n = x_tf.shape[0]
+    saliency_maps = []
+    for flat_dim in order:
+        chunks = []
+        for start in range(0, n, chunk_size):
+            x_chunk = x_tf[start:start + chunk_size]
+            with tf.GradientTape() as tape:
+                tape.watch(x_chunk)
+                z = extractor(x_chunk)
+                if is_3d:
+                    row, col = np.unravel_index(int(flat_dim), imp_shape)
+                    target = z[:, row, col]
+                else:
+                    target = z[:, int(flat_dim)]
+            grad = tape.gradient(target, x_chunk).numpy()        # (chunk, k+1, T)
+            chunks.append(np.abs(grad).mean(axis=1))              # (chunk, T)
+        saliency_maps.append(np.concatenate(chunks, axis=0))      # (N, T)
+    return saliency_maps
+
+def find_weighted_recon_layer(model):
+    """Finds the _WeightedRecon layer by class name (model_utils.py and
+    model_utils_mtl.py each define their own copy of the class)."""
+    return next((l for l in model.layers if type(l).__name__ == '_WeightedRecon'), None)
+
+def compute_latent_saliency_from_reconstruction(extractor, recon_val, order, imp_shape, chunk_size=_NEIGHBOR_STACK_CHUNK):
+    """Like compute_latent_saliency_batch_neighbor_stack, but attributes to the
+    reconstructed (N, 1, T) curve instead of the raw (N, k+1, T) stack. Returns
+    shape (Batch, Time)."""
+    is_3d = len(imp_shape) == 2
+    n = recon_val.shape[0]
+    saliency_maps = []
+    for flat_dim in order:
+        chunks = []
+        for start in range(0, n, chunk_size):
+            r_chunk = recon_val[start:start + chunk_size]
+            with tf.GradientTape() as tape:
+                tape.watch(r_chunk)
+                z = extractor(r_chunk)
+                if is_3d:
+                    row, col = np.unravel_index(int(flat_dim), imp_shape)
+                    target = z[:, row, col]
+                else:
+                    target = z[:, int(flat_dim)]
+            grad = tape.gradient(target, r_chunk).numpy()   # (chunk, 1, T)
+            chunks.append(np.abs(grad)[:, 0, :])              # (chunk, T)
+        saliency_maps.append(np.concatenate(chunks, axis=0))  # (N, T)
     return saliency_maps
 
 def _extract_supcon_latent(model, x_tf_curve, cls_sal, flatten_layer, recurrent_layer, transformer_layer):
@@ -798,32 +850,125 @@ def extract_xai_artifacts(models, X_batch, X_man_batch, lstm_ae_scaler=None):
 
         # --------------------------------------------------------
         # NEIGHBOR-STACK MODELS (e.g. cnn_gru_dual_attn_recon, *_supcon variants)
-        # Input is (N, k+1, T) — repeat each curve k+1 times to form a dummy stack,
-        # then average the gradient over all neighbor positions to get a (T,) saliency.
         elif is_neighbor_stack:
             try:
                 k_plus_1 = model.input.shape[1]
                 x_center = x_tf_curve_raw[:, :, 0]                         # (N, T)
                 x_stack  = tf.stack([x_center] * k_plus_1, axis=1)         # (N, k+1, T)
-                with tf.GradientTape() as tape:
-                    tape.watch(x_stack)
-                    raw_out = model(x_stack, training=False)
-                    cls_t   = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
-                    target_cls = tf.reduce_max(cls_t, axis=1)
-                grad         = tape.gradient(target_cls, x_stack)           # (N, k+1, T)
-                per_sample   = np.abs(grad.numpy()).mean(axis=1)            # (N, T) — avg over neighbors
-                master_sal   = per_sample.mean(axis=0)                      # (T,)
-                del tape
+
+                if flatten_layer is not None and recurrent_layer is not None:
+                    weighted_recon_layer = find_weighted_recon_layer(model)
+
+                    if weighted_recon_layer is not None:
+                        # Attribute to the reconstructed (N,1,T) curve, not the raw stack --
+                        # cheaper (extractors skip the attention/recon upstream) and avoids
+                        # a 1/(k+1) gradient dilution through the reconstruction step.
+                        recon_t     = weighted_recon_layer.output
+                        recon_model = tf.keras.Model(model.input, recon_t)
+                        m_outs      = model.output if isinstance(model.output, (list, tuple)) else [model.output]
+                        combined_model = tf.keras.Model(recon_t, [flatten_layer.output, recurrent_layer.output] + list(m_outs))
+
+                        recon_parts, z_cnn_parts, z_rnn_parts = [], [], []
+                        dy_dz_cnn_parts, dy_dz_rnn_parts, master_parts = [], [], []
+                        for start in range(0, x_stack.shape[0], _NEIGHBOR_STACK_CHUNK):
+                            x_chunk     = x_stack[start:start + _NEIGHBOR_STACK_CHUNK]
+                            recon_chunk = recon_model(x_chunk)
+                            recon_parts.append(recon_chunk)
+
+                            with tf.GradientTape(persistent=True) as tape:
+                                tape.watch(recon_chunk)
+                                z_cnn_c, z_rnn_c, *rest = combined_model(recon_chunk)
+                                target_chunk = tf.reduce_max(rest[0], axis=1)
+
+                            dy_dz_cnn_parts.append(tape.gradient(target_chunk, z_cnn_c).numpy())
+                            dy_dz_rnn_parts.append(tape.gradient(target_chunk, z_rnn_c).numpy())
+                            master_parts.append(np.abs(tape.gradient(target_chunk, recon_chunk).numpy())[:, 0, :])
+                            z_cnn_parts.append(z_cnn_c.numpy())
+                            z_rnn_parts.append(z_rnn_c.numpy())
+                            del tape
+
+                        recon_val  = tf.concat(recon_parts, axis=0)
+                        z_cnn      = np.concatenate(z_cnn_parts, axis=0)
+                        z_rnn      = np.concatenate(z_rnn_parts, axis=0)
+                        dy_dz_cnn  = np.concatenate(dy_dz_cnn_parts, axis=0)
+                        dy_dz_rnn  = np.concatenate(dy_dz_rnn_parts, axis=0)
+                        master_sal = np.concatenate(master_parts, axis=0).mean(axis=0)
+
+                        # Grad x Activation, not raw grad -- avoids ranking dead
+                        # (zero-activation) units, which have zero gradient regardless.
+                        cnn_order, cnn_imp_shape = rank_latents(dy_dz_cnn * np.abs(z_cnn))
+                        rnn_order, rnn_imp_shape = rank_latents(dy_dz_rnn * np.abs(z_rnn))
+
+                        extractor_cnn = tf.keras.Model(recon_t, flatten_layer.output)
+                        extractor_rnn = tf.keras.Model(recon_t, recurrent_layer.output)
+                        raw_saliency_cnn = compute_latent_saliency_from_reconstruction(extractor_cnn, recon_val, cnn_order, cnn_imp_shape)
+                        raw_saliency_rnn = compute_latent_saliency_from_reconstruction(extractor_rnn, recon_val, rnn_order, rnn_imp_shape)
+                    else:
+                        # No _WeightedRecon layer found -- fall back to the raw stack.
+                        extractor_cnn = tf.keras.Model(inputs=model.input, outputs=flatten_layer.output)
+                        extractor_rnn = tf.keras.Model(inputs=model.input, outputs=recurrent_layer.output)
+                        head_model    = tf.keras.Model(inputs=[extractor_cnn.output, extractor_rnn.output], outputs=model.output)
+
+                        z_cnn_parts, z_rnn_parts = [], []
+                        dy_dz_cnn_parts, dy_dz_rnn_parts, master_parts = [], [], []
+                        for start in range(0, x_stack.shape[0], _NEIGHBOR_STACK_CHUNK):
+                            x_chunk = x_stack[start:start + _NEIGHBOR_STACK_CHUNK]
+                            with tf.GradientTape(persistent=True) as tape:
+                                tape.watch(x_chunk)
+                                z_cnn_c = extractor_cnn(x_chunk)
+                                z_rnn_c = extractor_rnn(x_chunk)
+                                tape.watch(z_cnn_c)
+                                tape.watch(z_rnn_c)
+                                outs  = head_model([z_cnn_c, z_rnn_c])
+                                cls_t = outs[0] if isinstance(outs, (list, tuple)) else outs
+                                target_chunk = tf.reduce_max(cls_t, axis=1)
+
+                            dy_dz_cnn_parts.append(tape.gradient(target_chunk, z_cnn_c).numpy())
+                            dy_dz_rnn_parts.append(tape.gradient(target_chunk, z_rnn_c).numpy())
+                            master_parts.append(np.abs(tape.gradient(target_chunk, x_chunk).numpy()).mean(axis=1))  # (chunk, T)
+                            z_cnn_parts.append(z_cnn_c.numpy())
+                            z_rnn_parts.append(z_rnn_c.numpy())
+                            del tape
+
+                        z_cnn      = np.concatenate(z_cnn_parts, axis=0)
+                        z_rnn      = np.concatenate(z_rnn_parts, axis=0)
+                        dy_dz_cnn  = np.concatenate(dy_dz_cnn_parts, axis=0)
+                        dy_dz_rnn  = np.concatenate(dy_dz_rnn_parts, axis=0)
+                        master_sal = np.concatenate(master_parts, axis=0).mean(axis=0)   # (T,)
+
+                        cnn_order, cnn_imp_shape = rank_latents(dy_dz_cnn * np.abs(z_cnn))
+                        rnn_order, rnn_imp_shape = rank_latents(dy_dz_rnn * np.abs(z_rnn))
+
+                        raw_saliency_cnn = compute_latent_saliency_batch_neighbor_stack(extractor_cnn, x_stack, cnn_order, cnn_imp_shape)
+                        raw_saliency_rnn = compute_latent_saliency_batch_neighbor_stack(extractor_rnn, x_stack, rnn_order, rnn_imp_shape)
+
+                    artifacts[model_name] = {
+                        "is_type": "dual", "master_saliency": master_sal,
+                        "z_curve": z_cnn, "curve_order": cnn_order, "curve_imp_shape": cnn_imp_shape,
+                        "raw_saliency_curve": raw_saliency_cnn,
+                        "z_rnn": z_rnn, "rnn_order": rnn_order, "rnn_imp_shape": rnn_imp_shape,
+                        "raw_saliency_rnn": raw_saliency_rnn,
+                    }
+                else:
+                    with tf.GradientTape() as tape:
+                        tape.watch(x_stack)
+                        raw_out = model(x_stack, training=False)
+                        cls_t   = raw_out[0] if isinstance(raw_out, (list, tuple)) else raw_out
+                        target_cls = tf.reduce_max(cls_t, axis=1)
+                    grad       = tape.gradient(target_cls, x_stack)           # (N, k+1, T)
+                    per_sample = np.abs(grad.numpy()).mean(axis=1)            # (N, T) — avg over neighbors
+                    master_sal = per_sample.mean(axis=0)                      # (T,)
+                    del tape
+                    artifacts[model_name] = {
+                        "is_type": "base", "master_saliency": master_sal,
+                        "z_curve": per_sample,
+                        "curve_order": np.array([0]),
+                        "curve_imp_shape": per_sample.shape,
+                        "raw_saliency_curve": [per_sample],       # list of (N, T) — one "latent dim"
+                    }
             except Exception as e:
                 print(f"      [!] NeighborStack gradient failed for {model_name}: {e} — skipping.")
                 continue
-            artifacts[model_name] = {
-                "is_type": "base", "master_saliency": master_sal,
-                "z_curve": per_sample,
-                "curve_order": np.array([0]),
-                "curve_imp_shape": per_sample.shape,
-                "raw_saliency_curve": [per_sample],       # list of (N, T) — one "latent dim"
-            }
 
         # --------------------------------------------------------
         # BASE MODELS

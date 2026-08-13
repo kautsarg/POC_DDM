@@ -945,10 +945,12 @@ def evaluate_outlier_filters(
             res_entry = {}
         
         _split_signature = tuple(hashlib.md5(np.sort(test_index).tobytes()).hexdigest() for _, test_index in splits)
-        if res_entry.get("_split_signature") not in (None, _split_signature):
-            print(f"     [Warning] Cached results for filter '{filter_name}' were built from a "
-                  f"different train/test split (splitter changed upstream). Discarding stale "
-                  f"cache for this filter.")
+        _had_cached_predictions = any(k.startswith(('y_preds_', 'y_reg_preds_')) for k in res_entry)
+        if res_entry.get("_split_signature") != _split_signature:
+            if _had_cached_predictions:
+                print(f"     [Warning] Cached results for filter '{filter_name}' were built from a "
+                      f"different train/test split (splitter changed upstream, or this cache "
+                      f"predates split tracking). Discarding stale cache for this filter.")
             res_entry = {}
         res_entry["_split_signature"] = _split_signature
 

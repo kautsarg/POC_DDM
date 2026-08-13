@@ -304,14 +304,19 @@ if __name__ == "__main__":
         y_full = encoder.fit_transform(combined["Y_mapped"])
         total_count = len(y_full)
 
-        # --- FEATURE SELECTION (MUTUAL INFORMATION) on the combined pool ---
-        print(f"\n  [*] Calculating Mutual Information for Top 10 Features...")
+        # X_candidates_clean is just cleaned raw features, no fitting -- safe to prepare
+        # once. The actual MI *selection* is done per-fold, train-idx-only (see
+        # _select_top_10_features below), so a fold's held-out chip never influences
+        # which features get chosen for evaluating that same chip.
         X_candidates = combined["features_df"][config.LD_FEATURES].values
         X_candidates_clean = np.nan_to_num(X_candidates, nan=0.0, posinf=0.0, neginf=0.0)
-        mi_scores = mutual_info_classif(X_candidates_clean, y_full, random_state=0)
-        top_10_idx = np.argsort(mi_scores)[-10:][::-1]
-        top_10_features = [config.LD_FEATURES[i] for i in top_10_idx]
-        print(f"  [*] Selected Top 10 Features: {top_10_features}")
+
+        def _select_top_10_features(idx, tag):
+            mi_scores = mutual_info_classif(X_candidates_clean[idx], y_full[idx], random_state=0)
+            top_10_idx = np.argsort(mi_scores)[-10:][::-1]
+            feats = [config.LD_FEATURES[i] for i in top_10_idx]
+            print(f"  [*] Selected Top 10 Features ({tag}): {feats}")
+            return feats
 
         _mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
         results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=_mode_str, curve_type=curve_type)
@@ -438,7 +443,7 @@ if __name__ == "__main__":
             elif args.supcon == 3:
                 models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3']
             else:
-                models = ['cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
+                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
 
         if args.models:
             import re
@@ -629,6 +634,8 @@ if __name__ == "__main__":
             print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
             print(f"{'='*75}")
 
+            top_10_features = _select_top_10_features(train_idx, f"{fold_label}, train-only")
+
             cached_fold = lofo_results.get(fold_label, {})
 
             def checkpoint(updated_results, fold_label=fold_label):
@@ -717,7 +724,8 @@ if __name__ == "__main__":
 
         if getattr(args, 'train_full', False):
             all_idx = np.arange(len(y_full))
-            full_model_dir = out_dir / "model_interpretation" / "full_data"
+            top_10_features = _select_top_10_features(all_idx, "full_data")
+            full_model_dir = out_dir / "model_interpretation" / f"full_data_{_mode_str}"
             full_model_dir.mkdir(parents=True, exist_ok=True)
             print(f"\n{'='*75}")
             print(f"[FULL DATA] Training on all {len(y_full)} samples (no holdout) | curve={curve_type}")
