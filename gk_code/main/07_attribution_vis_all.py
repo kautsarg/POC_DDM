@@ -243,7 +243,11 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
                     'SupConBranch3DANNModel': SupConBranch3DANNModel,
                 },
             )
-            model_seq_len = model.input_shape[0][1] if isinstance(model.input_shape, list) else model.input_shape[1]
+            _in_shape = model.input_shape[0] if isinstance(model.input_shape, list) else model.input_shape
+            # Plain curve models: (None, T, 1) -- T at [1]. Spatial neighbor-stack
+            # models (cosine_recon/attn_recon): (None, k+1, T), no channel dim -- T
+            # is the last axis instead.
+            model_seq_len = _in_shape[1] if _in_shape[-1] == 1 else _in_shape[-1]
             if model_seq_len != expected_seq_len:
                 continue
             models[name] = model

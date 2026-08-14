@@ -178,6 +178,8 @@ CROSS_DATASET_RESULT_PATH = 'cross_dataset_classification_performances_{mode}_{c
 CROSS_DATASET_RESAMPLER_PATH = 'cross_dataset_resampler_classification_performances_{curve_type}.joblib'
 CURVE_ALIGNMENT_CHOICES = ["acquisition_start", "pc_ttp"]
 CROSS_DATASET_PC_TTP_RECIPE_PATH = 'cross_dataset_pc_ttp_recipe_{curve_type}.joblib'
+CROSS_DATASET_LOFO_AE_PATH = 'lofo_ae_filter/{fold_label}_{curve_type}'
+CROSS_DATASET_PC_EMBED_PATH = 'pc_reference_embedding_{model}_{filter}_{curve_type}.joblib'
 
 # ==========================================
 # MATPLOTLIB GLOBAL STYLE
@@ -644,6 +646,7 @@ FILTER_PRINT_MAP = {
     "lstm_ae_glb_ds1_label_elbow":    "LSTM-AE",
     "spatial_knn_label_elbow":        "Spatial-kNN",
     "spatial_grid_label_elbow":       "Spatial-Grid",
+    "lofo_ae":                        "LOFO LSTM-AE",
 }
 
 CURVE_PRINT_MAP = {

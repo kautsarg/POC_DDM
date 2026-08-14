@@ -7,15 +7,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import Memory
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
+from kneed import KneeLocator
 sys.path.insert(0, 'utils')
-from safe_io import safe_joblib_dump
+from safe_io import safe_joblib_dump, safe_keras_save
 import sigmoid_fitting as sp
 sys.path.insert(0, 'utils/model_training')
 from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_determinism,
                           CurveResampler, build_well_stratified_random_split, build_well_stratified_nfold_splits)
+sys.path.insert(0, 'utils/02_outlier_detection')
+from lstm_autoencoder_outlier import build_lstm_autoencoder
 from model_utils_mtl import REG_SENTINEL as _MTL_REG_SENTINEL
 from model_utils_supcon import (SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS,
                                 BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
@@ -187,19 +190,21 @@ def normalize_curves_minmax(curves):
 
 
 def compute_ct_for_curves(curves, timestamps):
-    """Mean Ct across a curve batch, fit fresh (PC has no precomputed Ct)."""
-    cts = []
-    for y in curves:
-        valid = np.isfinite(timestamps) & np.isfinite(y)
-        if valid.sum() < 3:
-            continue
-        try:
-            feats = sp.extract_kinetic_parameters_original(timestamps, y)
-            if "Ct" in feats and np.isfinite(feats["Ct"]):
-                cts.append(feats["Ct"])
-        except Exception:
-            continue
-    return float(np.mean(cts)) if cts else None
+    """Ct fit on the mean curve across the batch (PC has no precomputed Ct) --
+    one fit on the averaged curve instead of one fit per pixel then averaged, since
+    PC is a designed reference well (uniform by construction, not a biological
+    replicate set)."""
+    curves = np.asarray(curves)
+    invalid = np.isnan(curves).any(axis=1) | np.isinf(curves).any(axis=1)
+    valid_curves = curves[~invalid]
+    if len(valid_curves) == 0 or np.isfinite(timestamps).sum() < 3:
+        return None
+    mean_curve = valid_curves.mean(axis=0)
+    try:
+        feats = sp.extract_kinetic_parameters_original(timestamps, mean_curve)
+        return float(feats["Ct"]) if "Ct" in feats and np.isfinite(feats["Ct"]) else None
+    except Exception:
+        return None
 
 
 def _pc_ttp_for_one_chip(exp_path_str, curve_type):
@@ -393,6 +398,70 @@ def _save_alignment_artifacts(combined, out_dir, curve_type, args):
         print(f"  [*] Saved pc_ttp alignment recipe -> {recipe_path}")
 
 
+LOFO_AE_FILTER_NAME = "lofo_ae"
+
+
+def _fit_lofo_ae_filter(combined, train_idx, out_dir, curve_type, fold_label, force_rerun=False):
+    base_path = out_dir / config.CROSS_DATASET_LOFO_AE_PATH.format(fold_label=fold_label, curve_type=curve_type)
+    model_path = base_path.with_name(f"{base_path.name}_model.keras")
+    meta_path = base_path.with_name(f"{base_path.name}_meta.joblib")
+
+    curves = combined["curves"]
+    dataset_id = np.asarray(combined["dataset_id"])
+
+    if not force_rerun and model_path.exists() and meta_path.exists():
+        autoencoder = tf.keras.models.load_model(model_path)
+        meta = joblib.load(meta_path)
+        scaler, threshold = meta["scaler"], meta["threshold"]
+    else:
+        train_curves = curves[train_idx]
+        invalid_train = np.isnan(train_curves).any(axis=1) | np.isinf(train_curves).any(axis=1)
+        X_valid = train_curves[~invalid_train]
+
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X_valid)
+        timesteps = X_scaled.shape[1]
+
+        set_global_determinism(0)
+        autoencoder = build_lstm_autoencoder(timesteps)
+        early_stop = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+        autoencoder.fit(X_scaled.reshape(-1, timesteps, 1), X_scaled.reshape(-1, timesteps, 1),
+                         epochs=60, batch_size=2048, shuffle=True, callbacks=[early_stop], verbose=0)
+
+        recon = autoencoder.predict(X_scaled.reshape(-1, timesteps, 1), batch_size=2048, verbose=0).reshape(X_scaled.shape)
+        train_mse = np.mean((X_scaled - recon) ** 2, axis=1)
+
+        sorted_mse = np.sort(train_mse)
+        kneedle = KneeLocator(np.arange(len(sorted_mse)), sorted_mse, curve="convex", direction="increasing")
+        threshold = float(sorted_mse[kneedle.knee]) if kneedle.knee is not None else float(np.percentile(train_mse, 95))
+
+        base_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_keras_save(autoencoder, model_path)
+        safe_joblib_dump({"scaler": scaler, "threshold": threshold, "timesteps": timesteps}, meta_path, compress=3)
+        print(f"  [*] Saved LOFO-AE outlier model -> {model_path}")
+
+    invalid_all = np.isnan(curves).any(axis=1) | np.isinf(curves).any(axis=1)
+    keep_mask = np.zeros(len(curves), dtype=bool)
+    if (~invalid_all).any():
+        X_scaled_all = scaler.transform(curves[~invalid_all])
+        timesteps = X_scaled_all.shape[1]
+        recon_all = autoencoder.predict(X_scaled_all.reshape(-1, timesteps, 1), batch_size=2048, verbose=0).reshape(X_scaled_all.shape)
+        mse_all = np.mean((X_scaled_all - recon_all) ** 2, axis=1)
+        keep_mask[~invalid_all] = mse_all <= threshold
+
+    train_chips = set(dataset_id[train_idx])
+    print(f"  [LOFO-AE filter] fold={fold_label} threshold(train elbow)={threshold:.5f}")
+    for chip in np.unique(dataset_id):
+        chip_mask = dataset_id == chip
+        n_total = int(chip_mask.sum())
+        n_kept = int((keep_mask & chip_mask).sum())
+        tag = "train" if chip in train_chips else "held-out"
+        pct_removed = 100 * (n_total - n_kept) / n_total if n_total else 0.0
+        print(f"    {chip} [{tag}]: kept {n_kept}/{n_total} ({pct_removed:.1f}% removed)")
+
+    return keep_mask
+
+
 def _derive_pool_labels(combined, args):
     encoder = LabelEncoder()
     y_full = encoder.fit_transform(combined["Y_mapped"])
@@ -436,6 +505,11 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
 
     lofo_model_dir = out_dir / "model_interpretation" / fold_label
     lofo_model_dir.mkdir(parents=True, exist_ok=True)
+
+    if LOFO_AE_FILTER_NAME in outlier_filters:
+        keep_mask = _fit_lofo_ae_filter(combined, train_idx, out_dir, curve_type, fold_label,
+                                         force_rerun=getattr(args, 'force_rerun', False))
+        combined["features_df"][LOFO_AE_FILTER_NAME] = keep_mask.astype(int)
 
     res = evaluate_outlier_filters(
         X_curves=combined["curves"],
@@ -552,6 +626,9 @@ if __name__ == "__main__":
                              "Only --supcon 0 or 3 supported (plain or branch-v3 SupCon + DANN).")
     parser.add_argument("--outlier_filter", type=str, nargs='+', default=["none"],
                         help="Outlier filters to evaluate. Use 'none' for no filter. "
+                             "'lofo_ae' fits an LSTM-AE on the current fold's train chips only "
+                             "and scores the whole pool with it (fold-aware, unlike the "
+                             "precomputed per-chip lstm_ae_* filters). "
                              "E.g. --outlier_filter none lstm_ae_glb_ds1_label_elbow")
     parser.add_argument("--models", type=str, nargs='+', default=None,
                         help="Filter model list by base name (e.g. 'cnn_gru_dual' 'cnn_gru_dual_attn_recon'). "
@@ -1000,6 +1077,10 @@ if __name__ == "__main__":
                 print(f"\n{'='*75}")
                 print(f"[FULL DATA] Training on all {len(y_full)} samples (no holdout) | curve={curve_type}")
                 print(f"{'='*75}")
+                if LOFO_AE_FILTER_NAME in outlier_filters:
+                    keep_mask = _fit_lofo_ae_filter(combined, all_idx, out_dir, curve_type, "full_data",
+                                                     force_rerun=getattr(args, 'force_rerun', False))
+                    combined["features_df"][LOFO_AE_FILTER_NAME] = keep_mask.astype(int)
                 res_full = evaluate_outlier_filters(
                     X_curves=combined["curves"],
                     features_df=combined["features_df"],
