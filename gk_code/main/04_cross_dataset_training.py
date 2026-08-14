@@ -624,6 +624,10 @@ if __name__ == "__main__":
     parser.add_argument("--dann", action="store_true",
                         help="Train domain-adversarial (chip-invariance) models instead. "
                              "Only --supcon 0 or 3 supported (plain or branch-v3 SupCon + DANN).")
+    parser.add_argument("--coral", action="store_true",
+                        help="Train Deep CORAL (chip-invariance via embedding covariance "
+                             "alignment) models instead -- non-adversarial alternative to "
+                             "--dann. Only --supcon 0 or 3 supported.")
     parser.add_argument("--outlier_filter", type=str, nargs='+', default=["none"],
                         help="Outlier filters to evaluate. Use 'none' for no filter. "
                              "'lofo_ae' fits an LSTM-AE on the current fold's train chips only "
@@ -685,6 +689,12 @@ if __name__ == "__main__":
         sys.exit('[!] --dann is ST-only; incompatible with --mtl.')
     if getattr(args, 'dann', False) and args.supcon not in (0, 3):
         sys.exit('[!] --dann only supports --supcon 0 or 3.')
+    if getattr(args, 'coral', False) and args.mtl:
+        sys.exit('[!] --coral is ST-only; incompatible with --mtl.')
+    if getattr(args, 'coral', False) and args.supcon not in (0, 3):
+        sys.exit('[!] --coral only supports --supcon 0 or 3.')
+    if getattr(args, 'coral', False) and getattr(args, 'dann', False):
+        sys.exit('[!] --coral and --dann are alternatives; pass at most one.')
     if args.rerun_models and not args.force_rerun:
         args.rerun_models = None  # --rerun_models has no effect without --force_rerun
 
@@ -816,6 +826,11 @@ if __name__ == "__main__":
             models = (['cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann'] if args.supcon == 3
                      else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann'])
 
+        # DEEP CORAL MODELS
+        elif getattr(args, 'coral', False):
+            models = (['cnn_gru_dual_supcon3_coral', 'cnn_gru_dual_attn_recon_supcon3_coral'] if args.supcon == 3
+                     else ['cnn_gru_dual_coral', 'cnn_gru_dual_attn_recon_coral'])
+
         # CURRICULUM LEARNING (CL) MTL MODELS
         elif args.mtl and getattr(args, 'mtl_cl', False):
             if args.supcon == 0:
@@ -916,6 +931,10 @@ if __name__ == "__main__":
             for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
                 if _k in config._DANN_MODEL_KEYS:
                     _dann_result_keys.update([_pk, _probk, _clsk])
+            _coral_result_keys = set()
+            for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
+                if _k in config._CORAL_MODEL_KEYS:
+                    _coral_result_keys.update([_pk, _probk, _clsk])
             _staged_result_keys = set()
             _staged_sc_result_keys = set()
             for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
@@ -945,6 +964,8 @@ if __name__ == "__main__":
                 _which = f'RCFD SC{args.supcon}'
             elif getattr(args, 'dann', False):
                 _which = f'DANN SC{args.supcon}'
+            elif getattr(args, 'coral', False):
+                _which = f'CORAL SC{args.supcon}'
             elif _is_cl and args.supcon == 0:
                 _which = 'CL MTL'
             elif _is_cl and args.supcon == 1:
@@ -986,6 +1007,7 @@ if __name__ == "__main__":
                         _is_rcfd       = _rk in _rcfd_result_keys
                         _is_staged     = _rk in _staged_result_keys
                         _is_dann       = _rk in _dann_result_keys
+                        _is_coral      = _rk in _coral_result_keys
                         _is_model_key  = any(_rk.startswith(p) for p in
                                              ('y_preds_AC_', 'y_probs_AC_', 'classes_AC_',
                                               'y_reg_preds_', 'y_reg_trues_'))
@@ -993,7 +1015,7 @@ if __name__ == "__main__":
                         _is_standard   = (_is_model_key and not _is_mtl and not _is_supcon_st
                                           and not _is_supcon_mtl and not _is_bsc_st and not _is_bsc_mtl
                                           and not _is_any_cl and not _is_rcfd and not _is_staged
-                                          and not _is_dann and _mm)
+                                          and not _is_dann and not _is_coral and _mm)
                         if _is_cl and args.supcon == 0 and _is_cl_base and _mm:
                             del _filter_res[_rk]
                         elif _is_cl and args.supcon == 1 and _is_cl_supcon and _mm:
@@ -1017,6 +1039,8 @@ if __name__ == "__main__":
                         elif getattr(args, 'condreg', False) and _is_rcfd and _mm:
                             del _filter_res[_rk]
                         elif getattr(args, 'dann', False) and _is_dann and _mm:
+                            del _filter_res[_rk]
+                        elif getattr(args, 'coral', False) and _is_coral and _mm:
                             del _filter_res[_rk]
                         elif getattr(args, 'supcon_staged', False) and _rk in _staged_sc_result_keys and _mm:
                             del _filter_res[_rk]

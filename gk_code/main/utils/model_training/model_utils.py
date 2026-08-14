@@ -96,6 +96,11 @@ from model_utils_dann import (
     create_cnn_gru_dual_dann_model, create_cnn_gru_dual_attn_recon_dann_model,
     create_cnn_gru_dual_supcon3_dann_model, create_cnn_gru_dual_attn_recon_supcon3_dann_model,
 )
+from model_utils_coral import (
+    CORAL_MODEL_KEYS,
+    create_cnn_gru_dual_coral_model, create_cnn_gru_dual_attn_recon_coral_model,
+    create_cnn_gru_dual_supcon3_coral_model, create_cnn_gru_dual_attn_recon_supcon3_coral_model,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -776,6 +781,7 @@ _XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_STAGED_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CCGD_ST_ALL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in DANN_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in CORAL_MODEL_KEYS})
 
 
 
@@ -855,6 +861,8 @@ def evaluate_outlier_filters(
         *RCFD_ATTN_RECON_MODEL_KEYS,
         # DANN attn_recon variants
         "cnn_gru_dual_attn_recon_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
+        # CORAL attn_recon variants
+        "cnn_gru_dual_attn_recon_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -1075,7 +1083,8 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_attn_recon_supcon2_lc', 'cnn_gru_dual_attn_recon_supcon3_lc',
                                   'cnn_gru_dual_attn_recon_supcon_staged', 'cnn_gru_dual_attn_recon_supcon2_staged',
                                   'cnn_gru_dual_attn_recon_supcon3_staged',
-                                  'cnn_gru_dual_attn_recon_dann', 'cnn_gru_dual_attn_recon_supcon3_dann'
+                                  'cnn_gru_dual_attn_recon_dann', 'cnn_gru_dual_attn_recon_supcon3_dann',
+                                  'cnn_gru_dual_attn_recon_coral', 'cnn_gru_dual_attn_recon_supcon3_coral'
                                   ) or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
@@ -1427,6 +1436,67 @@ def evaluate_outlier_filters(
 
                     dann_outputs = model.predict(X_test_curve, verbose=0)
                     cls_prob = dann_outputs[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
+
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in CORAL_MODEL_KEYS:
+                    if chip_id_m is None:
+                        print(f"     [SKIP] {m}: no chip_id_encoded provided.")
+                        continue
+                    tf.keras.backend.clear_session()
+                    is_supcon3 = _base_m.endswith('_supcon3_coral')
+                    is_attn_recon = 'attn_recon' in _base_m
+                    n_chips = len(np.unique(chip_id_m))
+                    chip_train_all = chip_id_m[train_idx]
+
+                    if is_attn_recon:
+                        k_plus_1, T = X_train_curve.shape[1], X_train_curve.shape[2]
+                        model = (create_cnn_gru_dual_attn_recon_supcon3_coral_model(k_plus_1, T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_cnn_gru_dual_attn_recon_coral_model(k_plus_1, T, n_classes, n_chips))
+                    else:
+                        T = X_train_curve.shape[1]
+                        model = (create_cnn_gru_dual_supcon3_coral_model(T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_cnn_gru_dual_coral_model(T, n_classes, n_chips))
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                 metrics=['accuracy'])
+                    epochs = 500
+
+                    # val_cls_ce, not val_loss -- same convention as DANN, keeps early stopping
+                    # driven by classification quality even though coral (unlike DANN's chip_ce)
+                    # has no adversarial tension against it.
+                    _coral_es = tf.keras.callbacks.EarlyStopping(monitor='val_cls_ce', mode='min', patience=100, restore_best_weights=True)
+                    _coral_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_cls_ce', mode='min', factor=0.5, patience=30, min_lr=1e-5)
+
+                    if _val_split_ok:
+                        chip_train_fit = chip_train_all[_tr_sub]
+                        chip_val = chip_train_all[_val_sub]
+                        _hist = model.fit(X_train_curve_fit,
+                                 {'cls_out': y_train_fit, 'chip_id': chip_train_fit},
+                                 validation_data=(X_val_curve, {'cls_out': y_val, 'chip_id': chip_val}),
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=[_coral_es, _coral_rlrp])
+                        histories.append(_hist.history)
+                    else:
+                        _hist = model.fit(X_train_curve,
+                                 {'cls_out': y_train, 'chip_id': chip_train_all},
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    coral_outputs = model.predict(X_test_curve, verbose=0)
+                    cls_prob = coral_outputs[0]
                     pred = np.argmax(cls_prob, axis=1)
                     cls = np.unique(y_encoded)
 

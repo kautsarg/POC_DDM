@@ -9,6 +9,7 @@
 *.ipynb_checkpoints/
 
 *.joblib
+*.keras
 
 .DS_Store
 **/.DS_Store

@@ -442,6 +442,11 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_attn_recon_dann":       ("y_preds_AC_cnn_gru_dual_attn_recon_dann_",       "y_probs_AC_cnn_gru_dual_attn_recon_dann_",       "classes_AC_cnn_gru_dual_attn_recon_dann_"),
     "cnn_gru_dual_supcon3_dann":          ("y_preds_AC_cnn_gru_dual_supcon3_dann_",          "y_probs_AC_cnn_gru_dual_supcon3_dann_",          "classes_AC_cnn_gru_dual_supcon3_dann_"),
     "cnn_gru_dual_attn_recon_supcon3_dann": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_dann_"),
+    # Deep CORAL (non-adversarial domain alignment)
+    "cnn_gru_dual_coral":                  ("y_preds_AC_cnn_gru_dual_coral_",                  "y_probs_AC_cnn_gru_dual_coral_",                  "classes_AC_cnn_gru_dual_coral_"),
+    "cnn_gru_dual_attn_recon_coral":       ("y_preds_AC_cnn_gru_dual_attn_recon_coral_",       "y_probs_AC_cnn_gru_dual_attn_recon_coral_",       "classes_AC_cnn_gru_dual_attn_recon_coral_"),
+    "cnn_gru_dual_supcon3_coral":          ("y_preds_AC_cnn_gru_dual_supcon3_coral_",          "y_probs_AC_cnn_gru_dual_supcon3_coral_",          "classes_AC_cnn_gru_dual_supcon3_coral_"),
+    "cnn_gru_dual_attn_recon_supcon3_coral": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_coral_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_coral_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_coral_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -511,10 +516,15 @@ _DANN_MODEL_KEYS = {
     "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
     "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
 }
+_CORAL_MODEL_KEYS = {
+    "cnn_gru_dual_coral", "cnn_gru_dual_attn_recon_coral",
+    "cnn_gru_dual_supcon3_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
+}
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
            | _CL_MTL_MODEL_KEYS | _RCFD_MODEL_KEYS | _LC_MODEL_KEYS
-           | _STAGED_SUPCON_MODEL_KEYS | _CCGD_ST_KEYS | _DANN_MODEL_KEYS)
+           | _STAGED_SUPCON_MODEL_KEYS | _CCGD_ST_KEYS | _DANN_MODEL_KEYS
+           | _CORAL_MODEL_KEYS)
 MODEL_KEY_MAP.update({
     f"{m}_inc": tuple(k.rstrip("_") + "_inc_" for k in keys)
     for m, keys in list(MODEL_KEY_MAP.items()) if m not in _NO_INC
@@ -630,6 +640,10 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_attn_recon_dann": "CNN+GRU AttnRecon DANN",
     "cnn_gru_dual_supcon3_dann": "CNN+GRU Dual SC3 DANN",
     "cnn_gru_dual_attn_recon_supcon3_dann": "CNN+GRU AttnRecon SC3 DANN",
+    "cnn_gru_dual_coral": "CNN+GRU Dual CORAL",
+    "cnn_gru_dual_attn_recon_coral": "CNN+GRU AttnRecon CORAL",
+    "cnn_gru_dual_supcon3_coral": "CNN+GRU Dual SC3 CORAL",
+    "cnn_gru_dual_attn_recon_supcon3_coral": "CNN+GRU AttnRecon SC3 CORAL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

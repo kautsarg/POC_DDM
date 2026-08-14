@@ -34,6 +34,7 @@ from model_utils_supcon import (SupConModel, SupConMTLModel,
                                 CurriculumBranch2MTLModel,
                                 CurriculumBranch3MTLModel)
 from model_utils_dann import DANNModel, SupConBranch3DANNModel
+from model_utils_coral import CORALModel, SupConBranch3CORALModel
 
 import types as _types
 
@@ -213,6 +214,10 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             # DANN (domain-adversarial)
             "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
             "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
+
+            # Deep CORAL
+            "cnn_gru_dual_coral", "cnn_gru_dual_attn_recon_coral",
+            "cnn_gru_dual_supcon3_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
         ]
 
     for name in model_names:
@@ -241,6 +246,8 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
                     'RCFDBranch3MTLModel': RCFDBranch3MTLModel,
                     'DANNModel': DANNModel,
                     'SupConBranch3DANNModel': SupConBranch3DANNModel,
+                    'CORALModel': CORALModel,
+                    'SupConBranch3CORALModel': SupConBranch3CORALModel,
                 },
             )
             _in_shape = model.input_shape[0] if isinstance(model.input_shape, list) else model.input_shape
