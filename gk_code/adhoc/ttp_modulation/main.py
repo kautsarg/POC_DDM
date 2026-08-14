@@ -8,13 +8,14 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 
-from utils.preprocess import load_raw_data, normalise_curves, build_ttp_aligned_curves, get_pairs, filter_to_pair, preprocessed_name, result_name, save_preprocessed
+from utils.preprocess import load_raw_data, normalise_curves, build_ttp_aligned_curves, get_pairs, filter_to_pair, preprocessed_name, result_name, model_name, manifest_name, save_manifest, save_preprocessed
 from utils.train import run_cv
 from utils.report import generate_html, save_result
 
 
 PREPROC_DIR = ROOT / 'preprocessed_dataset'
 RESULT_DIR = ROOT / 'result'
+MODEL_DIR = ROOT / 'models'
 
 
 def preprocess(dataset_file, dataset_name, one_to_one, ttp_aligned, normalised):
@@ -22,13 +23,17 @@ def preprocess(dataset_file, dataset_name, one_to_one, ttp_aligned, normalised):
 
     curves, timestamps, well_labels = load_raw_data(dataset_file)
 
+    ttp_align_params = None
     if ttp_aligned:
         print("  Aligning to TTP …")
-        curves, timestamps, well_labels, _ = build_ttp_aligned_curves(
+        curves, timestamps, well_labels, _, min_ttp, max_ttp = build_ttp_aligned_curves(
             curves, timestamps, well_labels)
+        ttp_align_params = {'min_ttp': min_ttp, 'max_ttp': max_ttp}
 
     if normalised:
         curves = normalise_curves(curves)
+
+    classes = sorted(set(well_labels.tolist()))
 
     results = []
     if one_to_one:
@@ -38,12 +43,24 @@ def preprocess(dataset_file, dataset_name, one_to_one, ttp_aligned, normalised):
             fname = preprocessed_name(dataset_name, one_to_one, ttp_aligned, normalised, label1, label2)
             cache = PREPROC_DIR / fname
             save_preprocessed(pair_curves, pair_labels, cache)
-            results.append((pair_curves, pair_labels, f'{label1} vs {label2}', cache))
+            model_path = MODEL_DIR / model_name(dataset_name, one_to_one, ttp_aligned, normalised, label1, label2)
+            results.append((pair_curves, pair_labels, f'{label1} vs {label2}', cache, model_path))
+        manifest = {
+            'one_to_one': one_to_one, 'ttp_aligned': ttp_aligned, 'normalised': normalised,
+            'classes': classes, 'pairs': [[l1, l2] for l1, l2 in pairs], 'ttp_align': ttp_align_params,
+        }
     else:
         fname = preprocessed_name(dataset_name, one_to_one, ttp_aligned, normalised)
         cache = PREPROC_DIR / fname
         save_preprocessed(curves, well_labels, cache)
-        results.append((curves, well_labels, None, cache))
+        model_path = MODEL_DIR / model_name(dataset_name, one_to_one, ttp_aligned, normalised)
+        results.append((curves, well_labels, None, cache, model_path))
+        manifest = {
+            'one_to_one': one_to_one, 'ttp_aligned': ttp_aligned, 'normalised': normalised,
+            'classes': classes, 'pairs': None, 'ttp_align': ttp_align_params,
+        }
+
+    save_manifest(manifest, MODEL_DIR / manifest_name(dataset_name, one_to_one, ttp_aligned, normalised))
 
     return results
 
@@ -66,15 +83,17 @@ def run_experiment(dataset_file, dataset_name, one_to_one, ttp_aligned, normalis
         all_true_pool, all_pred_pool = [], []
         fold_accs_all = []
 
-        for curves, well_labels, pair_label, _ in items:
+        for curves, well_labels, pair_label, _, model_path in items:
             print(f"  Training pair: {pair_label}")
-            res = run_cv(curves, well_labels, n_folds=n_folds)
+            res = run_cv(curves, well_labels, n_folds=n_folds, model_save_path=model_path)
             pair_results_agg.append({
                 'label': pair_label,
                 'mean_acc': res['mean_acc'],
                 'std_acc': res['std_acc'],
                 'cm': res['cm'],
                 'classes': res['classes'],
+                'best_fold_acc': res['best_fold_acc'],
+                'best_fold_index': res['best_fold_index'],
             })
             all_true_pool.extend(res['y_true'].tolist())
             all_pred_pool.extend(res['y_pred'].tolist())
@@ -93,9 +112,9 @@ def run_experiment(dataset_file, dataset_name, one_to_one, ttp_aligned, normalis
         return agg_result, pair_results_agg
 
     else:
-        curves, well_labels, _, _ = items[0]
+        curves, well_labels, _, _, model_path = items[0]
         print("  Training full multi-class …")
-        res = run_cv(curves, well_labels, n_folds=n_folds)
+        res = run_cv(curves, well_labels, n_folds=n_folds, model_save_path=model_path)
         return res, None
 
 def parse_args():
@@ -114,6 +133,7 @@ def main():
 
     PREPROC_DIR.mkdir(parents=True, exist_ok=True)
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     one_to_one = args.one_to_one
     ttp_aligned = args.ttp_aligned

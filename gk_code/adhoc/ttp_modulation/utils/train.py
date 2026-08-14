@@ -6,7 +6,7 @@ import tensorflow as tf
 from .model import create_cnn_gru_dual
 
 
-def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0):
+def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0, model_save_path=None):
     # Stratified K-fold CV with CNN-GRU dual model
 
     le = LabelEncoder()
@@ -17,6 +17,8 @@ def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0):
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     fold_accs = []
     all_true, all_pred = [], []
+    best_fold_acc = -1.0
+    best_fold_index = -1
 
     for fold_i, (tr_idx, val_idx) in enumerate(skf.split(X, y)):
         print(f"    Fold {fold_i + 1}/{n_folds}  "
@@ -37,6 +39,13 @@ def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0):
         all_pred.extend(y_pred.tolist())
         print(f"      acc: {fold_acc:.1f}%")
 
+        if fold_acc > best_fold_acc:
+            best_fold_acc = fold_acc
+            best_fold_index = fold_i
+            if model_save_path is not None:
+                model.save(model_save_path)
+                print(f"      → new best ({fold_acc:.1f}%), saved to {model_save_path}")
+
         tf.keras.backend.clear_session()
 
     all_true = np.array(all_true)
@@ -49,6 +58,10 @@ def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0):
     f1 = f1_score(all_true, all_pred, average='macro', zero_division=0)
 
     print(f"    → acc: {mean_acc:.1f} ± {std_acc:.1f}%  |  P: {prec:.3f}  R: {rec:.3f}  F1: {f1:.3f}")
+    best_fold_msg = f"    → best fold: {best_fold_index + 1}/{n_folds} ({best_fold_acc:.1f}%)"
+    if model_save_path is not None:
+        best_fold_msg += f", saved to {model_save_path}"
+    print(best_fold_msg)
 
     return {
         'fold_accs': fold_accs,
@@ -61,4 +74,6 @@ def run_cv(curves, well_labels, n_folds=5, epochs=500, batch_size=512, seed=0):
         'precision': prec,
         'recall': rec,
         'f1': f1,
+        'best_fold_acc': float(best_fold_acc),
+        'best_fold_index': best_fold_index,
     }

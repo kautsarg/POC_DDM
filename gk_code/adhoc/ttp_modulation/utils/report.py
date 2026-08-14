@@ -13,7 +13,8 @@ def save_result(result, pair_results, path):
     """Persist run_cv output to JSON so the report can be regenerated without retraining."""
     def _ser_pair(r):
         return {'label': r['label'], 'mean_acc': r['mean_acc'], 'std_acc': r['std_acc'],
-                'cm': r['cm'].tolist(), 'classes': r['classes'].tolist()}
+                'cm': r['cm'].tolist(), 'classes': r['classes'].tolist(),
+                'best_fold_acc': r.get('best_fold_acc'), 'best_fold_index': r.get('best_fold_index')}
 
     payload = {
         'fold_accs': result['fold_accs'],
@@ -28,6 +29,9 @@ def save_result(result, pair_results, path):
         'classes': result['classes'].tolist() if 'classes' in result else None,
         'y_true': result['y_true'].tolist() if 'y_true' in result else None,
         'y_pred': result['y_pred'].tolist() if 'y_pred' in result else None,
+        # best CV fold (its model is saved to disk when --save_models is passed); absent in one-to-one agg result
+        'best_fold_acc': result.get('best_fold_acc'),
+        'best_fold_index': result.get('best_fold_index'),
     }
     with open(path, 'w') as f:
         json.dump(payload, f, indent=2)
@@ -45,6 +49,8 @@ def load_result(path):
         'precision': p['precision'],
         'recall': p['recall'],
         'f1': p['f1'],
+        'best_fold_acc': p.get('best_fold_acc'),
+        'best_fold_index': p.get('best_fold_index'),
     }
     for key in ('cm', 'classes', 'y_true', 'y_pred'):
         if p.get(key) is not None:
@@ -54,7 +60,8 @@ def load_result(path):
     if p.get('pair_results'):
         pair_results = [
             {'label': r['label'], 'mean_acc': r['mean_acc'], 'std_acc': r['std_acc'],
-             'cm': np.array(r['cm']), 'classes': np.array(r['classes'])}
+             'cm': np.array(r['cm']), 'classes': np.array(r['classes']),
+             'best_fold_acc': r.get('best_fold_acc'), 'best_fold_index': r.get('best_fold_index')}
             for r in p['pair_results']
         ]
     return result, pair_results
@@ -141,6 +148,12 @@ h3   { font-size: 0.95em; color: #555; margin-top: 20px; }
 
 
 def _metrics_table_html(res):
+    best_fold_row = ''
+    if res.get('best_fold_index') is not None:
+        best_fold_row = (
+            f'<tr><td>Best CV fold</td>'
+            f'<td>Fold {res["best_fold_index"] + 1} — {res["best_fold_acc"]:.2f}%</td></tr>'
+        )
     return (
         '<table class="metrics-table">'
         '<tr><th>Metric</th><th>Value</th></tr>'
@@ -148,6 +161,7 @@ def _metrics_table_html(res):
         f'<tr><td>Precision (macro)</td><td>{res["precision"]:.4f}</td></tr>'
         f'<tr><td>Recall (macro)</td><td>{res["recall"]:.4f}</td></tr>'
         f'<tr><td>F1 (macro)</td><td>{res["f1"]:.4f}</td></tr>'
+        f'{best_fold_row}'
         '</table>'
     )
 
@@ -176,8 +190,11 @@ def generate_html(dataset_name, combo_results, out_path):
                 f'<h3>Per-Pair Confusion Matrices</h3><div class="figure-row">'
             )
             for pr in pair_results:
-                b64 = _fig_to_b64(_cm_figure(pr['cm'], pr['classes'], title=pr['label']))
-                figures_html += f'<img src="data:image/png;base64,{b64}" alt="{pr["label"]}" />'
+                title = pr['label']
+                if pr.get('best_fold_index') is not None:
+                    title += f" (best fold {pr['best_fold_index'] + 1}: {pr['best_fold_acc']:.1f}%)"
+                b64 = _fig_to_b64(_cm_figure(pr['cm'], pr['classes'], title=title))
+                figures_html += f'<img src="data:image/png;base64,{b64}" alt="{title}" />'
             figures_html += '</div>'
         else:
             # multi-class: CM + fold acc side by side

@@ -1,4 +1,5 @@
 import re
+import json
 import itertools
 import numpy as np
 import pandas as pd
@@ -71,25 +72,29 @@ def _knee_max_ttp(unique_ttps, cycles_left, min_ret):
     return int(unique_ttps[np.argmax(np.linalg.norm(pts - proj, axis=1))])
 
 
-def build_ttp_aligned_curves(curves, timestamps, well_labels, threshold_frac=0.1):
+def build_ttp_aligned_curves(curves, timestamps, well_labels, threshold_frac=0.1, min_ttp=None, max_ttp=None):
+    # min_ttp/max_ttp: reuse a previously computed cutoff (e.g. at inference time) instead of
+    # deriving one from this batch, since the knee cutoff is batch-dependent and a saved model
+    # expects the exact curve length it was trained on.
     ttp_idx = _compute_ttp(curves, threshold_frac)
     n_cycles = curves.shape[1]
-    min_ttp = int(ttp_idx.min())
 
-    unique_ttps, cycles_left, min_ret = _tradeoff_curve(ttp_idx, well_labels, n_cycles)
-    max_ttp = _knee_max_ttp(unique_ttps, cycles_left, min_ret)
+    if min_ttp is None or max_ttp is None:
+        min_ttp = int(ttp_idx.min())
+        unique_ttps, cycles_left, min_ret = _tradeoff_curve(ttp_idx, well_labels, n_cycles)
+        max_ttp = _knee_max_ttp(unique_ttps, cycles_left, min_ret)
 
-    keep = ttp_idx <= max_ttp
+    keep = (ttp_idx >= min_ttp) & (ttp_idx <= max_ttp)
     shifts = ttp_idx[keep] - min_ttp
-    final_len = n_cycles - int(shifts.max())
+    final_len = n_cycles - (max_ttp - min_ttp)
 
     aligned = np.empty((keep.sum(), final_len))
     for i, (curve, s) in enumerate(zip(curves[keep], shifts)):
         aligned[i] = curve[s:s + final_len]
 
     aligned -= aligned[:, [0]]  # rebaselining so all curves start at 0
-    
-    return aligned, timestamps[:final_len], well_labels[keep], keep
+
+    return aligned, timestamps[:final_len], well_labels[keep], keep, min_ttp, max_ttp
 
 
 def get_pairs(well_labels):
@@ -122,6 +127,29 @@ def result_name(dataset, one_to_one, ttp_aligned, normalised):
     mode = 'onetone' if one_to_one else 'full'
 
     return f"{dataset}_{mode}_{alignment}_{norm}.html"
+
+
+def model_name(dataset, one_to_one, ttp_aligned, normalised, label1=None, label2=None):
+    name = preprocessed_name(dataset, one_to_one, ttp_aligned, normalised, label1, label2)
+    return name[:-4] + '.keras'
+
+
+def manifest_name(dataset, one_to_one, ttp_aligned, normalised):
+    alignment = 'aligned' if ttp_aligned else 'unaligned'
+    norm = 'normalised' if normalised else 'unnormalised'
+    mode = 'onetone' if one_to_one else 'full'
+
+    return f"{dataset}_{mode}_{alignment}_{norm}_manifest.json"
+
+
+def save_manifest(manifest, path):
+    with open(path, 'w') as f:
+        json.dump(manifest, f, indent=2)
+
+
+def load_manifest(path):
+    with open(path) as f:
+        return json.load(f)
 
 
 def save_preprocessed(curves, well_labels, path):
