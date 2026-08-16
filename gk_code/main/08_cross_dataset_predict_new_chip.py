@@ -320,6 +320,18 @@ if __name__ == "__main__":
         print("[!] No class_names saved for this group's full_data run -- reporting raw integer class ids.")
 
     filter_key = "None" if args.outlier_filter.lower() == "none" else args.outlier_filter
+
+    if filter_key == cdt.NOAMP_FILTER_NAME:
+        keep = cdt.is_amplifying_mask(curves)
+        print(f"  [*] {cdt.NOAMP_FILTER_NAME}: {int((~keep).sum())}/{len(keep)} "
+              f"non-amplifying curves removed from {args.new_chip_folder}")
+        curves = curves[keep]
+        Y_well_raw = Y_well_raw[keep]
+        if coords is not None:
+            coords = coords[keep]
+        if well_ids is not None:
+            well_ids = well_ids[keep]
+
     expected_seq_len = len(resampler.t_grid)
     models = vis07.load_saved_models(full_model_dir, filter_key, expected_seq_len,
                                      curve_type=args.curve_type, model_names=[args.model])

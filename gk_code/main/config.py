@@ -665,6 +665,7 @@ FILTER_PRINT_MAP = {
     "spatial_knn_label_elbow":        "Spatial-kNN",
     "spatial_grid_label_elbow":       "Spatial-Grid",
     "lofo_ae":                        "LOFO LSTM-AE",
+    "noamp_remove":                   "Non-Amplifying Removed",
 }
 
 CURVE_PRINT_MAP = {

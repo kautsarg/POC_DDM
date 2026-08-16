@@ -400,6 +400,12 @@ def _save_alignment_artifacts(combined, out_dir, curve_type, args):
 
 LOFO_AE_FILTER_NAME = "lofo_ae"
 
+NOAMP_FILTER_NAME = "noamp_remove"
+
+
+def is_amplifying_mask(curves):
+    return curves[:, -1] >= curves[:, 0]
+
 
 def _fit_lofo_ae_filter(combined, train_idx, out_dir, curve_type, fold_label, force_rerun=False):
     base_path = out_dir / config.CROSS_DATASET_LOFO_AE_PATH.format(fold_label=fold_label, curve_type=curve_type)
@@ -533,7 +539,8 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
         y_concentration=y_concentration,
         chip_id_encoded=chip_id_encoded,
         cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
-        batch_size=2048,
+        batch_size=args.batch_size,
+        train_center_frac=args.train_center_frac,
     )
 
     lofo_results[fold_label] = res
@@ -606,6 +613,9 @@ if __name__ == "__main__":
     parser.add_argument("--k_neighbors", type=int, default=24,
                         help="Neighbours per pixel (within the same well) for "
                              "cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon's spatial reconstruction.")
+    parser.add_argument("--batch_size", type=int, default=2048,
+                        help="Training/inference batch size. Lower this on GPUs with less "
+                             "VRAM to avoid OOM (e.g. A30 vs A40/A100).")
     parser.add_argument("--mtl", action="store_true",
                         help="Train MTL models only (classification + concentration regression heads). "
                              "Results are merged into the same results joblib so standard models "
@@ -676,6 +686,12 @@ if __name__ == "__main__":
                         help="Only run the first N LOFO folds instead of all of them "
                              "(e.g. 1 out of a 4-chip group) -- for quick iteration/testing. "
                              "Does not affect --train_full.")
+    parser.add_argument("--train_center_frac", type=float, default=None,
+                        help="Shrink the training pool to this fraction per well, keeping "
+                             "only the spatially most-central pixels (by distance from each "
+                             "well's own pixel centroid) and dropping border pixels -- for "
+                             "fast baselining/iteration. Requires pixel_row_idx/pixel_col_idx "
+                             "metadata. The test set and --train_full are never affected.")
     args = parser.parse_args()
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
@@ -1063,6 +1079,12 @@ if __name__ == "__main__":
             if combined is None:
                 continue
 
+            if NOAMP_FILTER_NAME in outlier_filters:
+                keep_mask = is_amplifying_mask(combined["curves"])
+                combined["features_df"][NOAMP_FILTER_NAME] = keep_mask.astype(int)
+                print(f"  [*] {NOAMP_FILTER_NAME}: {int((~keep_mask).sum())}/{len(keep_mask)} "
+                      f"non-amplifying curves flagged for removal")
+
             if not _lofo_pc_ttp:
                 _save_alignment_artifacts(combined, out_dir, curve_type, args)
 
@@ -1091,6 +1113,11 @@ if __name__ == "__main__":
                 combined = _build_pool(None)  # fresh group-wide pool
                 if combined is not None:
                     _save_alignment_artifacts(combined, out_dir, curve_type, args)
+                    if NOAMP_FILTER_NAME in outlier_filters:
+                        keep_mask = is_amplifying_mask(combined["curves"])
+                        combined["features_df"][NOAMP_FILTER_NAME] = keep_mask.astype(int)
+                        print(f"  [*] {NOAMP_FILTER_NAME}: {int((~keep_mask).sum())}/{len(keep_mask)} "
+                              f"non-amplifying curves flagged for removal")
             if combined is not None:
                 encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
                 all_idx = np.arange(len(y_full))
@@ -1126,7 +1153,7 @@ if __name__ == "__main__":
                     y_concentration=y_concentration,
                     chip_id_encoded=chip_id_encoded,
                     cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
-                    batch_size=2048,
+                    batch_size=args.batch_size,
                 )
                 lofo_results["full_data"] = res_full
                 lofo_results["full_data"]["class_names"] = [str(c) for c in encoder.classes_]

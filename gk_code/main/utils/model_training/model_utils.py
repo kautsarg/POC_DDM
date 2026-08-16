@@ -313,6 +313,18 @@ def build_neighbor_curve_stack(curves, coords, well_ids, k):
     return stack
 
 
+def crop_train_to_well_centers(train_index, coords, well_ids, frac):
+    kept = []
+    for well in np.unique(well_ids[train_index]):
+        well_rows = train_index[well_ids[train_index] == well]
+        well_coords = coords[well_rows]
+        centroid = well_coords.mean(axis=0)
+        dist = np.linalg.norm(well_coords - centroid, axis=1)
+        n_keep = max(1, round(len(well_rows) * frac))
+        kept.append(well_rows[np.argsort(dist)[:n_keep]])
+    return np.sort(np.concatenate(kept)) if kept else train_index[:0]
+
+
 def reconstruct_curves_cosine(stack):
     """
     stack: (N, k+1, T), own curve at index 0. Reconstruction weights are the
@@ -797,6 +809,7 @@ def evaluate_outlier_filters(
     cl_phase1_epochs=None,
     lc_classes=None,
     batch_size=512,
+    train_center_frac=None,
 ):
     """Train and evaluate models across outlier filters.
 
@@ -955,6 +968,13 @@ def evaluate_outlier_filters(
 
             splits = list(splitter.split(X_AC, y_true))
 
+        if train_center_frac is not None:
+            if coords_m is None or well_ids_m is None:
+                raise ValueError("train_center_frac requires per-pixel coords/well_ids -- "
+                                  "this group/experiment lacks pixel_row_idx/pixel_col_idx metadata.")
+            splits = [(crop_train_to_well_centers(train_index, coords_m, well_ids_m, train_center_frac), test_index)
+                      for train_index, test_index in splits]
+
         current_mask_count = int(np.sum(mask))
         cached_mask_count = res_entry.get("mask_count")
         if cached_mask_count is not None and cached_mask_count != current_mask_count:
@@ -964,14 +984,18 @@ def evaluate_outlier_filters(
             res_entry = {}
         
         _split_signature = tuple(hashlib.md5(np.sort(test_index).tobytes()).hexdigest() for _, test_index in splits)
+        _train_crop_signature = train_center_frac
         _had_cached_predictions = any(k.startswith(('y_preds_', 'y_reg_preds_')) for k in res_entry)
-        if res_entry.get("_split_signature") != _split_signature:
+        if (res_entry.get("_split_signature") != _split_signature
+                or res_entry.get("_train_crop_signature") != _train_crop_signature):
             if _had_cached_predictions:
                 print(f"     [Warning] Cached results for filter '{filter_name}' were built from a "
-                      f"different train/test split (splitter changed upstream, or this cache "
-                      f"predates split tracking). Discarding stale cache for this filter.")
+                      f"different train/test split (splitter changed upstream, train_center_frac "
+                      f"changed, or this cache predates split tracking). Discarding stale cache "
+                      f"for this filter.")
             res_entry = {}
         res_entry["_split_signature"] = _split_signature
+        res_entry["_train_crop_signature"] = _train_crop_signature
 
         res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
 
