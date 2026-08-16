@@ -8,7 +8,7 @@
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a100
-#SBATCH --array=0-3   # 0=acq_start+SC3, 1=acq_start+SC0, 2=pc_ttp_min+SC3, 3=pc_ttp_min+SC0
+#SBATCH --array=2-3   # 0=acq_start+SC3, 1=acq_start+SC0, 2=pc_ttp_min+SC3, 3=pc_ttp_min+SC0
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -35,7 +35,7 @@ FILTERS="none"
 # FILTERS="lofo_ae"
 
 #### CHECK THE GROUP!
-LOFO_TASK_ID=3
+LOFO_TASK_ID=5
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
 ####################################################################################################
 
@@ -55,21 +55,21 @@ fi
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --coral --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
-
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-    --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
+
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+    --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
     --mode lofo \
-    --curve_type ${CURVE_TYPES} --outlier_filter None ${ALIGN_ARGS}
+    --curve_type ${CURVE_TYPES} --outlier_filter ${FILTERS}  ${ALIGN_ARGS}
 
 deactivate

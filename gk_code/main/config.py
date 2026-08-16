@@ -1357,21 +1357,28 @@ CROSS_DATASET_GROUPS = {
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'final_chip_1_2': ['D20260731_E00_C00_F4500KHz_U_DDM_01_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_04', 'D20260731_E00_C00_F4500KHz_U_DDM_01_04', 'D20260804_E00_C00_F4500KHz_U_DDM_02_03', 'D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07'],
     'final_4_chip_clean_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
-    'final_4_chip_cleanv2_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01']
+    'final_4_chip_cleanv2_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
+    'final_4_chip_cov_hadv_iav': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01']
 }
 
 LOFO_EXCLUDE_WELL_MAPPING = {
-    'final_4_chip_clean_nn': {
+    'final_4_chip_clean_nn': { #no PC, no NC, no no-amp
         'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
         'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8, 9],
         'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
         'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8, 9],
     },
-    'final_4_chip_cleanv2_nn': {
+    'final_4_chip_cleanv2_nn': { #no PC, no NC, no no-amp, no small-amp
         'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
         'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [5, 6, 7, 8, 9],
         'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
         'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [4, 5, 6, 8, 9],
-    }
+    },
+    'final_4_chip_cov_hadv_iav': {  #no PC, no NC, no no-amp, no small-amp, no Kp, no IBV
+            'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [3, 4, 8, 9],
+            'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [0, 1, 2, 5, 6, 7, 8, 9],
+            'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [0, 1, 2, 4, 5, 6, 8, 9],
+            'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [4, 5, 6, 8, 9],
+        }
 }
 
