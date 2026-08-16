@@ -66,6 +66,6 @@ done
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
     --mode lofo \
-    --curve_type ${CURVE_TYPES} --outlier_filter ${FILTERS} ${ALIGN_ARGS}
+    --curve_type ${CURVE_TYPES} --outlier_filter ${FILTERS} --train_center_frac 0.5 ${ALIGN_ARGS}
 
 deactivate

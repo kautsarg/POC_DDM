@@ -63,11 +63,12 @@ def alignment_dir(base_dir, curve_alignment, pc_ttp_anchor):
     return base_dir
 
 
-def get_fold_labels(group_dir, curve_type, mode_str, curve_alignment, pc_ttp_anchor):
+def get_fold_labels(group_dir, curve_type, mode_str, curve_alignment, pc_ttp_anchor, train_center_frac=None):
     """Fold labels = top-level keys of the 04 results dict for this curve_type/mode."""
     results_dir = alignment_dir(group_dir, curve_alignment, pc_ttp_anchor)
     legacy_path = find_results_path(results_dir, mode_str, curve_type)
-    lofo_results = load_partitioned(results_dir, mode_str, curve_type, legacy_path=legacy_path)
+    lofo_results = load_partitioned(results_dir, mode_str, curve_type, legacy_path=legacy_path,
+                                     train_center_frac=train_center_frac)
     return sorted(lofo_results.keys())
 
 
@@ -180,7 +181,7 @@ def render_fold_curve_plot(curves, result, y_true_by_local):
 # ============================================================
 
 def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, force_rerun, mode_str,
-                 curve_alignment, pc_ttp_anchor):
+                 curve_alignment, pc_ttp_anchor, train_center_frac=None):
     group_name = group_dir.name
     results_dir = alignment_dir(group_dir, curve_alignment, pc_ttp_anchor)
     out_dir = alignment_dir(config.get_viz_dir(Path(exp_folder), "model_performance_viz_cross_dataset_cv") / group_name,
@@ -193,7 +194,8 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
         return
 
     lofo_results = load_partitioned(results_dir, mode_str, curve_type,
-                                     legacy_path=find_results_path(results_dir, mode_str, curve_type))
+                                     legacy_path=find_results_path(results_dir, mode_str, curve_type),
+                                     train_center_frac=train_center_frac)
     if not lofo_results:
         print(f"  -> [SKIP] {group_name}/{fold_label}: no '{mode_str}' results file for curve_type={curve_type}.")
         return
@@ -376,6 +378,10 @@ if __name__ == "__main__":
                         default="min",
                         help="Must match the --pc_ttp_anchor used for the corresponding 04 run "
                              "(only used when --curve_alignment pc_ttp).")
+    parser.add_argument("--train_center_frac", type=float, default=None,
+                        help="Must match the --train_center_frac used for the corresponding 04 run "
+                             "(default: None, the unsampled layout). Only affects LOFO/kfold folds -- "
+                             "--train_full's 'full_data' results are always found regardless of this.")
     args = parser.parse_args()
 
     outlier_filters = [None if f == "None" else f for f in args.outlier_filter]
@@ -391,7 +397,8 @@ if __name__ == "__main__":
     for group_dir in group_paths:
         for curve_type in args.curve_type:
             for fold_label in get_fold_labels(group_dir, curve_type, mode_str,
-                                              args.curve_alignment, args.pc_ttp_anchor):
+                                              args.curve_alignment, args.pc_ttp_anchor,
+                                              train_center_frac=args.train_center_frac):
                 pairs.append((group_dir, fold_label, curve_type))
 
     if not pairs:
@@ -407,4 +414,5 @@ if __name__ == "__main__":
     for group_dir, fold_label, curve_type in pairs:
         for outlier_filter in outlier_filters:
             process_fold(args.exp_folder, group_dir, fold_label, outlier_filter, curve_type,
-                         args.force_rerun, mode_str, args.curve_alignment, args.pc_ttp_anchor)
+                         args.force_rerun, mode_str, args.curve_alignment, args.pc_ttp_anchor,
+                         train_center_frac=args.train_center_frac)

@@ -43,7 +43,9 @@ out_dir/
 │       ├── {model_key}_{filter_key}_{curve_type}_model.keras   # every model, since full_data has one "fold"
 │       └── (no xai_data snapshot — full_data has no held-out test set)
 ├── {filter_token}/                                  # one per outlier_filter actually run (see §3)
-│   └── cross_dataset_classification_performances_{mode}_{curve_type}_{model_key}.joblib   # current layout, one file per (filter, model)
+│   ├── cross_dataset_classification_performances_{mode}_{curve_type}_{model_key}.joblib   # current layout, one file per (filter, model); --train_center_frac None
+│   └── {frac_token}/                                # only if --train_center_frac was set (see §3b); every fold_label except "full_data"
+│       └── cross_dataset_classification_performances_{mode}_{curve_type}_{model_key}.joblib
 ├── cross_dataset_classification_performances_{mode}_{curve_type}.joblib   # LEGACY single-file layout — only present for groups trained before the split (see §7)
 ├── cross_dataset_resampler_classification_performances_{curve_type}.joblib   # CurveResampler, one per curve_type (used by 08 to align new chips)
 ├── cross_dataset_pc_ttp_recipe_{curve_type}.joblib  # only if --curve_alignment pc_ttp; {anchor, common_duration}
@@ -58,6 +60,28 @@ gets its own subfolder. `filter_token(filter_name)` (in `cross_dataset_result_io
 `None`/`"none"` → `none/`; any other filter string → itself, sanitized to
 `[A-Za-z0-9_.-]` (a no-op for real filter names, which are already plain
 identifiers/`features_df` column names).
+
+## 3b. `{frac_token}`: `--train_center_frac`
+
+`--train_center_frac` (float, default `None`) spatially center-crops the *training*
+pool per well before fitting (test/eval pool and `--train_full` are never affected —
+see `evaluate_outlier_filters`'s docstring). Its value gets its own subfolder *nested
+inside* `{filter_token}/`, via `_frac_token()`/`model_result_path()` in
+`cross_dataset_result_io.py`: `None` (default) → no extra subfolder, same path as
+before this option existed; a float `f` → `center{f:g}/` (e.g. `0.5` → `center0.5/`,
+`0.25` → `center0.25/`).
+
+This exists so re-running the same (group, alignment, filter, model) combination with
+a *different* `--train_center_frac` — or with none at all — doesn't silently overwrite
+a previous run's results; each fraction gets its own file. The one exception is fold
+label `"full_data"` (§6): since `--train_full` never samples, its results always save
+to/load from the unscoped path regardless of what `--train_center_frac` this
+invocation used — `save_partitioned`/`load_partitioned` handle this automatically, no
+caller-side special-casing needed.
+
+`06b_cross_dataset_prediction_report.py --train_center_frac` must match whatever the
+corresponding `04` run used, to find the right subfolder (defaults to `None`, the
+unsampled layout).
 
 ## 4. `{fold_label}`: which arg, what values
 
