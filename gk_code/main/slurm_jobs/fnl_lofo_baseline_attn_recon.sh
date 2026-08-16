@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30,a40,a100
-#SBATCH --array=0-2   # 0=group idx 3, 1=group idx 4, 2=group idx 5
+#SBATCH --partition=a30
+#SBATCH --array=4-7   # 0=group idx 3, 1=group idx 4, 2=group idx 5
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -45,7 +45,7 @@ esac
 echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}"
 
 #### CHECK THE GROUPS!
-TASK_IDS=(3 4 5)
+TASK_IDS=(3 4 5 6 7 8 9 10)
 LOFO_TASK_ID=${TASK_IDS[$SLURM_ARRAY_TASK_ID]}
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
 

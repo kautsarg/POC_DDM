@@ -1426,7 +1426,7 @@ def evaluate_outlier_filters(
                                 if is_supcon3 else
                                 create_cnn_gru_dual_dann_model(T, n_classes, n_chips))
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                 metrics=['accuracy'])
+                                 metrics=['accuracy'], jit_compile=False)
                     epochs = 500
 
                     # val_cls_ce, not val_loss -- chip_ce is meant to plateau near chance, not decrease.
@@ -1490,7 +1490,7 @@ def evaluate_outlier_filters(
                                 if is_supcon3 else
                                 create_cnn_gru_dual_coral_model(T, n_classes, n_chips))
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
-                                 metrics=['accuracy'])
+                                 metrics=['accuracy'], jit_compile=False)
                     epochs = 500
 
                     # val_cls_ce, not val_loss -- same convention as DANN, keeps early stopping
