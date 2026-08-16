@@ -56,17 +56,17 @@ fi
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --coral --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
 
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
 
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${MODELS} \
-    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS} --force_rerun
+    --outlier_filter ${FILTERS} --train_full ${ALIGN_ARGS}
 
 python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
