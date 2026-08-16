@@ -23,7 +23,7 @@ from cycler import cycler
 # the visualisation output root.
 
 LAB_ROOT_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets"
-HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/refactor/POC_DDM_datasets"
+HPC_ROOT_FOLDER = "/rds/general/user/gk225/home/POC_DDM_datasets"
 LOCAL_ROOT_FOLDER = "/Users/kautsarg/Documents/Final Project/Run Data"
 
 # Pick whichever root actually exists on this machine, in priority order.
@@ -168,13 +168,17 @@ OUTLIER_FILTERS = [
 # Used by: PREPROCESSED_CURVES_PATH (01, 02); TRAINING_DATA_PATH (02, 03, 04,
 # 05, 06, 07, light_pipeline/attribution_vis.py, model_for_xai.py,
 # resampling_check.py); TRAINING_RESULT_PATH / TRAINING_10FOLD_RESULT_PATH
-# (03, 06, 08); CROSS_DATASET_RESULT_PATH (04); CROSS_DATASET_RESAMPLER_PATH
+# (03, 06, 08); CROSS_DATASET_RESULT_PATH (legacy single-file layout, kept as
+# a read-only fallback in utils/cross_dataset_result_io.py for groups trained
+# before the per-model split -- see CROSS_DATASET_RESULT_PATH_PER_MODEL, the
+# current layout written by 04 and read by 04/06b/08); CROSS_DATASET_RESAMPLER_PATH
 # (04, resampling_check.py).
 PREPROCESSED_CURVES_PATH = 'preprocessed_curves.joblib'
 TRAINING_DATA_PATH = 'curve_for_training.joblib'
 TRAINING_RESULT_PATH = 'classification_performances.joblib'
 TRAINING_10FOLD_RESULT_PATH = 'classification_performances_10fold.joblib'
 CROSS_DATASET_RESULT_PATH = 'cross_dataset_classification_performances_{mode}_{curve_type}.joblib'
+CROSS_DATASET_RESULT_PATH_PER_MODEL = 'cross_dataset_classification_performances_{mode}_{curve_type}_{model}.joblib'
 CROSS_DATASET_RESAMPLER_PATH = 'cross_dataset_resampler_classification_performances_{curve_type}.joblib'
 CURVE_ALIGNMENT_CHOICES = ["acquisition_start", "pc_ttp"]
 CROSS_DATASET_PC_TTP_RECIPE_PATH = 'cross_dataset_pc_ttp_recipe_{curve_type}.joblib'
@@ -1266,10 +1270,10 @@ CONC_MAPPINGS = {
 }
 
 EXCLUDE_WELL_MAPPING = {
-    'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8],
-    'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8],
-    'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8],
-    'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8],
+    'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
+    'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8, 9],
+    'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
+    'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8, 9],
 }
 
 def get_label_mappings(exp_path):
@@ -1307,8 +1311,13 @@ def get_conc_array(folder_name, Y_well):
     )
     return None if all(x is None for x in arr) else arr
 
-def apply_well_exclusion(training_data, exp_folder_name):
-    excluded = EXCLUDE_WELL_MAPPING.get(exp_folder_name, [])
+def apply_well_exclusion(training_data, exp_folder_name, group_name=None):
+    if group_name is not None:
+        source_name = f"LOFO_EXCLUDE_WELL_MAPPING[{group_name!r}]"
+        excluded = LOFO_EXCLUDE_WELL_MAPPING.get(group_name, {}).get(exp_folder_name, [])
+    else:
+        source_name = "EXCLUDE_WELL_MAPPING"
+        excluded = EXCLUDE_WELL_MAPPING.get(exp_folder_name, [])
     if not excluded:
         return training_data
     Y_well_raw = np.asarray(training_data["Y_well"])
@@ -1323,7 +1332,7 @@ def apply_well_exclusion(training_data, exp_folder_name):
     conc_map = CONC_MAPPINGS.get(exp_folder_name, {})
     y_label = {w: label_map.get(w, '?') for w in excluded}
     y_concentration = {w: _fmt_conc(conc_map.get(w, '?')) for w in excluded}
-    print(f"  [*] EXCLUDE_WELL_MAPPING: dropping {len(Y_well_raw) - len(keep_idx)} "
+    print(f"  [*] {source_name}: dropping {len(Y_well_raw) - len(keep_idx)} "
           f"samples from wells {excluded} (y_label={y_label}, y_concentration={y_concentration}) "
           f"for {exp_folder_name}")
 
@@ -1347,7 +1356,22 @@ CROSS_DATASET_GROUPS = {
     'init_oneplex_v6': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'init_oneplex_nc_subtract': ['D20260608_E00_C00_F4500KHz_U_norm_temp_04', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_06', 'D20260609_E00_C00_F4500KHz_U_norm_temp_read_07', 'D20260609_E00_C00_F4500KHz_U_norm_temp_ready_08'],
     'final_chip_1_2': ['D20260731_E00_C00_F4500KHz_U_DDM_01_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_01', 'D20260804_E00_C00_F4500KHz_U_DDM_02_04', 'D20260731_E00_C00_F4500KHz_U_DDM_01_04', 'D20260804_E00_C00_F4500KHz_U_DDM_02_03', 'D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07'],
-    'final_4_chip_clean': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01']
+    'final_4_chip_clean_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
+    'final_4_chip_cleanv2_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01']
 }
 
+LOFO_EXCLUDE_WELL_MAPPING = {
+    'final_4_chip_clean_nn': {
+        'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
+        'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8, 9],
+        'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
+        'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8, 9],
+    },
+    'final_4_chip_cleanv2_nn': {
+        'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
+        'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [5, 6, 7, 8, 9],
+        'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
+        'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [4, 5, 6, 8, 9],
+    }
+}
 

@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N fnl_kfold5_crossval
+#PBS -l walltime=72:00:00
+#PBS -l select=1:ncpus=16:mem=64gb:ngpus=1
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_kfold5_crossval/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_kfold5_crossval/
+#PBS -k eo
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_kfold5_crossval
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+EXP_FOLDER="/rds/general/user/gk225/home/refactor/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
+MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
+FILTERS="none"
+TASK_ID=3
+GROUP_NAME="final_4_chip_clean"   # must match list(config.CROSS_DATASET_GROUPS.keys())[TASK_ID]
+CURVE_TYPES="ori_curve_wavelet_bior35_norm"
+SUPCON=3   # hardcoded choice -- edit before submitting (0 or 3)
+
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${TASK_ID} \
+    --mode kfold --n_splits 5 \
+    --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${MODELS} \
+    --outlier_filter ${FILTERS} --train_full
+
+python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
+    --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
+    --mode kfold --n_splits 5 \
+    --curve_type ${CURVE_TYPES} --outlier_filter None
+
+deactivate

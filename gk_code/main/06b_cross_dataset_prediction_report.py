@@ -12,6 +12,9 @@ from sklearn.metrics import accuracy_score
 
 import config
 
+sys.path.insert(0, 'utils')
+from cross_dataset_result_io import load_partitioned
+
 # Reuse 06's pure rendering/HTML helpers instead of duplicating them -- only the
 # data-loading layer differs (flat fold_label -> filter -> res_entry dict + the
 # per-fold xai_data snapshot saved by 04, vs 06's single-experiment-folder layout).
@@ -63,13 +66,8 @@ def alignment_dir(base_dir, curve_alignment, pc_ttp_anchor):
 def get_fold_labels(group_dir, curve_type, mode_str, curve_alignment, pc_ttp_anchor):
     """Fold labels = top-level keys of the 04 results dict for this curve_type/mode."""
     results_dir = alignment_dir(group_dir, curve_alignment, pc_ttp_anchor)
-    results_path = find_results_path(results_dir, mode_str, curve_type)
-    if results_path is None:
-        return []
-    try:
-        lofo_results = joblib.load(results_path)
-    except Exception:
-        return []
+    legacy_path = find_results_path(results_dir, mode_str, curve_type)
+    lofo_results = load_partitioned(results_dir, mode_str, curve_type, legacy_path=legacy_path)
     return sorted(lofo_results.keys())
 
 
@@ -194,8 +192,9 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
         print(f"  -> [SKIP] Report already exists: {out_path}")
         return
 
-    results_path = find_results_path(results_dir, mode_str, curve_type)
-    if results_path is None:
+    lofo_results = load_partitioned(results_dir, mode_str, curve_type,
+                                     legacy_path=find_results_path(results_dir, mode_str, curve_type))
+    if not lofo_results:
         print(f"  -> [SKIP] {group_name}/{fold_label}: no '{mode_str}' results file for curve_type={curve_type}.")
         return
 
@@ -208,10 +207,9 @@ def process_fold(exp_folder, group_dir, fold_label, outlier_filter, curve_type, 
           f"(curve_type: {curve_type}, filter: {outlier_filter})\n{'#'*80}")
 
     try:
-        lofo_results = joblib.load(results_path)
-        snapshot     = joblib.load(snapshot_path)
+        snapshot = joblib.load(snapshot_path)
     except Exception as e:
-        print(f"  -> [SKIP] failed to load results/snapshot ({e}).")
+        print(f"  -> [SKIP] failed to load snapshot ({e}).")
         return
 
     if fold_label not in lofo_results or outlier_filter not in lofo_results[fold_label]:

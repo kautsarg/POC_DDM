@@ -13,6 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 from kneed import KneeLocator
 sys.path.insert(0, 'utils')
 from safe_io import safe_joblib_dump, safe_keras_save
+from cross_dataset_result_io import save_partitioned, load_partitioned
 import sigmoid_fitting as sp
 sys.path.insert(0, 'utils/model_training')
 from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_determinism,
@@ -46,15 +47,14 @@ PC_TTP_ANCHOR_PCT_DEFAULT = 10
 # ============================================================
 # HELPERS
 # ============================================================
-def load_curve_data(exp_path, curve_type):
-    """Load the requested curve dataset, kinetic_features, and label-mapped Y_well for one experiment folder."""
+def load_curve_data(exp_path, curve_type, group_name=None):
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     if not os.path.exists(data_path):
         print(f"  -> Skipping {exp_path.name}: '{data_path}' not found.")
         return None
 
     data = joblib.load(data_path)
-    data = config.apply_well_exclusion(data, exp_path.name)
+    data = config.apply_well_exclusion(data, exp_path.name, group_name=group_name)
     dataset_name = list(data["dataset_name"])
     try:
         idx, _ = config.resolve_curve_dataset_idx(curve_type, dataset_name)
@@ -106,7 +106,7 @@ def combine_group(exp_paths, group_name, curve_type="ori_curve"):
     parts = []
     ref_mapping = None
     for exp_path in exp_paths:
-        d = load_curve_data(exp_path, curve_type)
+        d = load_curve_data(exp_path, curve_type, group_name=group_name)
         if d is None:
             continue
         if ref_mapping is None:
@@ -285,7 +285,7 @@ def combine_group_pc_aligned(exp_paths, group_name, curve_type, held_out_chip,
     """Like combine_group(), but zero-references each chip at its PC well's TTP."""
     parts = []
     for exp_path in exp_paths:
-        d = load_curve_data(exp_path, curve_type)
+        d = load_curve_data(exp_path, curve_type, group_name=group_name)
         if d is None:
             continue
         parts.append(d)
@@ -489,7 +489,7 @@ def _derive_pool_labels(combined, args):
 def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
                   combined, y_full, encoder, X_candidates_clean, curve_type, models,
                   outlier_filters, out_dir, plot_dir, group_name, total_count,
-                  lofo_results, results_file_path, args, y_concentration, chip_id_encoded):
+                  lofo_results, mode_str, args, y_concentration, chip_id_encoded):
     progress_pct = ((fold_idx + 1) / total_folds) * 100
     print(f"\n{'='*75}")
     print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
@@ -501,7 +501,7 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
 
     def checkpoint(updated_results, fold_label=fold_label):
         lofo_results[fold_label] = updated_results
-        safe_joblib_dump(lofo_results, results_file_path, compress=3)
+        save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3)
 
     lofo_model_dir = out_dir / "model_interpretation" / fold_label
     lofo_model_dir.mkdir(parents=True, exist_ok=True)
@@ -546,7 +546,7 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
 
     lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
 
-    safe_joblib_dump(lofo_results, results_file_path, compress=3)
+    save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3)
 
     features_df_all = combined["features_df"]
     X_man_train = np.nan_to_num(
@@ -728,7 +728,6 @@ if __name__ == "__main__":
         plot_dir.mkdir(parents=True, exist_ok=True)
 
         _mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
-        results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=_mode_str, curve_type=curve_type)
         outlier_filters = [None if f.lower() == "none" else f for f in args.outlier_filter]
 
         # if getattr(args, 'supcon_staged', False):
@@ -882,7 +881,7 @@ if __name__ == "__main__":
             models = [m for m in models
                       if m in _req or _strip_variant_suffixes(m) in _req]
 
-        lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
+        lofo_results = load_partitioned(out_dir, _mode_str, curve_type)
         if args.force_rerun:
             _mtl_result_keys = set()
             for _k, (_pk, _probk, _clsk) in config.MODEL_KEY_MAP.items():
@@ -1085,7 +1084,7 @@ if __name__ == "__main__":
                 _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
                               combined, y_full, encoder, X_candidates_clean, curve_type, models,
                               outlier_filters, out_dir, plot_dir, group_name, total_count,
-                              lofo_results, results_file_path, args, y_concentration, chip_id_encoded)
+                              lofo_results, _mode_str, args, y_concentration, chip_id_encoded)
 
         if getattr(args, 'train_full', False):
             if _lofo_pc_ttp:
@@ -1131,5 +1130,5 @@ if __name__ == "__main__":
                 )
                 lofo_results["full_data"] = res_full
                 lofo_results["full_data"]["class_names"] = [str(c) for c in encoder.classes_]
-                safe_joblib_dump(lofo_results, results_file_path, compress=3)
+                save_partitioned(lofo_results, out_dir, _mode_str, curve_type, compress=3)
                 gc.collect()

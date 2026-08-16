@@ -12,6 +12,7 @@ import tensorflow as tf
 sys.path.insert(0, 'utils')
 sys.path.insert(0, 'utils/model_training')
 import config
+from cross_dataset_result_io import load_partitioned
 
 # Import-only, sibling scripts never modified.
 cdt = importlib.import_module("04_cross_dataset_training")
@@ -27,14 +28,13 @@ def _is_spatial(model_key):
     return _SPATIAL_MODEL_HINT in model_key
 
 
-def load_new_chip_curves(exp_path, curve_type):
-    """Like cdt.load_curve_data, but doesn't require a LABEL_MAPPINGS entry."""
+def load_new_chip_curves(exp_path, curve_type, group_name=None):
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     if not os.path.exists(data_path):
         print(f"[!] '{data_path}' not found.")
         return None
     data = joblib.load(data_path)
-    data = config.apply_well_exclusion(data, exp_path.name)
+    data = config.apply_well_exclusion(data, exp_path.name, group_name=group_name)
     dataset_name = list(data["dataset_name"])
     try:
         idx, _ = config.resolve_curve_dataset_idx(curve_type, dataset_name)
@@ -64,15 +64,16 @@ def load_new_chip_curves(exp_path, curve_type):
     }
 
 
-def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_anchor):
+def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_anchor, group_name=None):
     """Returns (curves, resampler, Y_well_raw, pc_curves_aligned, coords, well_ids),
     or None on failure. pc_curves_aligned is the new chip's own PC well, aligned the
     same way as curves -- None if the chip has no PC snapshot. coords/well_ids are
     per-pixel and don't need alignment (the shift/truncate/resample steps only ever
     touch the time axis), so they pass straight through -- None if unavailable
     (e.g. no spatial metadata for this chip), in which case spatial/recon models
-    can't be used on it."""
-    d = load_new_chip_curves(new_chip_path, curve_type)
+    can't be used on it. group_name: passed through to load_new_chip_curves for
+    group-scoped well exclusion -- see apply_well_exclusion's docstring."""
+    d = load_new_chip_curves(new_chip_path, curve_type, group_name=group_name)
     if d is None:
         return None
 
@@ -301,7 +302,7 @@ if __name__ == "__main__":
         out_dir = out_dir / "curve_alignment_pc_ttp" / f"anchor_{args.pc_ttp_anchor}"
 
     result = align_new_chip(Path(args.new_chip_folder), out_dir, args.curve_type,
-                            args.curve_alignment, args.pc_ttp_anchor)
+                            args.curve_alignment, args.pc_ttp_anchor, group_name=args.group)
     if result is None:
         sys.exit(1)
     curves, resampler, Y_well_raw, pc_curves_aligned, coords, well_ids = result
@@ -313,8 +314,7 @@ if __name__ == "__main__":
 
     _mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
     full_model_dir = out_dir / "model_interpretation" / f"full_data_{_mode_str}"
-    results_file_path = out_dir / config.CROSS_DATASET_RESULT_PATH.format(mode=_mode_str, curve_type=args.curve_type)
-    lofo_results = joblib.load(results_file_path) if results_file_path.exists() else {}
+    lofo_results = load_partitioned(out_dir, _mode_str, args.curve_type)
     class_names = lofo_results.get("full_data", {}).get("class_names")
     if class_names is None:
         print("[!] No class_names saved for this group's full_data run -- reporting raw integer class ids.")
