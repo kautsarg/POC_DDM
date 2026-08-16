@@ -66,6 +66,7 @@ def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_
     uses train_center_frac (04_cross_dataset_training.py), so its output must stay where
     06b/08 already expect to find it no matter what this run's train_center_frac was."""
     per_file = {}
+    full_data_paths = set()
     for fold_label, fold_res in lofo_results.items():
         if not isinstance(fold_res, dict):
             continue
@@ -82,7 +83,16 @@ def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_
                 for k in _model_keys_for(model_key, res_entry):
                     model_slice[k] = res_entry[k]
                 per_file.setdefault(path, {})[fold_label] = {**fold_shared, **model_slice}
+                if fold_label == "full_data" and train_center_frac is not None:
+                    full_data_paths.add(path)
+
     for path, data in per_file.items():
+        if path in full_data_paths and path.exists():
+            try:
+                existing = joblib.load(path)
+            except Exception:
+                existing = {}
+            data = {**existing, **data}
         safe_joblib_dump(data, path, compress=compress)
 
 
