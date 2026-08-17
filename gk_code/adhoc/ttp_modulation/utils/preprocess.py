@@ -134,6 +134,11 @@ def model_name(dataset, one_to_one, ttp_aligned, normalised, label1=None, label2
     return name[:-4] + '.keras'
 
 
+def saliency_name(dataset, one_to_one, ttp_aligned, normalised, class_name, label1=None, label2=None):
+    name = preprocessed_name(dataset, one_to_one, ttp_aligned, normalised, label1, label2)
+    return name[:-4] + f'_{_safe(class_name)}.png'
+
+
 def manifest_name(dataset, one_to_one, ttp_aligned, normalised):
     alignment = 'aligned' if ttp_aligned else 'unaligned'
     norm = 'normalised' if normalised else 'unnormalised'

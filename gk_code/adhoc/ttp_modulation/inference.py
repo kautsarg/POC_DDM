@@ -40,14 +40,14 @@ def preprocess_test(dataset_file, model_dataset_name, one_to_one, ttp_aligned, n
     if normalised:
         curves = normalise_curves(curves)
 
-    return curves, well_labels, orig_row, manifest
+    return curves, well_labels, orig_row, manifest, timestamps
 
 
 def run_inference(dataset_file, dataset_name, model_dataset_name, one_to_one, ttp_aligned, normalised):
     # Raw, independent predictions from every saved model — no combining/voting across pairs.
 
     print(f"\n[{dataset_name}] inference (models: {model_dataset_name})")
-    curves, well_labels, orig_row, manifest = preprocess_test(
+    curves, well_labels, orig_row, manifest, _ = preprocess_test(
         dataset_file, model_dataset_name, one_to_one, ttp_aligned, normalised)
     X = curves[:, :, np.newaxis].astype(np.float32)
 
