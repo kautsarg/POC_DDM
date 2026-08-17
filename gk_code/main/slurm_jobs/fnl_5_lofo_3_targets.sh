@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fnl_lofo_clean_nn_full
+#SBATCH --job-name=fnl_5_lofo_3_targets
 #SBATCH --time=72:00:00
 
 # Request resources for a single job
@@ -45,8 +45,10 @@ case "$GPU_NAME" in
 esac
 echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}"
 
-#### Fixed group -- final_4_chip_clean_nn (CROSS_DATASET_GROUPS index 3)
-LOFO_TASK_ID=3
+#### Fixed group -- 
+## 3: final_4_chip_clean_nn (CROSS_DATASET_GROUPS index 3)
+## 5: final_4_chip_cov_hadv_iav
+LOFO_TASK_ID=5
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
 
 # 2 parallel array tasks split by supcon (instead of by group, like the baseline_attn_recon
