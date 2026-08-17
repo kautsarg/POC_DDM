@@ -19,16 +19,12 @@ _DEFAULT_LEGACY_PATH = object()  # sentinel: "not passed", distinct from legacy_
 
 
 def filter_token(filter_name):
-    """Filesystem-safe subfolder name for an outlier_filter value (None -> 'none')."""
     if filter_name is None:
         return "none"
     return _FILTER_TOKEN_RE.sub("_", str(filter_name))
 
 
 def _token_to_filter_name(token):
-    """Inverse of filter_token: outlier_filter values are already plain
-    identifiers (features_df column names), so sanitisation in filter_token()
-    is a no-op for every real filter -- the token round-trips as-is."""
     return None if token == "none" else token
 
 
@@ -52,6 +48,10 @@ def _frac_token(train_center_frac):
     return f"center{train_center_frac:g}"
 
 
+def frac_suffix(train_center_frac):
+    return f"_{_frac_token(train_center_frac)}" if train_center_frac is not None else ""
+
+
 def model_result_path(out_dir, mode, curve_type, filter_name, model_key, train_center_frac=None):
     path = Path(out_dir) / filter_token(filter_name)
     if train_center_frac is not None:
@@ -61,10 +61,6 @@ def model_result_path(out_dir, mode, curve_type, filter_name, model_key, train_c
 
 
 def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_center_frac=None):
-    """train_center_frac path-scopes every fold except "full_data", which always saves
-    to the unscoped location regardless of what's passed here -- --train_full never
-    uses train_center_frac (04_cross_dataset_training.py), so its output must stay where
-    06b/08 already expect to find it no matter what this run's train_center_frac was."""
     per_file = {}
     full_data_paths = set()
     for fold_label, fold_res in lofo_results.items():
@@ -97,12 +93,6 @@ def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_
 
 
 def load_partitioned(out_dir, mode, curve_type, legacy_path=_DEFAULT_LEGACY_PATH, train_center_frac=None):
-    """train_center_frac must match what save_partitioned() was called with: None (the
-    default) reads the unscoped layout; a float reads that fraction's own subfolder for
-    every fold except "full_data", which always lives at the unscoped location (--train_full
-    never uses train_center_frac) and is merged in regardless. Legacy single-file fallback
-    only applies when train_center_frac is None, since the legacy layout predates this
-    parameter entirely."""
     out_dir = Path(out_dir)
     lofo_results = {}
     name_glob = config.CROSS_DATASET_RESULT_PATH_PER_MODEL.format(mode=mode, curve_type=curve_type, model="*")

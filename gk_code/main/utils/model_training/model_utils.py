@@ -762,6 +762,10 @@ def build_well_stratified_nfold_splits(y, well_ids, n_splits=5, random_state=0):
             for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), well_ids))}
 
 
+def _frac_suffix(train_center_frac):
+    return f"_center{train_center_frac:g}" if train_center_frac is not None else ""
+
+
 # Maps evaluate_outlier_filters internal model keys to the canonical names used
 # when saving .keras files for 07_attribution_vis_all.
 _XAI_SAVE_NAME = {
@@ -1052,7 +1056,7 @@ def evaluate_outlier_filters(
                 # the model's first training run populated the cache).
                 _xai_file_missing = (
                     save_model_dir is not None and m in _XAI_SAVE_NAME
-                    and not (Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras").exists()
+                    and not (Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras").exists()
                 )
                 if not _xai_file_missing:
                     fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
@@ -1194,7 +1198,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
@@ -1237,7 +1241,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
@@ -1269,7 +1273,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1301,7 +1305,7 @@ def evaluate_outlier_filters(
                         _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     prob = model.predict(X_test_curve, verbose=0)
@@ -1388,7 +1392,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1454,7 +1458,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1515,7 +1519,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1583,7 +1587,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1635,7 +1639,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -1674,7 +1678,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -1727,7 +1731,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -1766,7 +1770,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -1802,7 +1806,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -1855,7 +1859,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -1890,7 +1894,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     cls_prob, _proj = model.predict(X_test_curve, verbose=0)
@@ -1921,7 +1925,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -1953,7 +1957,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -2019,7 +2023,7 @@ def evaluate_outlier_filters(
                                   callbacks=[_st_phase_cb])
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -2079,7 +2083,7 @@ def evaluate_outlier_filters(
                                   callbacks=[_cl_phase_cb])
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     cls_prob, reg_pred_scaled = model.predict(X_test_curve, verbose=0)
@@ -2141,7 +2145,7 @@ def evaluate_outlier_filters(
                                   callbacks=[_cl_phase_cb])
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -2204,7 +2208,7 @@ def evaluate_outlier_filters(
                                   callbacks=[_cl_phase_cb])
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -2267,7 +2271,7 @@ def evaluate_outlier_filters(
                                   callbacks=[_cl_phase_cb])
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -2321,7 +2325,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out = model.predict(X_test_curve, verbose=0)
@@ -2355,7 +2359,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
@@ -2412,7 +2416,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
@@ -2449,7 +2453,7 @@ def evaluate_outlier_filters(
                             histories.append(clf.history_)
 
                     if _do_xai_save and _base_m in ['cnn', 'lstm', 'gru', 'rnn', 'transformer']:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
                         safe_keras_save(clf.model_, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 

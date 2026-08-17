@@ -152,7 +152,13 @@ def prepare_dataset(exp_path, filter_key, curve_type="ori_curve"):
         "top_10_features": top_10_features
     }
 
-def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_curve", model_names=None):
+def _frac_suffix(train_center_frac):
+    # mirrors cross_dataset_result_io.py's frac_suffix() -- local copy, not imported
+    return f"_center{train_center_frac:g}" if train_center_frac is not None else ""
+
+
+def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_curve", model_names=None,
+                      train_center_frac=None):
     """Loads models and strictly checks shape to prevent ValueError crashes."""
     models = {}
     if model_names is None:
@@ -221,7 +227,7 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
         ]
 
     for name in model_names:
-        model_path = model_dir / f"{name}_{filter_key}_{curve_type}_model.keras"
+        model_path = model_dir / f"{name}_{filter_key}_{curve_type}{_frac_suffix(train_center_frac)}_model.keras"
         if not model_path.exists():
             print(f"     [SKIP] {name}: {model_path.name} not found")
             continue

@@ -26,10 +26,11 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
 
-# Full baseline for final_4_chip_clean_nn only: 1 LOFO fold, pc_ttp/min alignment,
-# noamp_remove filter, both cnn_gru_dual and attn_recon architectures (base/dann/coral),
-# no --train_center_frac (full training pool, no sampling) -- see 04_output_map.md for
-# what each of these controls in the output layout.
+# Full baseline for final_4_chip_cov_hadv_iav only (3 targets: Cov/Hadv/IAV): full
+# LOFO + --train_full, pc_ttp/min alignment, noamp_remove filter, both cnn_gru_dual
+# and attn_recon architectures (base/dann/coral), no --train_center_frac (full
+# training pool, no sampling) -- see 04_output_map.md for what each of these controls
+# in the output layout.
 BASE_MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
 CURVE_TYPES="ori_curve_wavelet_bior35_norm ori_curve_norm"
 FILTERS="noamp_remove"
@@ -67,17 +68,17 @@ fi
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --coral --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
-    --outlier_filter ${FILTERS} --lofo_limit 1 --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
-    --outlier_filter ${FILTERS} --lofo_limit 1 --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
     --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
-    --outlier_filter ${FILTERS} --lofo_limit 1 --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
