@@ -1,0 +1,100 @@
+#!/bin/bash
+#PBS -N fnl_lofo_full_g3g5
+#PBS -l walltime=06:00:00
+#PBS -l select=1:ncpus=16:mem=64gb:ngpus=1
+# PBS_ARRAY_INDEX (0-23) flattens group(3,5) x supcon(0,3) x arch(coral,dann,base) x
+# curve_type(wavelet,norm) into one array -- see the decomposition below. Replaces
+# fnl_lofo_clean_nn_full.pbs + fnl_5_lofo_3_targets.pbs, which each ran all 3 archs x
+# both curve_types sequentially in one task (~24-27h per task, under the old 72h ask
+# but still one big chunk). Splitting every combo into its own short task instead gives
+# PBS's backfill scheduler (opt_backfill_fuzzy=low, throughput_mode=True) many small
+# jobs to slot into idle gaps instead of a few long ones.
+#PBS -J 0-23
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_lofo_full_g3g5/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_lofo_full_g3g5/
+#PBS -k eo
+
+# ---- Submission: this training array, then the report job depending on it ----
+#   TRAIN_ID=$(qsub fnl_lofo_full_g3g5.pbs)
+#   qsub -W depend=afterokarray:${TRAIN_ID} fnl_lofo_full_g3g5_report.pbs
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_lofo_full_g3g5
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+EXP_FOLDER="/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
+
+# Full baseline for final_4_chip_clean_nn (task_id 3) and final_4_chip_cov_hadv_iav
+# (task_id 5): 1 LOFO fold, pc_ttp/min alignment, noamp_remove filter, no
+# --train_center_frac (full training pool, no sampling) -- see 04_output_map.md for
+# what each of these controls in the output layout.
+FILTERS="noamp_remove"
+ALIGN_ARGS="--curve_alignment pc_ttp --pc_ttp_anchor min"
+
+TASK_ID_VALUES=(3 5)
+SUPCON_VALUES=(0 3)
+ARCH_VALUES=(coral dann base)
+CURVE_TYPE_VALUES=(ori_curve_wavelet_bior35_norm ori_curve_norm)
+
+N_CT=${#CURVE_TYPE_VALUES[@]}
+N_ARCH=${#ARCH_VALUES[@]}
+N_SUPCON=${#SUPCON_VALUES[@]}
+
+idx=$PBS_ARRAY_INDEX
+ct_idx=$(( idx % N_CT )); idx=$(( idx / N_CT ))
+arch_idx=$(( idx % N_ARCH )); idx=$(( idx / N_ARCH ))
+supcon_idx=$(( idx % N_SUPCON )); idx=$(( idx / N_SUPCON ))
+task_idx=$idx
+
+LOFO_TASK_ID=${TASK_ID_VALUES[$task_idx]}
+SUPCON=${SUPCON_VALUES[$supcon_idx]}
+ARCH=${ARCH_VALUES[$arch_idx]}
+CURVE_TYPE=${CURVE_TYPE_VALUES[$ct_idx]}
+
+GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
+echo "  [*] PBS_ARRAY_INDEX=${PBS_ARRAY_INDEX} -> group=${GROUP_NAME} (task_id ${LOFO_TASK_ID}) supcon=${SUPCON} arch=${ARCH} curve_type=${CURVE_TYPE}"
+
+if [ "$SUPCON" -eq 3 ]; then
+    DANN_MODELS="cnn_gru_dual_supcon3_dann cnn_gru_dual_attn_recon_supcon3_dann"
+    CORAL_MODELS="cnn_gru_dual_supcon3_coral cnn_gru_dual_attn_recon_supcon3_coral"
+else
+    DANN_MODELS="cnn_gru_dual_dann cnn_gru_dual_attn_recon_dann"
+    CORAL_MODELS="cnn_gru_dual_coral cnn_gru_dual_attn_recon_coral"
+fi
+# --supcon ${SUPCON} constructs the supcon3-suffixed model keys itself when SUPCON=3 --
+# this is a substring filter (04_output_map.md section 5), matches both variants as-is.
+BASE_MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
+
+case "$ARCH" in
+    coral)
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --coral --supcon ${SUPCON} --curve_type ${CURVE_TYPE} --models ${CORAL_MODELS} \
+            --outlier_filter ${FILTERS} --lofo_limit 1 ${ALIGN_ARGS}
+        ;;
+    dann)
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPE} --models ${DANN_MODELS} \
+            --outlier_filter ${FILTERS} --lofo_limit 1 ${ALIGN_ARGS}
+        ;;
+    base)
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --supcon ${SUPCON} --curve_type ${CURVE_TYPE} --models ${BASE_MODELS} \
+            --outlier_filter ${FILTERS} --lofo_limit 1 ${ALIGN_ARGS}
+        ;;
+esac
+
+deactivate

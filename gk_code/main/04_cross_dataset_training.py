@@ -688,6 +688,15 @@ if __name__ == "__main__":
                         help="Only run the first N LOFO folds instead of all of them "
                              "(e.g. 1 out of a 4-chip group) -- for quick iteration/testing. "
                              "Does not affect --train_full.")
+    parser.add_argument("--held_out_chip", type=str, default=None,
+                        help="Restrict --mode lofo to exactly this one held-out chip/folder "
+                             "(a folder name from config.CROSS_DATASET_GROUPS[group_name]). "
+                             "Unlike --lofo_limit, which only ever takes the first N folds in "
+                             "fixed order, this selects one specific fold by name -- lets every "
+                             "fold in a group be parallelized across separate job submissions "
+                             "instead of running sequentially in one process. Ignored outside "
+                             "--mode lofo; if both this and --lofo_limit are given, this further "
+                             "narrows whatever --lofo_limit already selected.")
     parser.add_argument("--train_center_frac", type=float, default=None,
                         help="Shrink the training pool to this fraction per well, keeping "
                              "only the spatially most-central pixels (by distance from each "
@@ -1075,6 +1084,8 @@ if __name__ == "__main__":
         pool_held_out_chips = list(folder_names) if _lofo_pc_ttp else [None]
         if _lofo_pc_ttp and args.lofo_limit:
             pool_held_out_chips = pool_held_out_chips[:args.lofo_limit]
+        if _lofo_pc_ttp and getattr(args, 'held_out_chip', None):
+            pool_held_out_chips = [c for c in pool_held_out_chips if c == args.held_out_chip]
 
         combined = None
         for held_out_chip in pool_held_out_chips:
@@ -1098,6 +1109,8 @@ if __name__ == "__main__":
                 cv_splits = build_lofo_splits(combined["dataset_id"])
                 if held_out_chip is not None:
                     cv_splits = {k: v for k, v in cv_splits.items() if k == f"lofo_{held_out_chip}"}
+                elif getattr(args, 'held_out_chip', None):
+                    cv_splits = {k: v for k, v in cv_splits.items() if k == f"lofo_{args.held_out_chip}"}
                 elif args.lofo_limit:
                     cv_splits = dict(list(cv_splits.items())[:args.lofo_limit])
             elif args.mode == "random_split":
