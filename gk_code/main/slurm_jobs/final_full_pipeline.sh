@@ -30,17 +30,17 @@ EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final
 
 
 # PREPROCESSING AND OUTLIER DETECTION
-for nc_subtract in 0 1; do
-    if [ "$nc_subtract" -eq 1 ]; then
-        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --nc_subtract --wavelet_bior35 --normalize_curves --drop_pc
-        TRAIN_FOLDER="${EXP_FOLDER}_nc_subtract"
-    else
-        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --wavelet_bior35 --normalize_curves --drop_pc
-        TRAIN_FOLDER="$EXP_FOLDER" 
-    fi
+# for nc_subtract in 0 1; do
+#     if [ "$nc_subtract" -eq 1 ]; then
+#         python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --nc_subtract --wavelet_bior35 --normalize_curves --drop_pc
+#         TRAIN_FOLDER="${EXP_FOLDER}_nc_subtract"
+#     else
+#         python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/01_curve_preprocessing_v6.py --task_id $REAL_TASK_ID --exp_folder "$EXP_FOLDER" --n_wells 10 --n_a_type v06 --wavelet_bior35 --normalize_curves --drop_pc
+#         TRAIN_FOLDER="$EXP_FOLDER" 
+#     fi
 
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --fast_mode --filters
-done
+#     python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/02_outlier_detection_pipeline.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --fast_mode --filters
+# done
 
 
 # TRAINING AND REPORTS
@@ -65,14 +65,14 @@ done
 ### NC SUBTRACT ONLY
 
 TRAIN_FOLDER="${EXP_FOLDER}_nc_subtract"
-CURVE_TYPES="ori_curve ori_curve_norm ori_curve_wavelet_bior35 ori_curve_wavelet_bior35_norm"
+CURVE_TYPES="ori_curve ori_curve_norm ori_curves_sg_p4 ori_curves_sg_p4_norm"
 # CURVE_TYPES="ori_curve_norm ori_curve_wavelet_bior35_norm"
 # CURVE_TYPES="ori_curve_wavelet_bior35_norm"
 
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 0 --rerun_models cnn_gru_dual_attn_recon cnn_gru_dual --force_rerun
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 3 --rerun_models cnn_gru_dual_attn_recon_supcon3 cnn_gru_dual_supcon3 --force_rerun
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --supcon 3 --curve_type $CURVE_TYPES
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --supcon 3 --curve_type $CURVE_TYPES
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 1 --curve_type $CURVE_TYPES
 # python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --fast_mode --supcon 2 --curve_type $CURVE_TYPES
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/03_main_training.py --task_id $REAL_TASK_ID --exp_folder "$TRAIN_FOLDER" --n_splits 1 --supcon 0 --curve_type $CURVE_TYPES

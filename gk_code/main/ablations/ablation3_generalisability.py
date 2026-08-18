@@ -1,28 +1,3 @@
-"""
-Ablation 3: Generalisability
-cnn_gru_dual and cnn_gru_dual_attn_recon, each compared against their MTL / RCFD /
-SupCon3 augmented variants:
-  cnn_gru_dual,          cnn_gru_dual_attn_recon
-  cnn_gru_dual_mtl,      cnn_gru_dual_attn_recon_mtl
-  gru_rcfd_cgd,          gru_rcfd_attn_recon   (gru_rcfd_attn_recon is new -- see
-                                                 model_utils_rcfd.py's attn_recon backbone)
-  cnn_gru_dual_supcon3,  cnn_gru_dual_attn_recon_supcon3
-
-task_id 0 = LAB_DDM_paper folders 01,02,03,09,10 (Phase 1). Every *_attn_recon*
-model is soft-skipped by evaluate_outlier_filters (no pixel-grid metadata in LAB
-data).
-task_id 1 = every POC_DDM_final subfolder (Phase 2). All 8 models train.
-One task now loops over every subfolder for its phase internally, rather than one
-SLURM array task per subfolder -- keeps concurrent/queued job count low.
-
-MTL/RCFD models need concentration labels for their regression head -- loaded from
-training_data["concentration"] exactly like 03_main_training.py's --mtl path. The
-SupCon3 and plain models in this same list ignore that data entirely.
-
-Results go to <exp_path>/ablations/ablation3_generalisability_performances.joblib --
-same results_dict[filter] schema as classification_performances.joblib, kept fully
-separate from the main pipeline's results.
-"""
 import os
 import sys
 import argparse
@@ -32,8 +7,6 @@ import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 
-# Absolute paths -- robust regardless of the CWD/invocation style, unlike a bare
-# sys.path.insert(0, 'utils') (which only resolves if CWD happens to be main/).
 _MAIN_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_MAIN_DIR))
 sys.path.insert(0, str(_MAIN_DIR / "utils"))
@@ -58,9 +31,6 @@ MODELS = [
     'cnn_gru_dual_supcon3', 'cnn_gru_dual_attn_recon_supcon3',
 ]
 
-# task_id -> exp_folder / target subfolders. None subfolder list = every subfolder
-# under that exp_folder. LAB is restricted to the 5 folders this ablation round
-# targets (see notebooks/../_brainstorming/20260810-ablation_studies_plan.md).
 TASK_EXP_FOLDERS = {0: config.LAB_EXP_FOLDER, 1: config.FINAL_EXP_FOLDER}
 TASK_SUBFOLDERS = {
     0: ['01_ACA_qdPCR', '02_AMCA_qdLAMP', '03_AMCA_qdPCR', '09_Area_Conc', '10_Range_Conc'],

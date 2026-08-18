@@ -23,11 +23,11 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
 MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
-FILTERS="none"
+FILTERS="noamp_remove"
 TASK_ID=3
-GROUP_NAME="final_4_chip_clean"   # must match list(config.CROSS_DATASET_GROUPS.keys())[TASK_ID]
-CURVE_TYPES="ori_curve_wavelet_bior35_norm"
-SUPCON=3   # hardcoded choice -- edit before submitting (0 or 3)
+GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${TASK_ID}])" | tail -n 1)
+CURVE_TYPES="ori_curve_norm ori_curves_sg_p4_norm"
+SUPCON=0   # hardcoded choice -- edit before submitting (0 or 3)
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${TASK_ID} \
@@ -35,9 +35,9 @@ python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py
     --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${MODELS} \
     --outlier_filter ${FILTERS} --train_full
 
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
-    --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
-    --mode kfold --n_splits 5 \
-    --curve_type ${CURVE_TYPES} --outlier_filter None
+# python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
+#     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \
+#     --mode kfold --n_splits 5 \
+#     --curve_type ${CURVE_TYPES} --outlier_filter None
 
 deactivate

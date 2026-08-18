@@ -1,27 +1,6 @@
-"""
-Ablation 1: cnn_gru_dual saliency heatmaps.
-
-Same dual-branch latent-gradient saliency technique as
-adhoc/ttp_modulation/main_saliency.py (extract_dual_saliency +
-plot_per_label_saliency_heatmap, imported directly from
-adhoc/ttp_modulation/utils/saliency.py) -- reused unmodified since
-create_cnn_gru_dual in main/utils/model_training/model_utils.py is
-architecturally identical to adhoc/ttp_modulation/utils/model.py's version
-(Flatten CNN branch + last Bidirectional GRU branch), so find_flatten_layer/
-find_bidirectional_recurrent_layer locate the same landmarks.
-
-Loads the cnn_gru_dual_None_ori_curve_model.keras already saved by
-ablation1_model_comparison.py under each LAB dataset's
-ablations/model_interpretation/, draws a random sample batch from that
-dataset's ori_curve data (same preprocessing as ablation1_model_comparison.py:
-filter_datasets + label mapping + rare-class exclusion, matching what the
-baseline (filter=None) training run saw), and saves one heatmap PNG per class
-to ablations/xai_saliency/.
-"""
 import os
 import sys
 import argparse
-import importlib.util
 import joblib
 import numpy as np
 from pathlib import Path
@@ -31,22 +10,20 @@ _MAIN_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_MAIN_DIR))
 sys.path.insert(0, str(_MAIN_DIR / "utils"))
 sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-_TTP_SALIENCY_PATH = _MAIN_DIR.parent / "adhoc" / "ttp_modulation" / "utils" / "saliency.py"
-_spec = importlib.util.spec_from_file_location("ttp_saliency", str(_TTP_SALIENCY_PATH))
-ttp_saliency = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ttp_saliency)
-extract_dual_saliency = ttp_saliency.extract_dual_saliency
-plot_per_label_saliency_heatmap = ttp_saliency.plot_per_label_saliency_heatmap
+from saliency import (extract_dual_saliency, plot_per_label_saliency_heatmap,
+                      compute_kinetic_feature_cache, plot_latent_feature_mapping)
 
 MODEL_KEY = 'cnn_gru_dual'
 CURVE_TYPE = 'ori_curve'
 LAB_DATASETS = ['01_ACA_qdPCR', '02_AMCA_qdLAMP', '03_AMCA_qdPCR']
+EXTRACT_N_DIMS = 100
 
 
 def filter_datasets(dataset_name, dataset, kinetic_features):
@@ -87,8 +64,6 @@ def load_dataset_curves(exp_path, curve_type=CURVE_TYPE):
     idx = dataset_name.index(target_name)
     curves_2d = np.nan_to_num(dataset[idx], nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Mirrors evaluate_outlier_filters' baseline (filter=None) rare-class exclusion --
-    # the saved cnn_gru_dual model never saw classes with <2 samples.
     unique_classes, counts = np.unique(y_full, return_counts=True)
     rare = unique_classes[counts < 2]
     if len(rare):
@@ -98,7 +73,7 @@ def load_dataset_curves(exp_path, curve_type=CURVE_TYPE):
     return curves_2d, y_full, list(encoder.classes_)
 
 
-def run_one(exp_path, n_dims, batch_n, seed):
+def run_one(exp_path, n_dims, top_n, batch_n, seed):
     model_path = (exp_path / "ablations" / "model_interpretation"
                   / f"{MODEL_KEY}_None_{CURVE_TYPE}_model.keras")
     if not model_path.is_file():
@@ -114,29 +89,47 @@ def run_one(exp_path, n_dims, batch_n, seed):
     idx = rng.choice(len(curves_2d), size=min(batch_n, len(curves_2d)), replace=False)
     X_batch = curves_2d[idx][:, :, np.newaxis].astype(np.float32)
     y_true = y_full[idx]
+    timestamps = np.arange(X_batch.shape[1])
 
     model = tf.keras.models.load_model(model_path, compile=False)
     y_pred = np.argmax(model.predict(X_batch, batch_size=256, verbose=0), axis=1)
-    art = extract_dual_saliency(model, X_batch, n_dims=n_dims)
+    art = extract_dual_saliency(model, X_batch, n_dims=EXTRACT_N_DIMS)
 
     out_dir = exp_path / "ablations" / "xai_saliency"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(X_batch, timestamps)
+
     for c_idx, c_name in enumerate(class_names):
         save_path = out_dir / f"{MODEL_KEY}_{CURVE_TYPE}_{c_name}.png"
         saved = plot_per_label_saliency_heatmap(
             art, X_batch, y_true, y_pred, c_idx, c_name,
-            timestamps=np.arange(X_batch.shape[1]), n_dims=n_dims, save_path=save_path,
+            timestamps=timestamps, n_dims=n_dims, save_path=save_path,
             show_std=False,
         )
         print(f"    {c_name}: {'saved -> ' + str(save_path) if saved else 'skipped'}")
+
+        mask = (y_true == c_idx) & (y_pred == c_idx)
+        mean_curve = X_batch[mask, :, 0].mean(0) if mask.any() else X_batch[:, :, 0].mean(0)
+        mapping_path = out_dir / f"{MODEL_KEY}_{CURVE_TYPE}_{c_name}_latent_feature_mapping.png"
+        plot_latent_feature_mapping(
+            art, MODEL_KEY, timestamps,
+            feat_matrix, feat_sensitivity, feat_names,
+            mean_curve, f"{exp_path.name} | {c_name}", mapping_path,
+            TOP_N=top_n, sample_mask=mask,
+        )
+
     tf.keras.backend.clear_session()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="cnn_gru_dual saliency heatmaps for Ablation 1's 3 LAB datasets.")
+        description="cnn_gru_dual saliency + latent-feature-mapping plots for Ablation 1's 3 LAB datasets.")
     parser.add_argument("--n_dims", type=int, default=25, metavar="N",
-                        help="Top N latent dims per branch to show (default: 25).")
+                        help="Top N latent dims per branch to show in the saliency heatmap (default: 25).")
+    parser.add_argument("--top_n", type=int, default=10, metavar="N",
+                        help="Top N unique-feature latent dims per branch to show in the "
+                             "latent-feature-mapping plot (default: 10).")
     parser.add_argument("--batch_n", type=int, default=512, metavar="N",
                         help="Number of samples to draw for gradient computation (default: 512).")
     parser.add_argument("--seed", type=int, default=42,
@@ -148,6 +141,6 @@ if __name__ == "__main__":
     for name in LAB_DATASETS:
         exp_path = Path(config.LAB_EXP_FOLDER) / name
         print(f"\n{'-'*70}\n[{name}]\n{'-'*70}")
-        run_one(exp_path, args.n_dims, args.batch_n, args.seed)
+        run_one(exp_path, args.n_dims, args.top_n, args.batch_n, args.seed)
 
     print(f"\n{'='*70}\n[DONE] ablation1_cnn_gru_dual_saliency.py\n{'='*70}\n")
