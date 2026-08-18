@@ -31,6 +31,16 @@ def find_bidirectional_recurrent_layer(model):
     return None
 
 
+def find_weighted_recon_layer(model):
+    return next((l for l in model.layers if type(l).__name__ == '_WeightedRecon'), None)
+
+
+def _is_neighbor_stack_model(model):
+    return (not isinstance(model.input, (list, tuple))
+            and hasattr(model.input, 'name')
+            and 'neighbor_stack' in model.input.name)
+
+
 def normalize_heatmap(matrix, method='row'):
     if len(matrix) == 0:
         return matrix
@@ -62,7 +72,81 @@ def _latent_saliency_batch(extractor, x_tf, order):
     return saliency_maps
 
 
+_NS_CHUNK = 64
+
+
+def _extract_dual_saliency_neighbor_stack(model, X_batch, n_dims):
+    recon_layer = find_weighted_recon_layer(model)
+    flatten_layer = find_flatten_layer(model)
+    recurrent_layer = find_bidirectional_recurrent_layer(model)
+    if recon_layer is None or flatten_layer is None or recurrent_layer is None:
+        raise ValueError('Model does not look like create_cnn_gru_dual_attn_recon.')
+
+    k_plus_1 = model.input.shape[1]
+    x_center = tf.constant(X_batch[:, :, 0], dtype=tf.float32)
+    x_stack = tf.stack([x_center] * k_plus_1, axis=1)
+
+    recon_t = recon_layer.output
+    recon_model = tf.keras.Model(model.input, recon_t)
+    m_outs = model.output if isinstance(model.output, (list, tuple)) else [model.output]
+    combined_model = tf.keras.Model(recon_t, [flatten_layer.output, recurrent_layer.output] + list(m_outs))
+
+    recon_parts, z_cnn_parts, z_rnn_parts = [], [], []
+    dy_dz_cnn_parts, dy_dz_rnn_parts = [], []
+    for start in range(0, x_stack.shape[0], _NS_CHUNK):
+        x_chunk = x_stack[start:start + _NS_CHUNK]
+        recon_chunk = recon_model(x_chunk)
+        recon_parts.append(recon_chunk)
+        with tf.GradientTape(persistent=True) as tape:
+            tape.watch(recon_chunk)
+            z_cnn_c, z_rnn_c, *rest = combined_model(recon_chunk)
+            target = tf.reduce_max(rest[0], axis=1)
+        dy_dz_cnn_parts.append(tape.gradient(target, z_cnn_c).numpy())
+        dy_dz_rnn_parts.append(tape.gradient(target, z_rnn_c).numpy())
+        z_cnn_parts.append(z_cnn_c.numpy())
+        z_rnn_parts.append(z_rnn_c.numpy())
+        del tape
+
+    recon_val = tf.concat(recon_parts, axis=0)
+    z_cnn = np.concatenate(z_cnn_parts, axis=0)
+    z_rnn = np.concatenate(z_rnn_parts, axis=0)
+    dy_dz_cnn = np.concatenate(dy_dz_cnn_parts, axis=0)
+    dy_dz_rnn = np.concatenate(dy_dz_rnn_parts, axis=0)
+
+    cnn_order = _rank_latents(dy_dz_cnn * np.abs(z_cnn), n_dims)
+    rnn_order = _rank_latents(dy_dz_rnn * np.abs(z_rnn), n_dims)
+
+    extractor_cnn = tf.keras.Model(recon_t, flatten_layer.output)
+    extractor_rnn = tf.keras.Model(recon_t, recurrent_layer.output)
+
+    def _sal(extractor, order):
+        maps = []
+        for dim in order:
+            chunks = []
+            for start in range(0, recon_val.shape[0], _NS_CHUNK):
+                r_chunk = recon_val[start:start + _NS_CHUNK]
+                with tf.GradientTape() as tape:
+                    tape.watch(r_chunk)
+                    z = extractor(r_chunk)
+                    target = z[:, int(dim)]
+                grad = tape.gradient(target, r_chunk).numpy()
+                chunks.append(np.abs(grad)[:, 0, :])
+            maps.append(np.concatenate(chunks, axis=0))
+        return maps
+
+    return {
+        'raw_saliency_curve': _sal(extractor_cnn, cnn_order),
+        'raw_saliency_rnn': _sal(extractor_rnn, rnn_order),
+        'is_type': 'dual',
+        'z_curve': z_cnn, 'curve_order': cnn_order, 'curve_imp_shape': dy_dz_cnn.shape[1:],
+        'z_rnn': z_rnn, 'rnn_order': rnn_order, 'rnn_imp_shape': dy_dz_rnn.shape[1:],
+    }
+
+
 def extract_dual_saliency(model, X_batch, n_dims=100):
+    if _is_neighbor_stack_model(model):
+        return _extract_dual_saliency_neighbor_stack(model, X_batch, n_dims)
+
     flatten_layer = find_flatten_layer(model)
     recurrent_layer = find_bidirectional_recurrent_layer(model)
     if flatten_layer is None or recurrent_layer is None:
@@ -85,8 +169,8 @@ def extract_dual_saliency(model, X_batch, n_dims=100):
     dy_dz_rnn = tape.gradient(target_master, z_rnn).numpy()
     del tape
 
-    cnn_order = _rank_latents(dy_dz_cnn, n_dims)
-    rnn_order = _rank_latents(dy_dz_rnn, n_dims)
+    cnn_order = _rank_latents(dy_dz_cnn * np.abs(z_cnn.numpy()), n_dims)
+    rnn_order = _rank_latents(dy_dz_rnn * np.abs(z_rnn.numpy()), n_dims)
 
     return {
         'raw_saliency_curve': _latent_saliency_batch(extractor_cnn, x_tf, cnn_order),
