@@ -365,6 +365,44 @@ def wavelet_denoise_curves(curves, wavelet="sym8", level=5):
     return out
 
 
+def _curve_variants_needed(curves_dict, args):
+    norm_bases = [k for k in curves_dict
+                  if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
+    return (
+        (args.moving_avg and "ori_curves_avg" not in curves_dict) or
+        (args.wavelet_sym8 and "ori_curves_wavelet_sym8" not in curves_dict) or
+        (args.wavelet_bior35 and "ori_curves_wavelet_bior35" not in curves_dict) or
+        (args.sg_p4 and "ori_curves_sg_p4" not in curves_dict) or
+        (args.normalize_curves and any(f"{k}_norm" not in curves_dict for k in norm_bases))
+    )
+
+
+def _patch_curve_variants(curves_dict, args):
+    patched = []
+    if args.moving_avg and "ori_curves_avg" not in curves_dict:
+        curves_dict["ori_curves_avg"] = moving_average_vec(curves_dict["ori_curves"], config.WINDOW_SIZE_ORI)
+        patched.append("ori_curves_avg")
+    if args.wavelet_sym8 and "ori_curves_wavelet_sym8" not in curves_dict:
+        curves_dict["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(curves_dict["ori_curves"])
+        patched.append("ori_curves_wavelet_sym8")
+    if args.wavelet_bior35 and "ori_curves_wavelet_bior35" not in curves_dict:
+        curves_dict["ori_curves_wavelet_bior35"] = wavelet_denoise_curves(
+            curves_dict["ori_curves"], wavelet="bior3.5", level=5)
+        patched.append("ori_curves_wavelet_bior35")
+    if args.sg_p4 and "ori_curves_sg_p4" not in curves_dict:
+        curves_dict["ori_curves_sg_p4"], _ = sg_p4_denoise_curves(curves_dict["ori_curves"])
+        patched.append("ori_curves_sg_p4")
+    if args.normalize_curves:
+        norm_bases = [k for k in curves_dict
+                      if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
+        for k in norm_bases:
+            nk = f"{k}_norm"
+            if nk not in curves_dict:
+                curves_dict[nk] = normalize_curves_minmax(curves_dict[k])
+                patched.append(nk)
+    return patched
+
+
 def save_experiment_data_restructured(save_exp_path, fitting_results, processed_curves,
                                      indices_dict, pixel_temp_dfs, baseline_value,
                                      Y_well, X_time, all_exp_data, ori_curves_avg,
@@ -372,11 +410,6 @@ def save_experiment_data_restructured(save_exp_path, fitting_results, processed_
                                      compute_sigmoid_fits=False, normalize_curves=False,
                                      wavelet_sym8=False, wavelet_bior35=False, sg_p4=False,
                                      moving_avg=False, pc_wells_data=None):
-    """
-    Saves into the SAME file 02_outlier_detection_pipeline.py reads/extends
-    (config.TRAINING_DATA_PATH) — 01 and 02 share one joblib per experiment;
-    each owns its own keys and patches them in place (see joblib_redundancy.md).
-    """
     df_meta = pixel_temp_dfs["well_2d_nl_bs_active_df"]
     well0 = all_exp_data[0].wells_list[0]
 
@@ -534,51 +567,26 @@ if __name__ == "__main__":
             existing_data = None
 
         if existing_data is not None and "curves" in existing_data:
-            needs_avg_patch     = args.moving_avg and "ori_curves_avg" not in existing_data["curves"]
-            _cached_norm_bases  = [k for k in existing_data["curves"]
-                                   if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
-            needs_norm_patch    = args.normalize_curves and any(
-                                   f"{k}_norm" not in existing_data["curves"] for k in _cached_norm_bases)
-            needs_wavelet_patch = args.wavelet_sym8      and "ori_curves_wavelet_sym8"     not in existing_data["curves"]
-            needs_bior35_patch  = args.wavelet_bior35    and "ori_curves_wavelet_bior35"   not in existing_data["curves"]
-            needs_sg_p4_patch   = args.sg_p4             and "ori_curves_sg_p4"            not in existing_data["curves"]
+            pc_curves = existing_data.get("pc_wells", {}).get("curves")
 
-            if not any([needs_avg_patch, needs_norm_patch, needs_wavelet_patch,
-                        needs_bior35_patch, needs_sg_p4_patch]):
-                print(f"Cache hit: {save_exp_path}")
+            if _curve_variants_needed(existing_data["curves"], args) or \
+               (pc_curves is not None and _curve_variants_needed(pc_curves, args)):
+                patched_fields = _patch_curve_variants(existing_data["curves"], args)
+                if "ori_curves_avg" in patched_fields:
+                    existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
+
+                pc_patched_fields = []
+                if pc_curves is not None:
+                    pc_patched_fields = _patch_curve_variants(pc_curves, args)
+
+                all_patched = patched_fields + [f"pc_wells.{f}" for f in pc_patched_fields]
+                print(f"Cache hit: {save_exp_path} (patching missing {', '.join(all_patched)})")
+                safe_joblib_dump(existing_data, save_path, compress=3)
+                print(f"  -> Patched {save_path}")
                 print("  ✓ Experiment complete!\n")
                 sys.exit(0)
 
-            patched_fields = []
-            if needs_avg_patch:
-                existing_data["curves"]["ori_curves_avg"] = moving_average_vec(
-                    existing_data["curves"]["ori_curves"], config.WINDOW_SIZE_ORI
-                )
-                existing_data["window_size_ori"] = config.WINDOW_SIZE_ORI
-                patched_fields.append("ori_curves_avg/window_size_ori")
-            if needs_norm_patch:
-                _norm_bases = [k for k in existing_data["curves"]
-                               if k.startswith("ori_curves") and "dydx" not in k and not k.endswith("_norm")]
-                for k in _norm_bases:
-                    nk = f"{k}_norm"
-                    if nk not in existing_data["curves"]:
-                        existing_data["curves"][nk] = normalize_curves_minmax(existing_data["curves"][k])
-                        patched_fields.append(nk)
-            if needs_wavelet_patch:
-                existing_data["curves"]["ori_curves_wavelet_sym8"] = wavelet_denoise_curves(existing_data["curves"]["ori_curves"])
-                patched_fields.append("ori_curves_wavelet_sym8")
-            if needs_bior35_patch:
-                existing_data["curves"]["ori_curves_wavelet_bior35"] = wavelet_denoise_curves(
-                    existing_data["curves"]["ori_curves"], wavelet="bior3.5", level=5)
-                patched_fields.append("ori_curves_wavelet_bior35")
-            if needs_sg_p4_patch:
-                existing_data["curves"]["ori_curves_sg_p4"], existing_data["sg_p4_optimal_w"] = \
-                    sg_p4_denoise_curves(existing_data["curves"]["ori_curves"])
-                patched_fields.append("ori_curves_sg_p4")
-
-            print(f"Cache hit: {save_exp_path} (patching missing {', '.join(patched_fields)})")
-            safe_joblib_dump(existing_data, save_path, compress=3)
-            print(f"  -> Patched {save_path}")
+            print(f"Cache hit: {save_exp_path}")
             print("  ✓ Experiment complete!\n")
             sys.exit(0)
         # else: file exists but 01's keys ("curves") aren't in it yet (e.g. only 02 has
