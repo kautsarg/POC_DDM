@@ -18,7 +18,6 @@ set -e
 
 mkdir -p "logs/${SLURM_JOB_NAME}"
 
-# Activate venv
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
