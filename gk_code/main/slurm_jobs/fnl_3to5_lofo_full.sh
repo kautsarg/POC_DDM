@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fnl_5_lofo_3_targets
+#SBATCH --job-name=fnl_3to5_lofo_full
 #SBATCH --time=72:00:00
 
 # Request resources for a single job
@@ -8,7 +8,8 @@
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-1   # 0=base+dann, 1=coral+supcon3 (2 parallel tasks)
+#SBATCH --array=4-5   # SLURM_ARRAY_TASK_ID == LOFO_TASK_ID (CROSS_DATASET_GROUPS index):
+                       # 3=final_4_chip_clean_nn, 4=final_4_chip_cleanv2_nn, 5=final_4_chip_cov_hadv_iav
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -43,35 +44,30 @@ case "$GPU_NAME" in
 esac
 echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}"
 
-#### Fixed group --
-## 5: final_4_chip_cov_hadv_iav (CROSS_DATASET_GROUPS index 5)
-LOFO_TASK_ID=5
+LOFO_TASK_ID=${SLURM_ARRAY_TASK_ID}
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
 
 # 4 independent model variants -- base, +dann, +coral, +SC3 -- no combined
-# supcon3+dann/coral runs, split 2+2 across the array so both halves train
-# in parallel on separate GPUs.
-if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-        --supcon 0 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
-        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} 
+# supcon3+dann/coral runs. One array task per group, each sequential on its own GPU.
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+    --supcon 0 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
 
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-        --dann --supcon 0 --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
-        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
-else
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-        --coral --supcon 0 --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
-        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+    --dann --supcon 0 --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
 
-    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-        --supcon 3 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
-        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
-fi
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+    --coral --supcon 0 --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
+
+python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+    --supcon 3 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
+    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS}
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \

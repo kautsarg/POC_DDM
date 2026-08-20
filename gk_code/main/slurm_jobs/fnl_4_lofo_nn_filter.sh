@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a100
-#SBATCH --array=0-1   # 0=supcon 0, 1=supcon 3 -- group is fixed (task_id 3), parallelized by supcon instead
+#SBATCH --partition=a30
+#SBATCH --array=0-1   # 0=base+dann, 1=coral+supcon3 (2 parallel tasks)
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -27,7 +27,9 @@ cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
 
 BASE_MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
-CURVE_TYPES="ori_curve_wavelet_bior35_norm ori_curve_norm"
+DANN_MODELS="cnn_gru_dual_dann cnn_gru_dual_attn_recon_dann"
+CORAL_MODELS="cnn_gru_dual_coral cnn_gru_dual_attn_recon_coral"
+CURVE_TYPES="ori_curve_sg_p4_norm ori_curve_norm"
 FILTERS="noamp_remove"
 ALIGN_ARGS="--curve_alignment pc_ttp --pc_ttp_anchor min"
 
@@ -39,37 +41,34 @@ esac
 echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}"
 
 #### Fixed group --
-## 3: final_4_chip_clean_nn (CROSS_DATASET_GROUPS index 3)
-## 4: final_4_chip_cleanv2_nn
-## 5: final_4_chip_cov_hadv_iav
+## 4: final_4_chip_cleanv2_nn (CROSS_DATASET_GROUPS index 4)
 LOFO_TASK_ID=4
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
 
-SUPCON_VALUES=(0 3)
-SUPCON=${SUPCON_VALUES[$SLURM_ARRAY_TASK_ID]}
+# 4 independent model variants -- base, +dann, +coral, +SC3 -- no combined
+# supcon3+dann/coral runs, split 2+2 across the array so both halves train
+# in parallel on separate GPUs.
+if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+        --supcon 0 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
+        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --lofo_limit 1
 
-if [ "$SUPCON" -eq 3 ]; then
-    DANN_MODELS="cnn_gru_dual_supcon3_dann cnn_gru_dual_attn_recon_supcon3_dann"
-    CORAL_MODELS="cnn_gru_dual_supcon3_coral cnn_gru_dual_attn_recon_supcon3_coral"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+        --dann --supcon 0 --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
+        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --lofo_limit 1
 else
-    DANN_MODELS="cnn_gru_dual_dann cnn_gru_dual_attn_recon_dann"
-    CORAL_MODELS="cnn_gru_dual_coral cnn_gru_dual_attn_recon_coral"
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+        --coral --supcon 0 --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
+        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --lofo_limit 1
+
+    python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+        --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+        --supcon 3 --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
+        --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --lofo_limit 1
 fi
-
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-    --coral --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${CORAL_MODELS} \
-    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full --lofo_limit 1
-
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-    --dann --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${DANN_MODELS} \
-    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full --lofo_limit 1
-
-python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
-    --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
-    --supcon ${SUPCON} --curve_type ${CURVE_TYPES} --models ${BASE_MODELS} \
-    --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_full --lofo_limit 1
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/06b_cross_dataset_prediction_report.py \
     --exp_folder ${EXP_FOLDER} --group ${GROUP_NAME} \

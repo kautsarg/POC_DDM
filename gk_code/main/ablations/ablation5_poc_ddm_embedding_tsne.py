@@ -26,7 +26,7 @@ vis07 = importlib.import_module("07_attribution_vis_all")
 pred08 = importlib.import_module("08_cross_dataset_predict_new_chip")
 
 EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract"
-GROUP_NAME = "final_4_chip_clean"
+GROUP_NAME = "final_4_chip_clean_nn"
 DATASETS = [
     "D20260806_E00_C00_F4500KHz_U_DDM_01_06",
     "D20260807_E00_C00_F4500KHz_U_DDM_02_07",
@@ -34,10 +34,10 @@ DATASETS = [
     "D20260810_E00_C00_F4500KHz_U_DDM_04_01",
 ]
 MODEL_KEYS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
-CURVE_TYPES = ['ori_curve_wavelet_bior35_norm']
+CURVE_TYPES = ['ori_curve_norm', 'ori_curve_sg_p4_norm']
 CURVE_ALIGNMENT = "pc_ttp"
 PC_TTP_ANCHOR = "min"
-FILTER_KEY = "None"
+FILTER_KEY = "noamp_remove"
 PC_LABEL = "PC"
 
 _PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
@@ -140,20 +140,27 @@ def plot_tsne_grid(emb_raw, emb_recentered, y_labels, chip_ids, title, save_path
     plt.close(fig)
 
 
-def run_one(model_key, curve_type, batch_n, seed, out_dir, save_dir):
+def discover_lofo_dirs(group_dir):
+    model_root = group_dir / "model_interpretation"
+    if not model_root.is_dir():
+        return []
+    return sorted(p.name for p in model_root.iterdir() if p.is_dir() and p.name.startswith("lofo_"))
+
+
+def run_one(model_key, curve_type, batch_n, seed, save_dir, model_dir_name, held_out_chip=None):
     group_dir = group_out_dir()
-    full_model_dir = group_dir / "model_interpretation" / "full_data_lofo"
+    model_dir = group_dir / "model_interpretation" / model_dir_name
     resampler_path = group_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
     if not resampler_path.exists():
         print(f"  [!] Missing resampler, skipping: {resampler_path}")
         return
     resampler = joblib.load(resampler_path)
 
-    models = vis07.load_saved_models(full_model_dir, FILTER_KEY, len(resampler.t_grid),
+    models = vis07.load_saved_models(model_dir, FILTER_KEY, len(resampler.t_grid),
                                      curve_type=curve_type, model_names=[model_key])
     model = models.get(model_key)
     if model is None:
-        print(f"  [!] Missing model, skipping: {full_model_dir}/{model_key}_{FILTER_KEY}_{curve_type}_model.keras")
+        print(f"  [!] Missing model, skipping: {model_dir}/{model_key}_{FILTER_KEY}_{curve_type}_model.keras")
         return
 
     exp_paths = [Path(EXP_FOLDER, name) for name in DATASETS]
@@ -168,8 +175,14 @@ def run_one(model_key, curve_type, batch_n, seed, out_dir, save_dir):
         tf.keras.backend.clear_session()
         return
 
-    ref_embed = pred08.reference_pc_embedding(model, model_key, exp_paths, group_dir, curve_type,
-                                              FILTER_KEY, CURVE_ALIGNMENT)
+    if model_dir_name == "full_data_lofo":
+        ref_embed = pred08.reference_pc_embedding(model, model_key, exp_paths, group_dir, curve_type,
+                                                  FILTER_KEY, CURVE_ALIGNMENT)
+    else:
+        # bypass reference_pc_embedding's cache: it's keyed by model_key/curve_type only, not fold
+        k = pred08._infer_k(model) if pred08._is_spatial(model_key) else None
+        ref_embed = pred08._build_training_pc_embeddings(
+            model, exp_paths, group_dir, curve_type, CURVE_ALIGNMENT, k=k).mean(axis=0)
 
     embeddings = np.concatenate([v["embeddings"] for v in per_chip.values()], axis=0)
     y_labels = np.concatenate([v["y_labels"] for v in per_chip.values()], axis=0)
@@ -179,16 +192,19 @@ def run_one(model_key, curve_type, batch_n, seed, out_dir, save_dir):
     emb_rec = pc_recenter(embeddings, chip_ids, ref_embed, own_pc_embeds)
     tf.keras.backend.clear_session()
 
-    save_path = save_dir / f"{model_key}_{curve_type}_tsne.png"
-    plot_tsne_grid(embeddings, emb_rec, y_labels, chip_ids,
-                   f"{model_key} | {curve_type} | {GROUP_NAME}", save_path, seed)
+    save_path = save_dir / f"{model_key}_{curve_type}_{model_dir_name}_tsne.png"
+    title = f"{model_key} | {curve_type} | {GROUP_NAME} | {model_dir_name}"
+    if held_out_chip:
+        title += f" (held out: {held_out_chip})"
+    plot_tsne_grid(embeddings, emb_rec, y_labels, chip_ids, title, save_path, seed)
     print(f"  [+] saved -> {save_path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="2x2 t-SNE (target/chip x raw/PC-recentered) of the full_data_lofo "
-                    "cross-dataset embedding, per (model, curve_type) combination.")
+        description="2x2 t-SNE (target/chip x raw/PC-recentered) of the cross-dataset "
+                    "embedding, per (model, curve_type) combination -- for the full_data_lofo "
+                    "model and every available LOFO held-out-fold model.")
     parser.add_argument("--batch_n", type=int, default=800, metavar="N",
                         help="Samples drawn per chip for the t-SNE (default: 800).")
     parser.add_argument("--seed", type=int, default=42)
@@ -198,10 +214,17 @@ if __name__ == "__main__":
 
     save_dir = group_out_dir() / "embedding_tsne"
     save_dir.mkdir(parents=True, exist_ok=True)
+    lofo_dirs = discover_lofo_dirs(group_out_dir())
+    print(f"Found {len(lofo_dirs)} LOFO fold dir(s): {lofo_dirs}")
 
     for curve_type in CURVE_TYPES:
         for model_key in MODEL_KEYS:
             print(f"\n{'-'*70}\n[{model_key} | {curve_type}]\n{'-'*70}")
-            run_one(model_key, curve_type, args.batch_n, args.seed, group_out_dir(), save_dir)
+            run_one(model_key, curve_type, args.batch_n, args.seed, save_dir, "full_data_lofo")
+
+            for lofo_dir in lofo_dirs:
+                held_out = short_name(lofo_dir[len("lofo_"):])
+                run_one(model_key, curve_type, args.batch_n, args.seed, save_dir, lofo_dir,
+                       held_out_chip=held_out)
 
     print(f"\n{'='*70}\n[DONE] ablation5_poc_ddm_embedding_tsne.py\n{'='*70}\n")
