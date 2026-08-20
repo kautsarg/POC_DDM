@@ -508,7 +508,7 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
     def checkpoint(updated_results, fold_label=fold_label):
         lofo_results[fold_label] = updated_results
         save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3,
-                          train_center_frac=args.train_center_frac)
+                          train_center_frac=args.train_center_frac, models=models)
 
     lofo_model_dir = out_dir / "model_interpretation" / fold_label
     lofo_model_dir.mkdir(parents=True, exist_ok=True)
@@ -555,7 +555,7 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
     lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
 
     save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3,
-                      train_center_frac=args.train_center_frac)
+                      train_center_frac=args.train_center_frac, models=models)
 
     features_df_all = combined["features_df"]
     X_man_train = np.nan_to_num(
@@ -1174,5 +1174,5 @@ if __name__ == "__main__":
                 lofo_results["full_data"] = res_full
                 lofo_results["full_data"]["class_names"] = [str(c) for c in encoder.classes_]
                 save_partitioned(lofo_results, out_dir, _mode_str, curve_type, compress=3,
-                                  train_center_frac=args.train_center_frac)
+                                  train_center_frac=args.train_center_frac, models=models)
                 gc.collect()

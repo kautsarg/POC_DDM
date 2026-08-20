@@ -2,9 +2,12 @@ import re
 from pathlib import Path
 
 import joblib
+from filelock import FileLock, Timeout
 
 import config
 from safe_io import safe_joblib_dump
+
+_LOCK_TIMEOUT_SECONDS = 300
 
 # res_entry (lofo_results[fold_label][filter]) keys that aren't tied to one
 # model -- duplicated into every per-model file for that (fold, filter) so
@@ -39,8 +42,12 @@ def _model_keys_for(model_key, res_entry):
     return [k for k in candidates if k in res_entry]
 
 
-def _models_present(res_entry):
-    return [m for m, (preds_key, _, _) in config.MODEL_KEY_MAP.items() if preds_key in res_entry]
+def _models_present(res_entry, restrict_to=None):
+    keys = (m for m, (preds_key, _, _) in config.MODEL_KEY_MAP.items() if preds_key in res_entry)
+    if restrict_to is not None:
+        restrict_to = set(restrict_to)
+        keys = (m for m in keys if m in restrict_to)
+    return list(keys)
 
 
 def _frac_token(train_center_frac):
@@ -60,9 +67,28 @@ def model_result_path(out_dir, mode, curve_type, filter_name, model_key, train_c
         mode=mode, curve_type=curve_type, model=model_key)
 
 
-def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_center_frac=None):
+def _read_merge_write(path, data, compress):
+    lock = FileLock(str(path) + ".lock", timeout=_LOCK_TIMEOUT_SECONDS)
+    try:
+        with lock:
+            existing = {}
+            if path.exists():
+                try:
+                    existing = joblib.load(path)
+                except Exception:
+                    existing = {}
+            merged = {**existing, **data}
+            safe_joblib_dump(merged, path, compress=compress)
+    except Timeout:
+        raise RuntimeError(
+            f"[cross_dataset_result_io] Could not acquire lock for {path} within "
+            f"{_LOCK_TIMEOUT_SECONDS}s -- another process may be stuck holding it. Raising "
+            f"rather than silently skipping this checkpoint save.")
+
+
+def save_partitioned(lofo_results, out_dir, mode, curve_type, *, models, compress=3, train_center_frac=None):
+    models = {m.lower() for m in models}
     per_file = {}
-    full_data_paths = set()
     for fold_label, fold_res in lofo_results.items():
         if not isinstance(fold_res, dict):
             continue
@@ -72,24 +98,16 @@ def save_partitioned(lofo_results, out_dir, mode, curve_type, compress=3, train_
             if filter_name in _SHARED_FOLD_KEYS or not isinstance(res_entry, dict):
                 continue
             entry_shared = {k: res_entry[k] for k in _SHARED_RES_ENTRY_KEYS if k in res_entry}
-            for model_key in _models_present(res_entry):
+            for model_key in _models_present(res_entry, restrict_to=models):
                 path = model_result_path(out_dir, mode, curve_type, filter_name, model_key,
                                           train_center_frac=effective_frac)
                 model_slice = dict(entry_shared)
                 for k in _model_keys_for(model_key, res_entry):
                     model_slice[k] = res_entry[k]
                 per_file.setdefault(path, {})[fold_label] = {**fold_shared, **model_slice}
-                if fold_label == "full_data" and train_center_frac is not None:
-                    full_data_paths.add(path)
 
     for path, data in per_file.items():
-        if path in full_data_paths and path.exists():
-            try:
-                existing = joblib.load(path)
-            except Exception:
-                existing = {}
-            data = {**existing, **data}
-        safe_joblib_dump(data, path, compress=compress)
+        _read_merge_write(path, data, compress)
 
 
 def load_partitioned(out_dir, mode, curve_type, legacy_path=_DEFAULT_LEGACY_PATH, train_center_frac=None):
