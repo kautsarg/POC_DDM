@@ -63,9 +63,9 @@ def mapped_labels(exp_path, Y_well_raw):
     return np.array([mapping.get(w, w) for w in Y_well_raw])
 
 
-def chip_embeddings(model, model_key, curve_type, chip_path, out_dir, batch_n, seed):
+def chip_embeddings(model, model_key, curve_type, chip_path, out_dir, batch_n, seed, held_out_chip=None):
     result = pred08.align_new_chip(chip_path, out_dir, curve_type, CURVE_ALIGNMENT,
-                                   PC_TTP_ANCHOR, group_name=GROUP_NAME)
+                                   PC_TTP_ANCHOR, group_name=GROUP_NAME, held_out_chip=held_out_chip)
     if result is None:
         print(f"  [!] {chip_path.name}: could not align, skipping.")
         return None
@@ -150,7 +150,8 @@ def discover_lofo_dirs(group_dir):
 def run_one(model_key, curve_type, batch_n, seed, save_dir, model_dir_name, held_out_chip=None):
     group_dir = group_out_dir()
     model_dir = group_dir / "model_interpretation" / model_dir_name
-    resampler_path = group_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+    resampler_path = pred08._resolve_alignment_path(group_dir, config.CROSS_DATASET_RESAMPLER_PATH,
+                                                     curve_type, held_out_chip)
     if not resampler_path.exists():
         print(f"  [!] Missing resampler, skipping: {resampler_path}")
         return
@@ -166,7 +167,8 @@ def run_one(model_key, curve_type, batch_n, seed, save_dir, model_dir_name, held
     exp_paths = [Path(EXP_FOLDER, name) for name in DATASETS]
     per_chip = {}
     for chip_path in exp_paths:
-        res = chip_embeddings(model, model_key, curve_type, chip_path, group_dir, batch_n, seed)
+        res = chip_embeddings(model, model_key, curve_type, chip_path, group_dir, batch_n, seed,
+                              held_out_chip=held_out_chip)
         if res is not None:
             per_chip[short_name(chip_path.name)] = res
 
@@ -175,14 +177,8 @@ def run_one(model_key, curve_type, batch_n, seed, save_dir, model_dir_name, held
         tf.keras.backend.clear_session()
         return
 
-    if model_dir_name == "full_data_lofo":
-        ref_embed = pred08.reference_pc_embedding(model, model_key, exp_paths, group_dir, curve_type,
-                                                  FILTER_KEY, CURVE_ALIGNMENT)
-    else:
-        # bypass reference_pc_embedding's cache: it's keyed by model_key/curve_type only, not fold
-        k = pred08._infer_k(model) if pred08._is_spatial(model_key) else None
-        ref_embed = pred08._build_training_pc_embeddings(
-            model, exp_paths, group_dir, curve_type, CURVE_ALIGNMENT, k=k).mean(axis=0)
+    ref_embed = pred08.reference_pc_embedding(model, model_key, exp_paths, group_dir, curve_type,
+                                               FILTER_KEY, CURVE_ALIGNMENT, held_out_chip=held_out_chip)
 
     embeddings = np.concatenate([v["embeddings"] for v in per_chip.values()], axis=0)
     y_labels = np.concatenate([v["y_labels"] for v in per_chip.values()], axis=0)

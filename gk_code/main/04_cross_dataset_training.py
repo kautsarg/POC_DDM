@@ -387,13 +387,14 @@ def _select_top_10_features(X_candidates_clean, y_full, idx, tag):
     return feats
 
 
-def _save_alignment_artifacts(combined, out_dir, curve_type, args):
-    """Saves the resampler, plus the pc_ttp recipe when curve_alignment is pc_ttp."""
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+def _save_alignment_artifacts(combined, out_dir, curve_type, args, held_out_chip=None):
+    align_dir = config.cross_dataset_alignment_dir(out_dir, held_out_chip)
+    align_dir.mkdir(parents=True, exist_ok=True)
+    resampler_path = align_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
     safe_joblib_dump(combined["resampler"], resampler_path, compress=3)
     print(f"  [*] Saved curve resampler -> {resampler_path}")
     if args.curve_alignment == "pc_ttp":
-        recipe_path = out_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
+        recipe_path = align_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
         safe_joblib_dump(combined["pc_ttp_recipe"], recipe_path, compress=3)
         print(f"  [*] Saved pc_ttp alignment recipe -> {recipe_path}")
 
@@ -1099,8 +1100,7 @@ if __name__ == "__main__":
                 print(f"  [*] {NOAMP_FILTER_NAME}: {int((~keep_mask).sum())}/{len(keep_mask)} "
                       f"non-amplifying curves flagged for removal")
 
-            if not _lofo_pc_ttp:
-                _save_alignment_artifacts(combined, out_dir, curve_type, args)
+            _save_alignment_artifacts(combined, out_dir, curve_type, args, held_out_chip=held_out_chip)
 
             encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
             total_count = len(y_full)

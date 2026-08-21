@@ -64,20 +64,21 @@ def load_new_chip_curves(exp_path, curve_type, group_name=None):
     }
 
 
-def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_anchor, group_name=None):
-    """Returns (curves, resampler, Y_well_raw, pc_curves_aligned, coords, well_ids),
-    or None on failure. pc_curves_aligned is the new chip's own PC well, aligned the
-    same way as curves -- None if the chip has no PC snapshot. coords/well_ids are
-    per-pixel and don't need alignment (the shift/truncate/resample steps only ever
-    touch the time axis), so they pass straight through -- None if unavailable
-    (e.g. no spatial metadata for this chip), in which case spatial/recon models
-    can't be used on it. group_name: passed through to load_new_chip_curves for
-    group-scoped well exclusion -- see apply_well_exclusion's docstring."""
+def _resolve_alignment_path(out_dir, path_template, curve_type, held_out_chip):
+    if held_out_chip is not None:
+        fold_path = config.cross_dataset_alignment_dir(out_dir, held_out_chip) / path_template.format(curve_type=curve_type)
+        if fold_path.exists():
+            return fold_path
+    return out_dir / path_template.format(curve_type=curve_type)
+
+
+def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_anchor, group_name=None,
+                   held_out_chip=None):
     d = load_new_chip_curves(new_chip_path, curve_type, group_name=group_name)
     if d is None:
         return None
 
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+    resampler_path = _resolve_alignment_path(out_dir, config.CROSS_DATASET_RESAMPLER_PATH, curve_type, held_out_chip)
     if not resampler_path.exists():
         print(f"[!] No saved resampler at {resampler_path}. Run 04_cross_dataset_training.py "
               f"--train_full for this group/curve_type first.")
@@ -90,7 +91,7 @@ def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_a
     pc_timestamps, pc_curves = (pc["timestamps"], pc["curves"]) if pc is not None else (None, None)
 
     if curve_alignment == "pc_ttp":
-        recipe_path = out_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
+        recipe_path = _resolve_alignment_path(out_dir, config.CROSS_DATASET_PC_TTP_RECIPE_PATH, curve_type, held_out_chip)
         if not recipe_path.exists():
             print(f"[!] No saved pc_ttp recipe at {recipe_path}. Run 04 with "
                   f"--curve_alignment pc_ttp --train_full for this group/curve_type first.")
@@ -147,34 +148,23 @@ def _infer_k(model):
 
 
 def compute_embeddings_stack(model, stack):
-    """Like compute_embeddings, but for spatial models: stack is already the
-    (N, k+1, T) neighbour-stack shape the model expects, no reshape needed."""
     embed_model = tf.keras.Model(inputs=model.input, outputs=_cls_layer(model).input)
     return embed_model.predict(stack.astype(np.float32), verbose=0)
 
 
 def _pc_mean_stack(pc_curves, k):
-    """Degenerate (1, k+1, T) neighbour stack: the chip's mean PC curve repeated
-    k+1 times. Sidesteps needing real PC spatial coordinates (never captured by
-    01_curve_preprocessing_v6.py) -- the attention-weighted reconstruction of k+1
-    identical curves is provably that same curve exactly (weights sum to 1), so this
-    is an exact, not approximate, way to get a comparable embedding through a
-    spatial model's real trained weights."""
     mean_curve = pc_curves.mean(axis=0)
     return np.tile(mean_curve, (k + 1, 1))[None, ...]
 
 
-def _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=None):
-    """Pools every training chip's PC well curves, aligned exactly like the training
-    pool itself was, and runs them through the model. k=None for plain models
-    (per-pixel embeddings, averaged by the caller); k=int for spatial models (one
-    mean-curve-stack embedding per chip)."""
-    resampler_path = out_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
+def _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=None,
+                                  held_out_chip=None):
+    resampler_path = _resolve_alignment_path(out_dir, config.CROSS_DATASET_RESAMPLER_PATH, curve_type, held_out_chip)
     resampler = joblib.load(resampler_path)
 
     recipe = None
     if curve_alignment == "pc_ttp":
-        recipe_path = out_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
+        recipe_path = _resolve_alignment_path(out_dir, config.CROSS_DATASET_PC_TTP_RECIPE_PATH, curve_type, held_out_chip)
         recipe = joblib.load(recipe_path)
 
     pc_curves_all = []
@@ -201,17 +191,16 @@ def _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_a
 
 
 def reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type, filter_key,
-                           curve_alignment, force_rerun=False):
-    """Training pool's mean PC embedding for this model -- disk-cached, since it's the
-    same for every new chip predicted against this model (unlike the new chip's own
-    PC-TTP fit, which is a genuine one-time-per-chip cost)."""
-    embed_path = out_dir / config.CROSS_DATASET_PC_EMBED_PATH.format(
+                           curve_alignment, force_rerun=False, held_out_chip=None):
+    align_dir = config.cross_dataset_alignment_dir(out_dir, held_out_chip)
+    embed_path = align_dir / config.CROSS_DATASET_PC_EMBED_PATH.format(
         model=model_key, filter=filter_key, curve_type=curve_type)
     if not force_rerun and embed_path.exists():
         return joblib.load(embed_path)
 
     k = _infer_k(model) if _is_spatial(model_key) else None
-    embeddings = _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=k)
+    embeddings = _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=k,
+                                               held_out_chip=held_out_chip)
     mean_embed = embeddings.mean(axis=0)
     embed_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(mean_embed, embed_path, compress=3)
@@ -221,12 +210,7 @@ def reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type, fil
 
 def predict_new_chip(model, model_key, curves, coords, well_ids, pc_curves_aligned,
                      exp_paths, out_dir, curve_type, filter_key, curve_alignment,
-                     pc_recenter=False, force_rerun=False):
-    """Builds the correct model input (plain curve or spatial neighbor-stack,
-    auto-detected from model_key), optionally applies PC-well feature-space
-    recentering, and predicts. Returns (probs, shift_norm) -- shift_norm is None
-    when pc_recenter is off. Shared by the CLI below and any notebook/sweep that
-    wants the exact same prediction logic."""
+                     pc_recenter=False, force_rerun=False, held_out_chip=None):
     is_spatial = _is_spatial(model_key)
     if is_spatial:
         k = _infer_k(model)
@@ -239,7 +223,8 @@ def predict_new_chip(model, model_key, curves, coords, well_ids, pc_curves_align
         if pc_curves_aligned is None or len(pc_curves_aligned) == 0:
             raise ValueError("pc_recenter requires the chip's own PC well curves, none found.")
         ref_embed = reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type,
-                                           filter_key, curve_alignment, force_rerun=force_rerun)
+                                           filter_key, curve_alignment, force_rerun=force_rerun,
+                                           held_out_chip=held_out_chip)
         if is_spatial:
             new_chip_embed = compute_embeddings_stack(model, _pc_mean_stack(pc_curves_aligned, k))[0]
             embeddings = compute_embeddings_stack(model, X)

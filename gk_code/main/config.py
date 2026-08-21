@@ -185,6 +185,13 @@ CROSS_DATASET_PC_TTP_RECIPE_PATH = 'cross_dataset_pc_ttp_recipe_{curve_type}.job
 CROSS_DATASET_LOFO_AE_PATH = 'lofo_ae_filter/{fold_label}_{curve_type}'
 CROSS_DATASET_PC_EMBED_PATH = 'pc_reference_embedding_{model}_{filter}_{curve_type}.joblib'
 
+
+def cross_dataset_alignment_dir(out_dir, held_out_chip=None):
+    out_dir = Path(out_dir)
+    if held_out_chip is None:
+        return out_dir
+    return out_dir / "model_interpretation" / f"lofo_{held_out_chip}"
+
 # ==========================================
 # MATPLOTLIB GLOBAL STYLE
 # ==========================================
