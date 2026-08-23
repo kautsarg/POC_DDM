@@ -544,6 +544,24 @@ def create_cnn_gru_dual_attn_recon_mtl_model(k_plus_1, T, n_classes, attn_dim=16
                      n_classes)
 
 
+# --- 8b. CNN+GRU GAT-Recon MTL (mirrors attn_recon embedding builder above, swapping
+# the per-curve CNN encoder for gnn_gat's single shared linear projection, dim=T) ---
+def _build_cnn_gru_dual_gat_recon_embedding_mtl(stack_input, T, return_branches=False):
+    """stack_input: Keras tensor (N, k+1, T). Returns 96-dim embedding for _dann_wrap/
+    _coral_wrap/_branch3_supcon_*_wrap. When return_branches=True, returns
+    (cnn_emb, gru_emb, fused) for the branch-3 SupCon/DANN/CORAL factories."""
+    shared_proj = tf.keras.layers.Dense(T, activation=None, name='gat_shared_proj')
+    Wh = tf.keras.layers.TimeDistributed(shared_proj, name='Wh')(stack_input)      # (N, k+1, T)
+
+    query = _QuerySlice()(Wh)                                                      # (N, 1, T)
+    scores = _AttnScores(T)([query, Wh])                                          # (N, 1, k+1)
+    attn_weights = tf.keras.layers.Softmax(axis=-1, name='gat_attn_weights')(scores)
+
+    reconstructed = _WeightedRecon()([attn_weights, Wh])                          # (N, 1, T)
+    reconstructed = tf.keras.layers.Reshape((T, 1))(reconstructed)               # (N, T, 1)
+    return _build_cnn_gru_dual_branches_mtl(reconstructed, return_branches=return_branches)
+
+
 # ====================================================================
 # LATE FUSION MTL MODEL FACTORIES
 # ====================================================================

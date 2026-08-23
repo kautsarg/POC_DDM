@@ -1,16 +1,12 @@
 import tensorflow as tf
 
 from model_utils_mtl import (_build_cnn_gru_dual_branches_mtl,
-                              _build_cnn_gru_dual_attn_recon_embedding_mtl)
+                              _build_cnn_gru_dual_attn_recon_embedding_mtl,
+                              _build_cnn_gru_dual_gat_recon_embedding_mtl)
 from model_utils_supcon import _proj_head, SUPCON_TEMP, supcon_loss
 
 
 def coral_loss(embedding, chip_id, n_chips):
-    """Deep CORAL (Sun & Saenko 2016): penalizes each chip's embedding covariance
-    vs. the batch-pooled covariance. n_chips is the training pool's chip count
-    (small, fixed -- LOFO folds have 3-4), so this unrolls into n_chips static
-    graph ops rather than a dynamic loop. Chips absent (or near-absent) from a
-    given batch contribute 0, not NaN."""
     embedding = tf.cast(embedding, tf.float32)
     chip_id = tf.reshape(chip_id, [-1])
     d = tf.cast(tf.shape(embedding)[1], tf.float32)
@@ -161,7 +157,21 @@ def create_cnn_gru_dual_attn_recon_supcon3_coral_model(k_plus_1, T, n_classes, n
     return _branch3_supcon_coral_wrap(stack_input, cnn_emb, seq_emb, fused, n_classes, n_chips=n_chips)
 
 
+def create_gnn_gat_coral_model(k_plus_1, T, n_classes, n_chips):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    embedding = _build_cnn_gru_dual_gat_recon_embedding_mtl(stack_input, T)
+    return _coral_wrap(stack_input, embedding, n_classes, n_chips=n_chips)
+
+
+def create_gnn_gat_supcon3_coral_model(k_plus_1, T, n_classes, n_chips):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    cnn_emb, seq_emb, fused = _build_cnn_gru_dual_gat_recon_embedding_mtl(
+        stack_input, T, return_branches=True)
+    return _branch3_supcon_coral_wrap(stack_input, cnn_emb, seq_emb, fused, n_classes, n_chips=n_chips)
+
+
 CORAL_MODEL_KEYS = (
     'cnn_gru_dual_coral', 'cnn_gru_dual_attn_recon_coral',
     'cnn_gru_dual_supcon3_coral', 'cnn_gru_dual_attn_recon_supcon3_coral',
+    'gnn_gat_coral', 'gnn_gat_supcon3_coral',
 )

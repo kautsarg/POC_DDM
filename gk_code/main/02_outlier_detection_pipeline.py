@@ -592,7 +592,8 @@ _DEFAULT_FILTERS = frozenset({"lstm_ae", "spatial_knn", "spatial_grid"})
 def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
                             linear_feature_combinations, important_feature_combinations,
                             ae_configs, knn_filter_config, spatial_knn_configs, spatial_grid_configs,
-                            downsample_factor, save_plot_flag, filters=_DEFAULT_FILTERS):
+                            downsample_factor, save_plot_flag, filters=_DEFAULT_FILTERS,
+                            lstm_ae_batch_size=128):
     """Run all outlier detection sub-pipelines, skipping columns already computed."""
     print("\n=== RUNNING OUTLIER DETECTION PIPELINES ===")
 
@@ -672,7 +673,8 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
                 ae_names, ae_dataset, Y_well, ref_curves,
                 str(exp_path / "ae_per_well_outlier"), missing_lstm_glb,
                 save_plot=save_plot_flag, downsample_factor=downsample_factor, per_well=False,
-                save_encoder_dir=str(exp_path / "pretrained_encoders"))
+                save_encoder_dir=str(exp_path / "pretrained_encoders"),
+                batch_size=lstm_ae_batch_size)
             for i, name in enumerate(ae_names):
                 features_to_concat[list(dataset_name).index(name)].append(extracted_dfs[i])
             flush()
@@ -798,7 +800,8 @@ def _run_outlier_pipelines(exp_path, pipeline_state, unified_save_path,
 # MASTER PIPELINE
 # ====================================================================
 
-def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=_DEFAULT_FILTERS):
+def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=_DEFAULT_FILTERS,
+                  lstm_ae_batch_size=128):
     """End-to-end outlier detection pipeline for a single experiment folder."""
     exp_path = Path(exp_path)
     print(f"\n\n{'#'*80}\nSTARTING MASTER PIPELINE FOR: {exp_path.name}\n{'#'*80}")
@@ -847,6 +850,7 @@ def run_pipeline(exp_path, force_rerun=False, save_plot_flag=False, filters=_DEF
         downsample_factor=config.AE_DOWNSAMPLE_FACTOR,
         save_plot_flag=save_plot_flag,
         filters=filters,
+        lstm_ae_batch_size=lstm_ae_batch_size,
     )
 
     print(f"\nExperiment {exp_path.name} finished gracefully!")
@@ -876,6 +880,11 @@ if __name__ == "__main__":
                              f"{', '.join(sorted(_DEFAULT_FILTERS))}. "
                              f"Available: {', '.join(sorted(ALL_FILTERS))}. "
                              "Pass specific names to run only those, or bare --filters for none.")
+    parser.add_argument("--batch_size", type=int, default=128,
+                        help="Batch size for the LSTM autoencoder's .fit() call (only affects "
+                             "the 'lstm_ae' filter). Was previously hardcoded to 128 regardless "
+                             "of GPU -- scale this up on higher-VRAM GPUs (see slurm_jobs/ for "
+                             "the nvidia-smi-based adaptive pattern). Default: 128.")
 
     args = parser.parse_args()
 
@@ -890,4 +899,4 @@ if __name__ == "__main__":
     save_plot_flag = bool(saved_viz) and any(s in str(exp_path) for s in saved_viz)
 
     run_pipeline(exp_path, force_rerun=args.force_rerun, save_plot_flag=save_plot_flag,
-                 filters=set(args.filters))
+                 filters=set(args.filters), lstm_ae_batch_size=args.batch_size)

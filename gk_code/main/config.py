@@ -371,6 +371,7 @@ MODEL_KEY_MAP = {
     "cnn_trans_dual_supcon3":    ("y_preds_AC_cnn_trans_dual_supcon3_",    "y_probs_AC_cnn_trans_dual_supcon3_",    "classes_AC_cnn_trans_dual_supcon3_"),
     "cnn_gru_dual_cosine_recon_supcon3":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon3_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon3_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon3_"),
     "cnn_gru_dual_attn_recon_supcon3":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_",       "classes_AC_cnn_gru_dual_attn_recon_supcon3_"),
+    "gnn_gat_supcon3":           ("y_preds_AC_gnn_gat_supcon3_",           "y_probs_AC_gnn_gat_supcon3_",           "classes_AC_gnn_gat_supcon3_"),
     # Branch SupCon v2 MTL
     "cnn_gru_dual_supcon2_mtl":  ("y_preds_AC_cnn_gru_dual_supcon2_mtl_",  "y_probs_AC_cnn_gru_dual_supcon2_mtl_",  "classes_AC_cnn_gru_dual_supcon2_mtl_"),
     "cnn_trans_dual_supcon2_mtl":("y_preds_AC_cnn_trans_dual_supcon2_mtl_","y_probs_AC_cnn_trans_dual_supcon2_mtl_","classes_AC_cnn_trans_dual_supcon2_mtl_"),
@@ -453,11 +454,15 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_attn_recon_dann":       ("y_preds_AC_cnn_gru_dual_attn_recon_dann_",       "y_probs_AC_cnn_gru_dual_attn_recon_dann_",       "classes_AC_cnn_gru_dual_attn_recon_dann_"),
     "cnn_gru_dual_supcon3_dann":          ("y_preds_AC_cnn_gru_dual_supcon3_dann_",          "y_probs_AC_cnn_gru_dual_supcon3_dann_",          "classes_AC_cnn_gru_dual_supcon3_dann_"),
     "cnn_gru_dual_attn_recon_supcon3_dann": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_dann_"),
+    "gnn_gat_dann":                       ("y_preds_AC_gnn_gat_dann_",                       "y_probs_AC_gnn_gat_dann_",                       "classes_AC_gnn_gat_dann_"),
+    "gnn_gat_supcon3_dann":               ("y_preds_AC_gnn_gat_supcon3_dann_",               "y_probs_AC_gnn_gat_supcon3_dann_",               "classes_AC_gnn_gat_supcon3_dann_"),
     # Deep CORAL (non-adversarial domain alignment)
     "cnn_gru_dual_coral":                  ("y_preds_AC_cnn_gru_dual_coral_",                  "y_probs_AC_cnn_gru_dual_coral_",                  "classes_AC_cnn_gru_dual_coral_"),
     "cnn_gru_dual_attn_recon_coral":       ("y_preds_AC_cnn_gru_dual_attn_recon_coral_",       "y_probs_AC_cnn_gru_dual_attn_recon_coral_",       "classes_AC_cnn_gru_dual_attn_recon_coral_"),
     "cnn_gru_dual_supcon3_coral":          ("y_preds_AC_cnn_gru_dual_supcon3_coral_",          "y_probs_AC_cnn_gru_dual_supcon3_coral_",          "classes_AC_cnn_gru_dual_supcon3_coral_"),
     "cnn_gru_dual_attn_recon_supcon3_coral": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_coral_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_coral_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_coral_"),
+    "gnn_gat_coral":                       ("y_preds_AC_gnn_gat_coral_",                       "y_probs_AC_gnn_gat_coral_",                       "classes_AC_gnn_gat_coral_"),
+    "gnn_gat_supcon3_coral":               ("y_preds_AC_gnn_gat_supcon3_coral_",               "y_probs_AC_gnn_gat_supcon3_coral_",               "classes_AC_gnn_gat_supcon3_coral_"),
 }
 # _inc variants: same models with inception smoothing front-end. Cache keys get _inc_ suffix
 # so results coexist with the baseline in the same joblib without overwriting each other.
@@ -490,6 +495,7 @@ _BRANCH_SUPCON_MODEL_KEYS = {
     "cnn_gru_dual_cosine_recon_supcon2_mtl", "cnn_gru_dual_attn_recon_supcon2_mtl",
     "cnn_gru_dual_supcon3_mtl", "cnn_trans_dual_supcon3_mtl",
     "cnn_gru_dual_cosine_recon_supcon3_mtl", "cnn_gru_dual_attn_recon_supcon3_mtl",
+    "gnn_gat_supcon3",
 }
 _CL_MTL_MODEL_KEYS = {
     "cnn_gru_dual_cl_mtl", "cnn_trans_dual_cl_mtl",
@@ -526,10 +532,12 @@ _CCGD_ST_KEYS = {"ccgd_arch_poc_st", "ccgd_arch_poc_st_sc1", "ccgd_arch_poc_st_s
 _DANN_MODEL_KEYS = {
     "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
     "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
+    "gnn_gat_dann", "gnn_gat_supcon3_dann",
 }
 _CORAL_MODEL_KEYS = {
     "cnn_gru_dual_coral", "cnn_gru_dual_attn_recon_coral",
     "cnn_gru_dual_supcon3_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
+    "gnn_gat_coral", "gnn_gat_supcon3_coral",
 }
 _NO_INC = ({"rf", "knn", "ffi", "gnn_gat", "gnn_gcn", "cnn_gru_dual_attn_recon"}
            | _MTL_MODEL_KEYS | _SUPCON_MODEL_KEYS | _BRANCH_SUPCON_MODEL_KEYS
@@ -590,6 +598,7 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_supcon3":  "CNN+GRU Dual SC3",  "cnn_trans_dual_supcon3":  "CNN+Tr Dual SC3",
     "cnn_gru_dual_cosine_recon_supcon3": "CNN+GRU CosRecon SC3",
     "cnn_gru_dual_attn_recon_supcon3":   "CNN+GRU AttnRecon SC3",
+    "gnn_gat_supcon3": "GNN (GAT) SC3",
     # Branch SupCon v2 MTL
     "cnn_gru_dual_supcon2_mtl": "CNN+GRU Dual SC2 MTL", "cnn_trans_dual_supcon2_mtl": "CNN+Tr Dual SC2 MTL",
     "cnn_gru_dual_cosine_recon_supcon2_mtl": "CNN+GRU CosRecon SC2 MTL",
@@ -655,6 +664,10 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_attn_recon_coral": "CNN+GRU AttnRecon CORAL",
     "cnn_gru_dual_supcon3_coral": "CNN+GRU Dual SC3 CORAL",
     "cnn_gru_dual_attn_recon_supcon3_coral": "CNN+GRU AttnRecon SC3 CORAL",
+    "gnn_gat_dann": "GNN (GAT) DANN",
+    "gnn_gat_supcon3_dann": "GNN (GAT) SC3 DANN",
+    "gnn_gat_coral": "GNN (GAT) CORAL",
+    "gnn_gat_supcon3_coral": "GNN (GAT) SC3 CORAL",
 }
 # _inc print names: append " (Inc)" so reports distinguish them from baseline variants.
 MODEL_PRINT_MAP.update({

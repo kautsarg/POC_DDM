@@ -2,7 +2,8 @@ import numpy as np
 import tensorflow as tf
 
 from model_utils_mtl import (_build_cnn_gru_dual_branches_mtl,
-                              _build_cnn_gru_dual_attn_recon_embedding_mtl)
+                              _build_cnn_gru_dual_attn_recon_embedding_mtl,
+                              _build_cnn_gru_dual_gat_recon_embedding_mtl)
 from model_utils_supcon import _proj_head, SUPCON_TEMP, supcon_loss
 
 
@@ -172,7 +173,21 @@ def create_cnn_gru_dual_attn_recon_supcon3_dann_model(k_plus_1, T, n_classes, n_
     return _branch3_supcon_dann_wrap(stack_input, cnn_emb, seq_emb, fused, n_classes, n_chips)
 
 
+def create_gnn_gat_dann_model(k_plus_1, T, n_classes, n_chips):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    embedding = _build_cnn_gru_dual_gat_recon_embedding_mtl(stack_input, T)
+    return _dann_wrap(stack_input, embedding, n_classes, n_chips)
+
+
+def create_gnn_gat_supcon3_dann_model(k_plus_1, T, n_classes, n_chips):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    cnn_emb, seq_emb, fused = _build_cnn_gru_dual_gat_recon_embedding_mtl(
+        stack_input, T, return_branches=True)
+    return _branch3_supcon_dann_wrap(stack_input, cnn_emb, seq_emb, fused, n_classes, n_chips)
+
+
 DANN_MODEL_KEYS = (
     'cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann',
     'cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann',
+    'gnn_gat_dann', 'gnn_gat_supcon3_dann',
 )

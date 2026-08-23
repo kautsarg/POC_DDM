@@ -850,13 +850,15 @@ if __name__ == "__main__":
 
         # DOMAIN-ADVERSARIAL (DANN) MODELS
         elif getattr(args, 'dann', False):
-            models = (['cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann'] if args.supcon == 3
-                     else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann'])
+            models = (['cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann', 'gnn_gat_supcon3_dann']
+                     if args.supcon == 3
+                     else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann', 'gnn_gat_dann'])
 
         # DEEP CORAL MODELS
         elif getattr(args, 'coral', False):
-            models = (['cnn_gru_dual_supcon3_coral', 'cnn_gru_dual_attn_recon_supcon3_coral'] if args.supcon == 3
-                     else ['cnn_gru_dual_coral', 'cnn_gru_dual_attn_recon_coral'])
+            models = (['cnn_gru_dual_supcon3_coral', 'cnn_gru_dual_attn_recon_supcon3_coral', 'gnn_gat_supcon3_coral']
+                     if args.supcon == 3
+                     else ['cnn_gru_dual_coral', 'cnn_gru_dual_attn_recon_coral', 'gnn_gat_coral'])
 
         # CURRICULUM LEARNING (CL) MTL MODELS
         elif args.mtl and getattr(args, 'mtl_cl', False):
@@ -887,9 +889,9 @@ if __name__ == "__main__":
             elif args.supcon == 2:
                 models = ['cnn_gru_dual_supcon2', 'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2']
             elif args.supcon == 3:
-                models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3']
+                models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3', 'gnn_gat_supcon3']
             else:
-                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon']
+                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'gnn_gat']
 
         if args.models:
             import re

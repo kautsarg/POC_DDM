@@ -32,6 +32,7 @@ tf.get_logger().setLevel('ERROR')
 from scikeras.wrappers import KerasClassifier
 
 import model_utils_gated
+import model_utils_gnn_recon
 from model_utils_supcon import (
     create_cnn_supcon_model, create_gru_supcon_model,
     create_transformer_supcon_model, create_cnn_gru_dual_supcon_model,
@@ -49,6 +50,7 @@ from model_utils_supcon import (
     create_cnn_gru_dual_attn_recon_supcon2_mtl_model,
     create_cnn_gru_dual_attn_recon_supcon3_model,
     create_cnn_gru_dual_attn_recon_supcon3_mtl_model,
+    create_gnn_gat_supcon3_model,
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
     BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
     BRANCH_SUPCON3_MODEL_KEYS, BRANCH_SUPCON3_MTL_MODEL_KEYS,
@@ -95,11 +97,13 @@ from model_utils_dann import (
     DANN_MODEL_KEYS, GRLLambdaSchedule,
     create_cnn_gru_dual_dann_model, create_cnn_gru_dual_attn_recon_dann_model,
     create_cnn_gru_dual_supcon3_dann_model, create_cnn_gru_dual_attn_recon_supcon3_dann_model,
+    create_gnn_gat_dann_model, create_gnn_gat_supcon3_dann_model,
 )
 from model_utils_coral import (
     CORAL_MODEL_KEYS,
     create_cnn_gru_dual_coral_model, create_cnn_gru_dual_attn_recon_coral_model,
     create_cnn_gru_dual_supcon3_coral_model, create_cnn_gru_dual_attn_recon_supcon3_coral_model,
+    create_gnn_gat_coral_model, create_gnn_gat_supcon3_coral_model,
 )
 
 # ====================================================================
@@ -176,14 +180,6 @@ class CurveResampler:
 # ====================================================================
 
 def _build_cnn_gru_dual_branches(input_curve):
-    """Dual-branch CNN (Local) + BiGRU (Global) feature extractor.
-
-    Takes a Keras tensor of shape (T, 1) and returns the pre-output fused embedding.
-    Factored out of create_cnn_gru_dual_model so the neighbor-reconstruction variants
-    (create_cnn_gru_dual_attn_recon_model) can feed a *different* curve tensor — e.g.
-    one reconstructed from a pixel + its spatial neighbours — into this exact same
-    downstream architecture, rather than duplicating it.
-    """
     # 1. Local Feature Branch (CNN)
     c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_curve)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
@@ -374,17 +370,6 @@ class _WeightedRecon(tf.keras.layers.Layer):
 
 
 def create_cnn_gru_dual_attn_recon_model(k_plus_1, input_size_curve, output_size, attn_dim=16):
-    """
-    Learnable-attention counterpart to reconstruct_curves_cosine: a small shared
-    per-curve encoder produces an embedding for each of the k+1 curves in the stack;
-    the pixel's own embedding is the query, all k+1 embeddings are keys, and the
-    resulting softmax attention weights are applied to the *raw curves* (not the
-    embeddings) to produce one reconstructed (T,) curve. That curve then flows into
-    _build_cnn_gru_dual_branches -- the exact same downstream architecture
-    create_cnn_gru_dual_model uses -- so the only difference from the baseline is
-    which curve the classifier sees, and the whole thing (encoder + attention +
-    classifier) trains end-to-end via ordinary model.fit.
-    """
     stack_input = tf.keras.layers.Input(shape=(k_plus_1, input_size_curve), name="neighbor_stack_input")
 
     per_curve_encoder = tf.keras.Sequential([
@@ -723,12 +708,6 @@ def create_transformer_model(input_size, output_size, head_size=32, num_heads=2,
 # MODULE 1: MODEL EVALUATION FUNCTION (WITH PROBABILITIES)
 # ====================================================================
 def _remap_global_splits(global_splits, mask, valid_mask=None):
-    """
-    Convert (train_idx, test_idx) pairs defined over the FULL pre-filter index
-    space (0..N-1, matching X_curves/y_encoded as passed in) into positional
-    indices over the array after `mask` (and optionally `valid_mask`, applied
-    on top of `mask`) has been used to slice it.
-    """
     kept_global = np.where(mask)[0]
     if valid_mask is not None:
         kept_global = kept_global[valid_mask]
@@ -743,13 +722,6 @@ def _remap_global_splits(global_splits, mask, valid_mask=None):
 
 
 def build_well_stratified_random_split(y, well_ids, test_size=0.1, random_state=0):
-    """Stratified single train/test split, stratified by well_id (not label). Since
-    one well = one label always, this preserves label balance automatically while also
-    giving every well proportional train/test representation -- including singleton-
-    well classes, which a well-*grouped* split would dump entirely on one side. Leak
-    safety for spatial-recon models (cnn_gru_dual_cosine_recon/attn_recon) comes from
-    restricting build_neighbor_curve_stack's input to one split side at a time, not
-    from constraining this split -- see evaluate_outlier_filters."""
     sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
     train_idx, test_idx = next(sss.split(np.zeros(len(y)), well_ids))
     return {"random_split": (train_idx, test_idx)}
@@ -787,6 +759,7 @@ _XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under 
 
 _XAI_SAVE_NAME['cnn_gru_dual_cosine_recon'] = 'cnn_gru_dual_cosine_recon'
 _XAI_SAVE_NAME['cnn_gru_dual_attn_recon'] = 'cnn_gru_dual_attn_recon'
+_XAI_SAVE_NAME['gnn_gat'] = 'gnn_gat'
 _XAI_SAVE_NAME.update({_k: _k for _k in ALL_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_MTL_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_SUPCON_MTL_MODEL_KEYS})
@@ -815,24 +788,6 @@ def evaluate_outlier_filters(
     batch_size=512,
     train_center_frac=None,
 ):
-    """Train and evaluate models across outlier filters.
-
-    When save_model_dir is set, the trained Keras model from the first fold of
-    the None (baseline) filter is saved to disk so attribution_vis_all can load
-    it without a separate run.
-
-    pretrained_encoder_path/pretrained_scaler_path: only used by the "lstm_ae_clf"
-    model — paths to the encoder/scaler saved by 02_outlier_detection_pipeline.py's
-    global LSTM autoencoder for this exact (experiment, curve_type). If either is
-    None/missing, "lstm_ae_clf" is skipped for every filter (no from-scratch
-    fallback — the model only makes sense paired with its pretrained backbone).
-
-    coords/well_ids: (N, 2) pixel [row, col] and (N,) well id per sample, aligned to
-    X_curves. Only used by "cnn_gru_dual_cosine_recon"/"cnn_gru_dual_attn_recon" (see
-    build_neighbor_curve_stack) to find each pixel's spatial neighbours within its own
-    well. If either is None, both models are skipped (with a warning) regardless of
-    whether they're in `models` — every other model is unaffected.
-    """
     if save_model_dir is not None:
         Path(save_model_dir).mkdir(parents=True, exist_ok=True)
 
@@ -880,6 +835,8 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_attn_recon_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
         # CORAL attn_recon variants
         "cnn_gru_dual_attn_recon_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
+        "gnn_gat", "gnn_gat_dann", "gnn_gat_supcon3_dann",
+        "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -944,13 +901,6 @@ def evaluate_outlier_filters(
                 print(f"     [Warning] No samples remain for this filter under the given CV splits. Skipping.")
                 continue
         elif well_ids_m is not None:
-            # Stratified by well_id (one well = one label, so this also preserves label
-            # balance) instead of grouping by well -- leak safety for cosine_recon/
-            # attn_recon comes from restricting build_neighbor_curve_stack's input to
-            # one split side at a time (below), not from constraining this split.
-            # Sized/clamped by well count (the actual stratify key), not label count --
-            # StratifiedShuffleSplit needs test_size >= n_wells or it raises, and
-            # StratifiedKFold needs n_splits <= n_wells or small wells silently miss folds.
             n_wells = len(np.unique(well_ids_m))
             calculated_test_size = max(len(y_true) * 0.10, n_wells) / len(y_true)
             if n_splits == 1:
@@ -1094,9 +1044,6 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_cosine_recon_supcon2_lc', 'cnn_gru_dual_cosine_recon_supcon3_lc',
                                   'cnn_gru_dual_cosine_recon_supcon_staged', 'cnn_gru_dual_cosine_recon_supcon2_staged',
                                   'cnn_gru_dual_cosine_recon_supcon3_staged'):
-                    # Built separately per split side (train-only / test-only candidate pools)
-                    # so a side's reconstructed curves can never draw on the other side's data --
-                    # see build_neighbor_curve_stack.
                     X_train_curve = reconstruct_curves_cosine(build_neighbor_curve_stack(
                         X_AC[train_idx].astype(np.float32, copy=False),
                         coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors))
@@ -1117,6 +1064,14 @@ def evaluate_outlier_filters(
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
                     # Built separately per split side -- see the cosine_recon branch above.
+                    X_train_curve = build_neighbor_curve_stack(
+                        X_AC[train_idx].astype(np.float32, copy=False),
+                        coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors)
+                    X_test_curve = build_neighbor_curve_stack(
+                        X_AC[test_idx].astype(np.float32, copy=False),
+                        coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors)
+                elif _base_m in ("gnn_gat", "gnn_gat_dann", "gnn_gat_supcon3_dann",
+                                 "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3"):
                     X_train_curve = build_neighbor_curve_stack(
                         X_AC[train_idx].astype(np.float32, copy=False),
                         coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors)
@@ -1285,6 +1240,36 @@ def evaluate_outlier_filters(
                     probs.append(prob)
                     classes_list.append(cls)
 
+                elif _base_m == "gnn_gat":
+                    tf.keras.backend.clear_session()
+                    model = model_utils_gnn_recon.create_cnn_gru_dual_gat_recon_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes,
+                        branch_builder=_build_cnn_gru_dual_branches)
+                    epochs = 500
+
+                    if _val_split_ok:
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
+                    else:
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
                 elif _base_m in LC_SC0_MODEL_KEYS:
                     # LC SC0: standard dual backbone, n_classes = n_labels × n_conc.
                     # cosine_recon: same arch, different input curve. attn_recon: (k+1, T) stack.
@@ -1416,6 +1401,7 @@ def evaluate_outlier_filters(
                     tf.keras.backend.clear_session()
                     is_supcon3 = _base_m.endswith('_supcon3_dann')
                     is_attn_recon = 'attn_recon' in _base_m
+                    is_gat = 'gnn_gat' in _base_m
                     n_chips = len(np.unique(chip_id_m))
                     chip_train_all = chip_id_m[train_idx]
 
@@ -1424,6 +1410,11 @@ def evaluate_outlier_filters(
                         model = (create_cnn_gru_dual_attn_recon_supcon3_dann_model(k_plus_1, T, n_classes, n_chips)
                                 if is_supcon3 else
                                 create_cnn_gru_dual_attn_recon_dann_model(k_plus_1, T, n_classes, n_chips))
+                    elif is_gat:
+                        k_plus_1, T = X_train_curve.shape[1], X_train_curve.shape[2]
+                        model = (create_gnn_gat_supcon3_dann_model(k_plus_1, T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_gnn_gat_dann_model(k_plus_1, T, n_classes, n_chips))
                     else:
                         T = X_train_curve.shape[1]
                         model = (create_cnn_gru_dual_supcon3_dann_model(T, n_classes, n_chips)
@@ -1480,6 +1471,7 @@ def evaluate_outlier_filters(
                     tf.keras.backend.clear_session()
                     is_supcon3 = _base_m.endswith('_supcon3_coral')
                     is_attn_recon = 'attn_recon' in _base_m
+                    is_gat = 'gnn_gat' in _base_m
                     n_chips = len(np.unique(chip_id_m))
                     chip_train_all = chip_id_m[train_idx]
 
@@ -1488,6 +1480,11 @@ def evaluate_outlier_filters(
                         model = (create_cnn_gru_dual_attn_recon_supcon3_coral_model(k_plus_1, T, n_classes, n_chips)
                                 if is_supcon3 else
                                 create_cnn_gru_dual_attn_recon_coral_model(k_plus_1, T, n_classes, n_chips))
+                    elif is_gat:
+                        k_plus_1, T = X_train_curve.shape[1], X_train_curve.shape[2]
+                        model = (create_gnn_gat_supcon3_coral_model(k_plus_1, T, n_classes, n_chips)
+                                if is_supcon3 else
+                                create_gnn_gat_coral_model(k_plus_1, T, n_classes, n_chips))
                     else:
                         T = X_train_curve.shape[1]
                         model = (create_cnn_gru_dual_supcon3_coral_model(T, n_classes, n_chips)
@@ -1756,6 +1753,9 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_supcon3_model(T, n_classes)
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon3':
                         model = create_cnn_gru_dual_attn_recon_supcon3_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    elif _base_m == 'gnn_gat_supcon3':
+                        model = create_gnn_gat_supcon3_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
                     epochs = 500

@@ -22,12 +22,12 @@ export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
 EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
-MODELS="cnn_gru_dual cnn_gru_dual_attn_recon"
+MODELS="cnn_gru_dual cnn_gru_dual_attn_recon gnn_gat"
 FILTERS="noamp_remove"
 TASK_ID=3
 GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${TASK_ID}])" | tail -n 1)
 CURVE_TYPES="ori_curve_norm ori_curve_sg_p4_norm"
-SUPCON=0   # hardcoded choice -- edit before submitting (0 or 3)
+SUPCON=0
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
     --exp_folder ${EXP_FOLDER} --task_id ${TASK_ID} \

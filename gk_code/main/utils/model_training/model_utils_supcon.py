@@ -9,6 +9,7 @@ from model_utils_mtl import (
     _build_transformer_backbone_mtl,
     _build_cnn_gru_dual_branches_mtl, _build_cnn_trans_dual_branches_mtl,
     _build_cnn_gru_dual_attn_recon_embedding_mtl,
+    _build_cnn_gru_dual_gat_recon_embedding_mtl,
     CurriculumMTLModel, _HEAD_LAYERS, _freeze_backbone,
 )
 
@@ -47,6 +48,7 @@ BRANCH_SUPCON2_MTL_MODEL_KEYS = [
 BRANCH_SUPCON3_MODEL_KEYS     = [
     'cnn_gru_dual_supcon3',     'cnn_trans_dual_supcon3',
     'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3',
+    'gnn_gat_supcon3',
 ]
 BRANCH_SUPCON3_MTL_MODEL_KEYS = [
     'cnn_gru_dual_supcon3_mtl', 'cnn_trans_dual_supcon3_mtl',
@@ -606,6 +608,13 @@ def create_cnn_gru_dual_attn_recon_supcon3_model(k_plus_1, T, n_classes, attn_di
     stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
     cnn_emb, gru_emb, fused = _build_cnn_gru_dual_attn_recon_embedding_mtl(
         stack_input, T, attn_dim, return_branches=True)
+    return _branch3_supcon_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
+
+
+def create_gnn_gat_supcon3_model(k_plus_1, T, n_classes):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    cnn_emb, gru_emb, fused = _build_cnn_gru_dual_gat_recon_embedding_mtl(
+        stack_input, T, return_branches=True)
     return _branch3_supcon_wrap(stack_input, cnn_emb, gru_emb, fused, n_classes)
 
 

@@ -187,14 +187,6 @@ if __name__ == "__main__":
               f"have non-sentinel concentration"
               + (f" ({_n_zero} zero/negative-control masked)." if _n_zero else "."))
 
-    # Spatial metadata for cnn_gru_dual_cosine_recon/cnn_gru_dual_attn_recon (see
-    # model_utils.build_neighbor_curve_stack). Soft-optional: unlike 03b_gnn_spatial_training.py
-    # (which trains GNN models exclusively and exits if metadata is missing), 03 trains many
-    # non-spatial models too -- a dataset lacking metadata just means those two models get
-    # skipped (with a warning from evaluate_outlier_filters), everything else still runs.
-    # well_ids is derived from the RAW (pre label-mapping) Y_well -- the physical/spatial
-    # grouping for neighbour-finding, deliberately independent of how config.LABEL_MAPPINGS
-    # later buckets labels for the classification target (mirrors 03b's identical comment).
     coords_full, well_ids_full = None, None
     if "metadata" in training_data:
         metadata_df = pd.DataFrame(training_data["metadata"])
