@@ -334,6 +334,7 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_attn_recon_mtl":       ("y_preds_AC_cnn_gru_dual_attn_recon_mtl_",        "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",        "classes_AC_cnn_gru_dual_attn_recon_mtl_"),
     "cnn_gru_dual_cosine_recon_supcon":     ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_",     "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_",     "classes_AC_cnn_gru_dual_cosine_recon_supcon_"),
     "cnn_gru_dual_attn_recon_supcon":       ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_",       "y_probs_AC_cnn_gru_dual_attn_recon_supcon_",       "classes_AC_cnn_gru_dual_attn_recon_supcon_"),
+    "gnn_gat_supcon":                       ("y_preds_AC_gnn_gat_supcon_",                       "y_probs_AC_gnn_gat_supcon_",                       "classes_AC_gnn_gat_supcon_"),
     "cnn_gru_dual_cosine_recon_supcon_mtl": ("y_preds_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "y_probs_AC_cnn_gru_dual_cosine_recon_supcon_mtl_", "classes_AC_cnn_gru_dual_cosine_recon_supcon_mtl_"),
     "cnn_gru_dual_attn_recon_supcon_mtl":   ("y_preds_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "y_probs_AC_cnn_gru_dual_attn_recon_supcon_mtl_",   "classes_AC_cnn_gru_dual_attn_recon_supcon_mtl_"),
     "cnn_lf_mtl":                    ("y_preds_AC_cnn_lf_mtl_",                     "y_probs_AC_cnn_lf_mtl_",                     "classes_AC_cnn_lf_mtl_"),
@@ -480,6 +481,7 @@ _SUPCON_MODEL_KEYS = {
     "cnn_supcon", "gru_supcon", "transformer_supcon",
     "cnn_gru_dual_supcon", "cnn_trans_dual_supcon",
     "cnn_gru_dual_cosine_recon_supcon", "cnn_gru_dual_attn_recon_supcon",
+    "gnn_gat_supcon",
     "cnn_supcon_mtl", "gru_supcon_mtl", "transformer_supcon_mtl",
     "cnn_gru_dual_supcon_mtl", "cnn_trans_dual_supcon_mtl",
     "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
@@ -587,6 +589,7 @@ MODEL_PRINT_MAP = {
     # Branch SupCon v1 ST
     "cnn_gru_dual_cosine_recon_supcon":     "CNN+GRU CosRecon SC",
     "cnn_gru_dual_attn_recon_supcon":       "CNN+GRU AttnRecon SC",
+    "gnn_gat_supcon":                       "GNN (GAT) SC1",
     # Branch SupCon v1 MTL
     "cnn_gru_dual_cosine_recon_supcon_mtl": "CNN+GRU CosRecon SC MTL",
     "cnn_gru_dual_attn_recon_supcon_mtl":   "CNN+GRU AttnRecon SC MTL",

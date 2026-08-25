@@ -50,6 +50,7 @@ from model_utils_supcon import (
     create_cnn_gru_dual_attn_recon_supcon2_mtl_model,
     create_cnn_gru_dual_attn_recon_supcon3_model,
     create_cnn_gru_dual_attn_recon_supcon3_mtl_model,
+    create_gnn_gat_supcon_model,
     create_gnn_gat_supcon3_model,
     SUPCON_MODEL_KEYS, SUPCON_MTL_MODEL_KEYS, ALL_SUPCON_KEYS,
     BRANCH_SUPCON2_MODEL_KEYS, BRANCH_SUPCON2_MTL_MODEL_KEYS,
@@ -781,7 +782,7 @@ def evaluate_outlier_filters(
     checkpoint_fn=None, KFS=None, rerun_models=[], cv_splits=None,
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
-    coords=None, well_ids=None, k_neighbors=8,
+    coords=None, well_ids=None, k_neighbors=24,
     multitask=False, y_concentration=None, chip_id_encoded=None,
     cl_phase1_epochs=None,
     lc_classes=None,
@@ -836,7 +837,7 @@ def evaluate_outlier_filters(
         # CORAL attn_recon variants
         "cnn_gru_dual_attn_recon_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
         "gnn_gat", "gnn_gat_dann", "gnn_gat_supcon3_dann",
-        "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3",
+        "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3", "gnn_gat_supcon",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -952,6 +953,8 @@ def evaluate_outlier_filters(
         res_entry["_train_crop_signature"] = _train_crop_signature
 
         res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
+        res_entry["well_ids_test_"] = ([well_ids_m[test_index] for _, test_index in splits]
+                                        if well_ids_m is not None else None)
 
         res_entry["mask_count"] = current_mask_count
         res_entry["y_true_count"] = len(y_true)
@@ -1071,7 +1074,8 @@ def evaluate_outlier_filters(
                         X_AC[test_idx].astype(np.float32, copy=False),
                         coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors)
                 elif _base_m in ("gnn_gat", "gnn_gat_dann", "gnn_gat_supcon3_dann",
-                                 "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3"):
+                                 "gnn_gat_coral", "gnn_gat_supcon3_coral", "gnn_gat_supcon3",
+                                 "gnn_gat_supcon"):
                     X_train_curve = build_neighbor_curve_stack(
                         X_AC[train_idx].astype(np.float32, copy=False),
                         coords_m[train_idx], well_ids_m[train_idx], k=k_neighbors)
@@ -1619,6 +1623,9 @@ def evaluate_outlier_filters(
                         model = create_cnn_gru_dual_supcon_model(T, n_classes); epochs = 500
                     elif _base_m == 'cnn_gru_dual_attn_recon_supcon':
                         model = create_cnn_gru_dual_attn_recon_supcon_model(
+                            X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
+                    elif _base_m == 'gnn_gat_supcon':
+                        model = create_gnn_gat_supcon_model(
                             X_train_curve.shape[1], X_train_curve.shape[2], n_classes); epochs = 500
                     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0))
 

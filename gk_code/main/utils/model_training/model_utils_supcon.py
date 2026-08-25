@@ -21,6 +21,7 @@ SUPCON_MODEL_KEYS = [
     'cnn_supcon', 'gru_supcon', 'transformer_supcon',
     'cnn_gru_dual_supcon', 'cnn_trans_dual_supcon',
     'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon',
+    'gnn_gat_supcon',
 ]
 
 # MTL + SupCon (classification + regression + contrastive)
@@ -320,6 +321,18 @@ def create_cnn_gru_dual_attn_recon_supcon_mtl_model(k_plus_1, T, n_classes, attn
     return _supcon_mtl_wrap(stack_input,
                             _build_cnn_gru_dual_attn_recon_embedding_mtl(stack_input, T, attn_dim),
                             n_classes)
+
+
+def create_gnn_gat_supcon_model(k_plus_1, T, n_classes):
+    """SC1 (single global embedding) GAT variant -- same recipe as
+    create_cnn_gru_dual_attn_recon_supcon_model above, just backed by GAT's own embedding
+    builder (return_branches=False, its default, gives the single fused embedding _supcon_wrap
+    expects) instead of the attn_recon one. create_gnn_gat_supcon3_model already reuses this
+    same builder with return_branches=True for the existing SC3/branch variant."""
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, T), name='neighbor_stack_input')
+    return _supcon_wrap(stack_input,
+                        _build_cnn_gru_dual_gat_recon_embedding_mtl(stack_input, T),
+                        n_classes)
 
 
 # ======================================================================

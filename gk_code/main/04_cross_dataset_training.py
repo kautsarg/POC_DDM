@@ -885,7 +885,7 @@ if __name__ == "__main__":
         # SINGLE-TASK (ST) MODELS
         else:
             if args.supcon == 1:
-                models = ['cnn_gru_dual_supcon', 'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon']
+                models = ['cnn_gru_dual_supcon', 'cnn_gru_dual_cosine_recon_supcon', 'cnn_gru_dual_attn_recon_supcon', 'gnn_gat_supcon']
             elif args.supcon == 2:
                 models = ['cnn_gru_dual_supcon2', 'cnn_gru_dual_cosine_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2']
             elif args.supcon == 3:

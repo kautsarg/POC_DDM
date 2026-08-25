@@ -9,12 +9,7 @@ from safe_io import safe_joblib_dump
 
 _LOCK_TIMEOUT_SECONDS = 300
 
-# res_entry (lofo_results[fold_label][filter]) keys that aren't tied to one
-# model -- duplicated into every per-model file for that (fold, filter) so
-# each file is self-contained.
-_SHARED_RES_ENTRY_KEYS = ("y_trues_", "_split_signature", "mask_count", "y_true_count")
-# lofo_results[fold_label] keys that are siblings of the filter keys (not
-# specific to any filter or model) -- duplicated into every file for that fold.
+_SHARED_RES_ENTRY_KEYS = ("y_trues_", "well_ids_test_", "_split_signature", "mask_count", "y_true_count")
 _SHARED_FOLD_KEYS = ("top_10_features", "class_names")
 
 _FILTER_TOKEN_RE = re.compile(r'[^A-Za-z0-9_.-]+')
