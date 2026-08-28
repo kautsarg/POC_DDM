@@ -215,6 +215,9 @@ def _pc_ttp_for_one_chip(exp_path_str, curve_type):
     return compute_ct_for_curves(pc["curves"], pc["timestamps"])
 
 
+_pc_ttp_for_one_chip.__module__ = "cross_dataset_training_pc_ttp_cache"
+
+
 def pc_ttp_per_chip(exp_paths, curve_type, cache_dir):
     """{chip_name: mean PC Ct}, disk-cached under cache_dir (sigmoid-fitting is slow)."""
     cached_fn = Memory(str(cache_dir), verbose=0).cache(_pc_ttp_for_one_chip)

@@ -204,7 +204,7 @@ def sg_p4_denoise_curves(curves):
 # ==========================================
 
 def run_outlier_detection_step(exp_path, dataset_name, dataset, Y_well, kinetic_features,
-                                save_plot_flag, batch_size=128):
+                                save_plot_flag, batch_size=32):
     """Global LSTM-AE outlier detection; merges label columns into kinetic_features."""
     sys.path.insert(0, str(_ROOT / "utils" / "model_training"))
     sys.path.insert(0, str(_ROOT / "utils" / "outlier_detection"))

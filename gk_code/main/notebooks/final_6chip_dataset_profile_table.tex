@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+    \centering
+    \caption{Per-well active-pixel curve counts across the six Lacewing eLAMP chips in the final\_6\_chip\_clean\_nn LOFO group, by target and concentration (copies/reaction), including each chip's positive (PC) and negative (NC) control wells. Struck-through values are excluded from LOFO training for that chip.}
+    \label{tab:final_6chip_profile}
+    \small
+    \begin{tabular}{@{}llrrrrrr@{}}
+    \toprule
+    \textbf{Target} & \textbf{Conc.} & \textbf{DDM_01} & \textbf{DDM_02} & \textbf{DDM_03} & \textbf{DDM_04} & \textbf{DDM_05} & \textbf{DDM_06} \\
+    \midrule
+    \multirow{3}{*}{IAV} & $10^4$ & 1,858 & -- & 1,786 & -- & -- & 1,890 \\
+     & $10^5$ & 1,949 & 1,855 & -- & -- & 1,955 & -- \\
+     & $10^6$ & 1,970 & 1,816 & -- & 1,920 & -- & -- \\
+    \midrule
+    \multirow{3}{*}{IBV} & $10^4$ & 1,907 & 1,469 & -- & 1,921 & -- & \sout{1,827} \\
+     & $10^5$ & -- & 1,799 & 1,852 & -- & -- & 1,936 \\
+     & $10^6$ & -- & 1,047 & 1,903 & -- & 1,919 & -- \\
+    \midrule
+    \multirow{3}{*}{KP} & $10^4$ & -- & 1,911 & 1,960 & -- & 1,943 & -- \\
+     & $10^5$ & 1,921 & -- & 1,663 & 1,884 & -- & -- \\
+     & $10^6$ & -- & -- & 1,964 & 1,950 & -- & 1,864 \\
+    \midrule
+    \multirow{3}{*}{SARS-CoV-2} & $10^4$ & -- & -- & \sout{1,928} & 1,920 & -- & 1,941 \\
+     & $10^5$ & -- & \sout{1,851} & -- & 1,913 & 1,921 & 1,916 \\
+     & $10^6$ & 1,848 & -- & -- & 1,808 & 1,884 & -- \\
+    \midrule
+    \multirow{3}{*}{hAdV} & $10^4$ & -- & \sout{1,894} & -- & -- & 1,903 & 3,787 \\
+     & $10^5$ & -- & -- & -- & 1,943 & 1,945 & -- \\
+     & $10^6$ & 1,919 & -- & 1,828 & -- & 1,979 & -- \\
+    \midrule
+    \multicolumn{2}{l}{\textbf{PC}} & \sout{791} & \sout{1,814} & \sout{1,755} & \sout{1,861} & \sout{1,896} & \sout{1,715} \\
+    \multicolumn{2}{l}{\textbf{NC}} & \sout{1,135} & \sout{1,778} & \sout{1,642} & \sout{1,315} & \sout{1,901} & \sout{1,810} \\
+    \midrule
+    \multicolumn{2}{l}{\textbf{Total}} & 15,298 & 17,234 & 18,281 & 18,435 & 19,246 & 18,686 \\
+    \bottomrule
+    \end{tabular}
+\end{table}

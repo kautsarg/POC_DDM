@@ -906,15 +906,6 @@ XAI_KINETIC_FEATURE_GROUP = {
     ],
 
     # ---------------------------------------------------------
-    # 13. Signal Noise & Physical Stability
-    # ---------------------------------------------------------
-    "snr_peak": [       # Signal-to-Noise against max peak
-        "snr_xms",      # Signal-to-Noise against max slope point
-        "baseline_std", # Standard deviation of the pre-reaction sensor noise
-        "plateau_std"   # Standard deviation of the post-reaction sensor noise
-    ],
-
-    # ---------------------------------------------------------
     # 14A. Pre-Reaction Drift (Sensor Settling)
     # ---------------------------------------------------------
     "baseline_slope": [], 
@@ -929,10 +920,6 @@ XAI_KINETIC_FEATURE_GROUP = {
         "Send_fit_abs"  # Absolute mean deriv of last 5 points (fitted)
     ],
 
-    # ---------------------------------------------------------
-    # 16. Overshoot (Curve dips/rebounds past its plateau)
-    # ---------------------------------------------------------
-    "overshoot_index": [],
 }
 
 # ==========================================
@@ -1118,7 +1105,79 @@ LABEL_MAPPINGS = {
         7: 'Hadv',
         8: 'PC',
         9: 'NC-ALL',
-    }
+    },
+    'D20260825_E00_C00_F4500KHz_U_DDM_05_01':{
+        0: 'Hadv',
+        1: 'Hadv',
+        2: 'Hadv',
+        3: 'IAV',
+        4: 'IBV',
+        5: 'Kp',
+        6: 'Cov',
+        7: 'Cov',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
+    'D20260825_E00_C00_F4500KHz_U_DDM_06_02':{
+        0: 'IAV',
+        1: 'IBV',
+        2: 'Kp',
+        3: 'Cov',
+        4: 'Hadv',
+        5: 'Cov',
+        6: 'IBV',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_02_final_final': {
+        0: 'IBV',
+        1: 'IBV',
+        2: 'IBV',
+        3: 'IAV',
+        4: 'IAV',
+        5: 'Kp',
+        6: 'Cov',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_01_final_final': {
+        0: 'IAV',
+        1: 'IAV',
+        2: 'IAV',
+        3: 'IBV',
+        4: 'Kp',
+        5: 'Cov',
+        6: 'Hadv',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_03_final_final': {
+        0: 'Kp',
+        1: 'Kp',
+        2: 'Kp',
+        3: 'IAV',
+        4: 'IBV',
+        5: 'IBV',
+        6: 'Cov',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_04_final_final': {
+        0: 'Cov',
+        1: 'Cov',
+        2: 'Cov',
+        3: 'IAV',
+        4: 'IBV',
+        5: 'Kp',
+        6: 'Kp',
+        7: 'Hadv',
+        8: 'PC',
+        9: 'NC-ALL',
+    },
 }
 
 CONC_MAPPINGS = {
@@ -1169,8 +1228,79 @@ CONC_MAPPINGS = {
         7: 100000,
         8: 0,
         9: 0,
-    }
-    
+    },
+    'D20260825_E00_C00_F4500KHz_U_DDM_05_01': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 100000,
+        4: 1000000,
+        5: 10000,
+        6: 1000000,
+        7: 100000,
+        8: 0,
+        9: 0,
+    },
+    'D20260825_E00_C00_F4500KHz_U_DDM_06_02': {
+        0: 10000,
+        1: 100000,
+        2: 1000000,
+        3: 10000,
+        4: 10000,
+        5: 100000,
+        6: 10000,
+        7: 10000,
+        8: 0,
+        9: 0,
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_02_final_final': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 1000000,
+        4: 100000,
+        5: 10000,
+        6: 100000,
+        7: 10000,
+        8: 0,
+        9: 0,
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_01_final_final':{
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 10000,
+        4: 100000,
+        5: 1000000,
+        6: 1000000,
+        7: 100000,
+        8: 0,
+        9: 0,
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_03_final_final': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 10000,
+        4: 1000000,
+        5: 100000,
+        6: 10000,
+        7: 1000000,
+        8: 0,
+        9: 0,
+    },
+    'D20260827_E00_C00_F4500KHz_U_DDM_04_final_final': {
+        0: 1000000,
+        1: 100000,
+        2: 10000,
+        3: 1000000,
+        4: 10000,
+        5: 1000000,
+        6: 100000,
+        7: 100000,
+        8: 0,
+        9: 0,
+    },
 }
 
 EXCLUDE_WELL_MAPPING = {
@@ -1178,6 +1308,12 @@ EXCLUDE_WELL_MAPPING = {
     'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8, 9],
     'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
     'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8, 9],
+    'D20260825_E00_C00_F4500KHz_U_DDM_05_01': [8, 9],
+    'D20260825_E00_C00_F4500KHz_U_DDM_06_02': [6, 8, 9],
+    'D20260827_E00_C00_F4500KHz_U_DDM_02_final_final': [8, 9],
+    'D20260827_E00_C00_F4500KHz_U_DDM_01_final_final': [8, 9],
+    'D20260827_E00_C00_F4500KHz_U_DDM_03_final_final': [8, 9],
+    'D20260827_E00_C00_F4500KHz_U_DDM_04_final_final': [8, 9],
 }
 
 def get_label_mappings(exp_path):
@@ -1268,6 +1404,9 @@ CROSS_DATASET_GROUPS = {
     'final_4_chip_cov_nc': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
     'final_4_chip_iav_nc': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
     'final_4_chip_cov_iav_nc': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01'],
+    'final_6_chip_clean_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01', 'D20260825_E00_C00_F4500KHz_U_DDM_05_01', 'D20260825_E00_C00_F4500KHz_U_DDM_06_02'],
+    'final_6_chip_cleanv2_nn': ['D20260806_E00_C00_F4500KHz_U_DDM_01_06', 'D20260807_E00_C00_F4500KHz_U_DDM_02_07', 'D20260808_E00_C00_F4500KHz_U_DDM_03_01', 'D20260810_E00_C00_F4500KHz_U_DDM_04_01', 'D20260825_E00_C00_F4500KHz_U_DDM_05_01', 'D20260825_E00_C00_F4500KHz_U_DDM_06_02'],
+    'final_6_new': ['D20260827_E00_C00_F4500KHz_U_DDM_01_final_final', 'D20260827_E00_C00_F4500KHz_U_DDM_02_final_final', 'D20260827_E00_C00_F4500KHz_U_DDM_03_final_final', 'D20260827_E00_C00_F4500KHz_U_DDM_04_final_final', 'D20260825_E00_C00_F4500KHz_U_DDM_05_01', 'D20260825_E00_C00_F4500KHz_U_DDM_06_02'],
 }
 
 LOFO_EXCLUDE_WELL_MAPPING = {
@@ -1316,5 +1455,29 @@ LOFO_EXCLUDE_WELL_MAPPING = {
         'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [0, 1, 2, 5, 6, 7, 8],     # 3, 4, 9
         'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [0, 1, 2, 4, 5, 6, 7, 8],  # 3, 9
         'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [4, 5, 6, 7, 8],           # 0, 1, 2, 3, 9
+    },
+    'final_6_chip_clean_nn': { #no PC, no NC, no no-amp
+        'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
+        'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [6, 7, 8, 9],
+        'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
+        'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_05_01': [8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_06_02': [6, 8, 9],
+    },
+    'final_6_chip_cleanv2_nn': { #no PC, no NC, no no-amp, no small-amp
+        'D20260806_E00_C00_F4500KHz_U_DDM_01_06': [8, 9],
+        'D20260807_E00_C00_F4500KHz_U_DDM_02_07': [5, 6, 7, 8, 9],
+        'D20260808_E00_C00_F4500KHz_U_DDM_03_01': [6, 8, 9],
+        'D20260810_E00_C00_F4500KHz_U_DDM_04_01': [4, 5, 6, 8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_05_01': [8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_06_02': [6, 8, 9],
+    },
+    'final_6_new': { #no PC, no NC, no no-amp
+        'D20260827_E00_C00_F4500KHz_U_DDM_01_final_final': [8, 9],
+        'D20260827_E00_C00_F4500KHz_U_DDM_02_final_final': [8, 9],
+        'D20260827_E00_C00_F4500KHz_U_DDM_03_final_final': [8, 9],
+        'D20260827_E00_C00_F4500KHz_U_DDM_04_final_final': [8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_05_01': [8, 9],
+        'D20260825_E00_C00_F4500KHz_U_DDM_06_02': [6, 8, 9],
     },
 }

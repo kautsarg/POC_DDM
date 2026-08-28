@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fnl_3to5_lofo_full
+#SBATCH --job-name=fnl_3to5_nc_lofo_full
 #SBATCH --time=72:00:00
 
 # Request resources for a single job
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=a30
+#SBATCH --partition=a100
 #SBATCH --array=13   #### ===>  13 (nc vs non nc?)
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -23,8 +23,8 @@ source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 export PYTHONPATH="/vol/bitbucket/gk225/POC_DDM:/vol/bitbucket/gk225/POC_DDM/gk_code:$PYTHONPATH"
 cd /vol/bitbucket/gk225/POC_DDM/gk_code/main
 
-# EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
-EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final/"
+EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
+# EXP_FOLDER="/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final/"
 
 BASE_MODELS="cnn_gru_dual_attn_recon" # cnn_gru_dual gnn_gat"
 DANN_MODELS="cnn_gru_dual_attn_recon_dann" # cnn_gru_dual_dann gnn_gat_dann"

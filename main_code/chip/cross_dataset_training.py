@@ -101,6 +101,10 @@ def load_curve_data(exp_path, curve_type, group_name=None):
                               else Y_well_raw)
             well_ids = np.array([f"{exp_path.name}::{w}" for w in well_id_local], dtype=object)
 
+    concentration_raw = (np.asarray(data["concentration"], dtype=object)
+                         if data.get("concentration") is not None
+                         else np.full(len(Y_well_raw), None, dtype=object))
+
     return {
         "curves": data["dataset"][idx],
         "features_df": data["kinetic_features"][idx].loc[:, ~data["kinetic_features"][idx].columns.duplicated()].reset_index(drop=True),
@@ -110,6 +114,7 @@ def load_curve_data(exp_path, curve_type, group_name=None):
         "dataset_id": exp_path.name,
         "coords": coords,
         "well_ids": well_ids,
+        "concentration_raw": concentration_raw,
     }
 
 
@@ -277,6 +282,7 @@ def combine_group(exp_paths, group_name, curve_type, held_out_chip, pc_ttp_cache
         "resampler": resampler,
         "coords": coords_combined,
         "well_ids": well_ids_combined,
+        "concentration_raw": np.concatenate([p["concentration_raw"] for p in parts], axis=0),
         "pc_ttp_recipe": {
             "anchor": anchor, "anchor_method": anchor_method,
             "common_duration": common_duration, "pc_ttp_per_chip": pc_ttp,

@@ -13,6 +13,7 @@ sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
+from cross_dataset_result_io import frac_suffix
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -20,15 +21,20 @@ import tensorflow as tf
 from saliency import (extract_dual_saliency, plot_per_label_saliency_heatmap,
                       compute_kinetic_feature_cache, plot_latent_feature_mapping)
 
-EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract"
+# EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final_nc_subtract"
+EXP_FOLDER = "/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final"
 DATASETS = [
     "D20260806_E00_C00_F4500KHz_U_DDM_01_06",
     "D20260807_E00_C00_F4500KHz_U_DDM_02_07",
     "D20260808_E00_C00_F4500KHz_U_DDM_03_01",
     "D20260810_E00_C00_F4500KHz_U_DDM_04_01",
-]
-MODEL_KEYS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
-CURVE_TYPES = ['ori_curve_norm', 'ori_curve_sg_p4_norm']
+    "D20260825_E00_C00_F4500KHz_U_DDM_05_01",
+    "D20260825_E00_C00_F4500KHz_U_DDM_06_02"
+] 
+# MODEL_KEYS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
+# CURVE_TYPES = ['ori_curve_norm', 'ori_curve_sg_p4_norm']
+MODEL_KEYS = ['cnn_gru_dual_attn_recon']
+CURVE_TYPES = ['ori_curve_sg_p4_norm']
 EXTRACT_N_DIMS = 100
 
 
@@ -94,7 +100,8 @@ def predict_labels(model, X_batch, batch_size=256):
 
 
 def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
-    model_path = exp_path / "model_interpretation" / f"{model_key}_None_{curve_type}_model.keras"
+    model_path = exp_path / "ablations/model_interpretation" / f"{model_key}_None_{curve_type}_model.keras"
+
     if not model_path.is_file():
         print(f"  [!] Missing model, skipping: {model_path}")
         return
@@ -147,9 +154,9 @@ if __name__ == "__main__":
                     "plots across POC_DDM_final_nc_subtract's 4 chips.")
     parser.add_argument("--n_dims", type=int, default=25, metavar="N",
                         help="Top N latent dims per branch to show in the saliency heatmap (default: 25).")
-    parser.add_argument("--top_n", type=int, default=10, metavar="N",
+    parser.add_argument("--top_n", type=int, default=5, metavar="N",
                         help="Top N unique-feature latent dims per branch to show in the "
-                             "latent-feature-mapping plot (default: 10).")
+                             "latent-feature-mapping plot (default: 5).")
     parser.add_argument("--batch_n", type=int, default=512, metavar="N",
                         help="Number of samples to draw for gradient computation (default: 512).")
     parser.add_argument("--seed", type=int, default=42,

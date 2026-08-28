@@ -722,6 +722,19 @@ def _remap_global_splits(global_splits, mask, valid_mask=None):
     return remapped
 
 
+def _split_test_signature(test_index, well_ids_m, coords_m):
+    if well_ids_m is not None and coords_m is not None:
+        wells = well_ids_m[test_index]
+        rows = coords_m[test_index, 0]
+        cols = coords_m[test_index, 1]
+        ids = np.array([f"{w}|{r!r},{c!r}" for w, r, c in zip(wells, rows, cols)], dtype=object)
+        ids.sort()
+        payload = "\n".join(ids).encode("utf-8")
+    else:
+        payload = np.sort(test_index).tobytes()
+    return hashlib.md5(payload).hexdigest()
+
+
 def build_well_stratified_random_split(y, well_ids, test_size=0.1, random_state=0):
     sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
     train_idx, test_idx = next(sss.split(np.zeros(len(y)), well_ids))
@@ -938,7 +951,7 @@ def evaluate_outlier_filters(
                   f"(likely changed upstream). Discarding stale cache for this filter.")
             res_entry = {}
         
-        _split_signature = tuple(hashlib.md5(np.sort(test_index).tobytes()).hexdigest() for _, test_index in splits)
+        _split_signature = tuple(_split_test_signature(test_index, well_ids_m, coords_m) for _, test_index in splits)
         _train_crop_signature = train_center_frac
         _had_cached_predictions = any(k.startswith(('y_preds_', 'y_reg_preds_')) for k in res_entry)
         if (res_entry.get("_split_signature") != _split_signature

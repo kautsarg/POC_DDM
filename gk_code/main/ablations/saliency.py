@@ -5,8 +5,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from sklearn.feature_selection import mutual_info_regression
 
@@ -113,8 +111,8 @@ def _extract_dual_saliency_neighbor_stack(model, X_batch, n_dims):
     dy_dz_cnn = np.concatenate(dy_dz_cnn_parts, axis=0)
     dy_dz_rnn = np.concatenate(dy_dz_rnn_parts, axis=0)
 
-    cnn_order = _rank_latents(dy_dz_cnn * np.abs(z_cnn), n_dims)
-    rnn_order = _rank_latents(dy_dz_rnn * np.abs(z_rnn), n_dims)
+    cnn_order = _rank_latents(dy_dz_cnn, n_dims)
+    rnn_order = _rank_latents(dy_dz_rnn, n_dims)
 
     extractor_cnn = tf.keras.Model(recon_t, flatten_layer.output)
     extractor_rnn = tf.keras.Model(recon_t, recurrent_layer.output)
@@ -169,8 +167,8 @@ def extract_dual_saliency(model, X_batch, n_dims=100):
     dy_dz_rnn = tape.gradient(target_master, z_rnn).numpy()
     del tape
 
-    cnn_order = _rank_latents(dy_dz_cnn * np.abs(z_cnn.numpy()), n_dims)
-    rnn_order = _rank_latents(dy_dz_rnn * np.abs(z_rnn.numpy()), n_dims)
+    cnn_order = _rank_latents(dy_dz_cnn, n_dims)
+    rnn_order = _rank_latents(dy_dz_rnn, n_dims)
 
     return {
         'raw_saliency_curve': _latent_saliency_batch(extractor_cnn, x_tf, cnn_order),
@@ -223,7 +221,7 @@ def plot_per_label_saliency_heatmap(
     if show_std:
         ax0.fill_between(timestamps, mean_c - std_c, mean_c + std_c, color='gray', alpha=0.22, label=f'\xb11σ  N={n_correct}')
         ax0.legend(fontsize=8, loc='upper left', framealpha=0.8)
-    ax0.set_title(f'{class_name}  |  View A (normalised)  |  correct N={n_correct}/{n_total}', fontsize=10, fontweight='bold')
+    ax0.set_title(f'{class_name} Amplification Curve', fontsize=10, fontweight='bold')
     ax0.set_xlim(t_start, t_end)
     ax0.grid(True, color='grey', alpha=0.22, ls='--')
     ax0.tick_params(labelsize=7)
@@ -254,7 +252,7 @@ def plot_per_label_saliency_heatmap(
     ax3b.set_yticks([])
     ax3.set_xlabel('Cycle', fontsize=9)
     ax3.set_ylabel('Fluor.', fontsize=8, color='#16213E')
-    ax3.set_title('Σ|∂Z/∂X| (row-norm, collapsed)', fontsize=9, fontweight='bold')
+    ax3.set_title('Aggregated Latent Saliency (CNN + GRU)', fontsize=9, fontweight='bold')
     ax3.grid(True, color='grey', alpha=0.20, ls='--')
     ax3.tick_params(labelsize=7)
 
@@ -378,7 +376,7 @@ def plot_latent_feature_mapping(
     art, model_name, timestamps,
     feat_matrix, feat_sensitivity, feat_names,
     mean_curve, dataset_name, save_path,
-    TOP_N=10, w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
+    TOP_N=5, w_spearman=0.35, w_mi=0.25, w_cosine=0.40,
     sample_mask=None,
 ):
     """sample_mask: optional boolean array over the batch -- restricts z_traces,
@@ -503,18 +501,6 @@ def plot_latent_feature_mapping(
     )
 
 
-_METRIC_TITLES = {
-    "combined": None,
-    "spearman": "Score = |Spearman correlation| between latent activation and feature value",
-    "mi":       "Score = Mutual Information (normalized) between latent activation and feature value",
-    "cosine":   "Score = Cosine similarity between saliency profile and feature sensitivity profile",
-}
-_METRIC_CBAR_LABELS = {
-    "combined": "Combined Mapping Score",
-    "spearman": "|Spearman Correlation|",
-    "mi":       "Mutual Information (normalized)",
-    "cosine":   "Cosine Similarity",
-}
 _GROUP_COLOURS = {
     'timing':     '#1a6faf',
     'shape':      '#c45c00',
@@ -579,27 +565,20 @@ def render_latent_feature_mapping_figure(
     row_h = 1.6
     fig_h = total_rows * row_h + 1.8
     fig_w = 18.3
-    bar_w_ratio = 4
+    bar_w_ratio = 2.5
 
-    score_subtitle = _METRIC_TITLES[metric] or (
-        f"Score = {w_spearman:.0%}·|Spearman| + {w_mi:.0%}·MI + {w_cosine:.0%}·Cos(saliency, sensitivity)"
-    )
-    score_subtitle += "  |  bar height/colour normalised per latent to its own best match; label shows the true score"
+    target = dataset_name.rsplit('|', 1)[-1].strip() if '|' in dataset_name else dataset_name
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor='white')
-    fig.suptitle(
-        f"{dataset_name} | {model_name.upper()} — Latent → Feature Mapping\n{score_subtitle}",
-        fontsize=12, fontweight='bold', y=1.0
-    )
+    fig.suptitle(f"{target} Kinetic Feature Correlation", fontsize=17, fontweight='bold', y=1.0)
 
     gs = fig.add_gridspec(
         total_rows, 2,
         width_ratios=[1, bar_w_ratio],
-        hspace=0.15, wspace=0.04,
+        hspace=0.45, wspace=0.04,
         left=0.04, right=0.97, top=0.94, bottom=0.08
     )
 
     cmap_bar = plt.cm.YlOrRd
-    tick_colours = [_GROUP_COLOURS.get(_FEAT_GROUP.get(fn, 'other'), '#333333') for fn in feat_names]
     x_positions = np.arange(n_feats)
 
     global_row = 0
@@ -637,7 +616,7 @@ def render_latent_feature_mapping_figure(
             ax_curve.plot(t, mean_curve, color='black', lw=1.0)
             ax_curve.set_xlim(t_start, t_end)
             ax_curve.set_yticks([])
-            ax_curve.tick_params(axis='x', labelsize=6)
+            ax_curve.tick_params(axis='x', labelsize=9)
             ax_curve.spines[['top', 'right']].set_visible(False)
 
             ax_sal = ax_curve.twinx()
@@ -658,18 +637,18 @@ def render_latent_feature_mapping_figure(
                                           lw=1.2, linestyle=':', zorder=5)
 
             if i == 0 and label is not None:
-                ax_curve.set_title(f"{label} Branch", fontsize=10,
-                                    fontweight='bold', loc='left', pad=4)
+                ax_curve.set_title(f"{label} Branch", fontsize=14,
+                                    fontweight='bold', loc='left', pad=10)
 
             ax_curve.set_ylabel(
                 f"Rank {true_ranks[i]}\n(dim {flat_idx})",
-                fontsize=7, fontweight='bold', rotation=0,
-                labelpad=38, va='center'
+                fontsize=10, fontweight='bold', rotation=0,
+                labelpad=44, va='center'
             )
             if global_row < total_rows - 1:
                 plt.setp(ax_curve.get_xticklabels(), visible=False)
             else:
-                ax_curve.set_xlabel("Time", fontsize=7)
+                ax_curve.set_xlabel("Time", fontsize=10)
 
             ax_bar = fig.add_subplot(gs[global_row, 1])
             bar_colours = [cmap_bar(s) for s in scores_row_disp]
@@ -679,56 +658,26 @@ def render_latent_feature_mapping_figure(
             ax_bar.text(
                 best_j, scores_row_disp[best_j] + 0.02,
                 f"★ {feat_names[best_j]}\n({score_best:.2f})",
-                ha='center', va='bottom', fontsize=6.5, fontweight='bold',
+                ha='center', va='bottom', fontsize=9.5, fontweight='bold',
                 color='#222222',
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
                           edgecolor='#888888', alpha=0.85, linewidth=0.7)
             )
 
             ax_bar.set_xlim(-0.5, n_feats - 0.5)
-            ax_bar.set_ylim(0, 1.15)
+            ax_bar.set_ylim(0, 1.34)
             ax_bar.set_yticks([0, 0.5, 1.0])
-            ax_bar.tick_params(axis='y', labelsize=6)
+            ax_bar.tick_params(axis='y', labelsize=9)
             ax_bar.spines[['top', 'right']].set_visible(False)
             ax_bar.axhline(0.5, color='#aaaaaa', lw=0.5, linestyle='--')
-
-            if i == 0 and label is not None:
-                ax_bar.set_title(f"{label} branch — Top {k} unique-feature latent dims by |dY/dZ|",
-                                  fontsize=9, loc='left', pad=4, color='#555555')
 
             if global_row < total_rows - 1:
                 ax_bar.set_xticks([])
             else:
                 ax_bar.set_xticks(x_positions)
-                ax_bar.set_xticklabels(feat_names, rotation=60, ha='right', fontsize=6.5)
-                for tick, col in zip(ax_bar.get_xticklabels(), tick_colours):
-                    tick.set_color(col)
+                ax_bar.set_xticklabels(feat_names, rotation=60, ha='right', fontsize=13)
 
             global_row += 1
-
-    legend_handles = [
-        Patch(facecolor=col, label=grp.capitalize())
-        for grp, col in _GROUP_COLOURS.items()
-        if grp != 'other'
-    ]
-    legend_handles.append(
-        Line2D([0], [0], color=_GROUP_COLOURS['timing'], lw=1.2, linestyle=':',
-               label='Best-match timestamp\n(if timing feature)')
-    )
-    fig.legend(
-        handles=legend_handles,
-        title="Feature group", title_fontsize=8,
-        fontsize=7, loc='lower right',
-        bbox_to_anchor=(0.98, 0.0),
-        ncol=4, framealpha=0.9
-    )
-
-    sm = plt.cm.ScalarMappable(cmap=cmap_bar, norm=plt.Normalize(0, 1))
-    sm.set_array([])
-    cbar_ax = fig.add_axes([0.975, 0.10, 0.008, 0.80])
-    fig.colorbar(sm, cax=cbar_ax).set_label(
-        _METRIC_CBAR_LABELS[metric], rotation=270, labelpad=12, fontsize=8
-    )
 
     fig.savefig(save_path, dpi=200, bbox_inches='tight', facecolor='white')
     plt.close(fig)

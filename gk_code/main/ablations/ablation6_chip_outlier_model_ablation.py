@@ -22,16 +22,23 @@ import tensorflow as tf
 tf.keras.mixed_precision.set_global_policy('mixed_float16')
 tf.config.optimizer.set_jit(True)
 
-EXP_FOLDER = f"{config.FINAL_EXP_FOLDER}_nc_subtract"
+# EXP_FOLDER = f"{config.FINAL_EXP_FOLDER}_nc_subtract"
+EXP_FOLDER = f"{config.FINAL_EXP_FOLDER}"
 DATASETS = [
     "D20260806_E00_C00_F4500KHz_U_DDM_01_06",   # chip 01
     "D20260807_E00_C00_F4500KHz_U_DDM_02_07",   # chip 02
     "D20260808_E00_C00_F4500KHz_U_DDM_03_01",   # chip 03
     "D20260810_E00_C00_F4500KHz_U_DDM_04_01",   # chip 04
+    "D20260825_E00_C00_F4500KHz_U_DDM_05_01",   # chip 05
+    "D20260825_E00_C00_F4500KHz_U_DDM_06_02",    # chip 06
+    "D20260827_E00_C00_F4500KHz_U_DDM_02_final_final"  # chip 02 final
 ]
-MODELS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon', 'gnn_gat']
-OUTLIER_FILTERS = [None, 'amf_label_amf_send_5',
-                    f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow']
+
+# MODELS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon', 'gnn_gat']
+MODELS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
+# OUTLIER_FILTERS = [None, 'amf_label_amf_send_5',
+#                     f'lstm_ae_glb_ds{config.AE_DOWNSAMPLE_FACTOR}_label_elbow']
+OUTLIER_FILTERS = [None]
 DEFAULT_CURVE_TYPE = "ori_curve_sg_p4_norm"
 
 
@@ -182,9 +189,12 @@ def run_one(exp_path, curve_type, n_splits, batch_size, force_rerun=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ablation 6: Chip x Outlier-Detection x Model Ablation")
-    parser.add_argument("--task_id", type=int, default=0, choices=[0, 1, 2, 3],
+    parser.add_argument("--task_id", type=int, default=0,
                         help="Index into DATASETS -- 0=chip01, 1=chip02, 2=chip03, 3=chip04. "
                              "One task = one chip.")
+    parser.add_argument("--exp_folder", type=str, default=EXP_FOLDER,
+                        help="Root containing each chip's experiment folder (default: "
+                             f"{EXP_FOLDER!r}).")
     parser.add_argument("--curve_type", type=str, default=DEFAULT_CURVE_TYPE)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=512)
@@ -198,7 +208,7 @@ if __name__ == "__main__":
     print(f"\n{'='*70}\n[RUNNING] ablation6_chip_outlier_model_ablation.py\n{'='*70}\n")
     set_global_determinism(0, strict=not args.fast_mode)
 
-    exp_path = Path(EXP_FOLDER) / DATASETS[args.task_id]
+    exp_path = Path(args.exp_folder) / DATASETS[args.task_id]
 
     print(f"\n{'#'*80}\nSTARTING ABLATION 6 -- task_id={args.task_id} -- {exp_path.name}\n{'#'*80}")
 

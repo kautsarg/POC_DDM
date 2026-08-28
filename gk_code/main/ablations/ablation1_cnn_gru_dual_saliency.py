@@ -127,9 +127,9 @@ if __name__ == "__main__":
         description="cnn_gru_dual saliency + latent-feature-mapping plots for Ablation 1's 3 LAB datasets.")
     parser.add_argument("--n_dims", type=int, default=25, metavar="N",
                         help="Top N latent dims per branch to show in the saliency heatmap (default: 25).")
-    parser.add_argument("--top_n", type=int, default=10, metavar="N",
+    parser.add_argument("--top_n", type=int, default=5, metavar="N",
                         help="Top N unique-feature latent dims per branch to show in the "
-                             "latent-feature-mapping plot (default: 10).")
+                             "latent-feature-mapping plot (default: 5).")
     parser.add_argument("--batch_n", type=int, default=512, metavar="N",
                         help="Number of samples to draw for gradient computation (default: 512).")
     parser.add_argument("--seed", type=int, default=42,
