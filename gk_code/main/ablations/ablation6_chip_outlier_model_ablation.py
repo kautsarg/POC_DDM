@@ -14,6 +14,7 @@ sys.path.insert(0, str(_MAIN_DIR / "utils" / "model_training"))
 
 from safe_io import safe_joblib_dump
 from model_utils import evaluate_outlier_filters, plot_ml_results, set_global_determinism
+from pipeline_utils import get_exp_paths, check_task_id
 
 import config
 
@@ -24,15 +25,6 @@ tf.config.optimizer.set_jit(True)
 
 # EXP_FOLDER = f"{config.FINAL_EXP_FOLDER}_nc_subtract"
 EXP_FOLDER = f"{config.FINAL_EXP_FOLDER}"
-DATASETS = [
-    "D20260806_E00_C00_F4500KHz_U_DDM_01_06",   # chip 01
-    "D20260807_E00_C00_F4500KHz_U_DDM_02_07",   # chip 02
-    "D20260808_E00_C00_F4500KHz_U_DDM_03_01",   # chip 03
-    "D20260810_E00_C00_F4500KHz_U_DDM_04_01",   # chip 04
-    "D20260825_E00_C00_F4500KHz_U_DDM_05_01",   # chip 05
-    "D20260825_E00_C00_F4500KHz_U_DDM_06_02",    # chip 06
-    "D20260827_E00_C00_F4500KHz_U_DDM_02_final_final"  # chip 02 final
-]
 
 # MODELS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon', 'gnn_gat']
 MODELS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
@@ -190,8 +182,10 @@ def run_one(exp_path, curve_type, n_splits, batch_size, force_rerun=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ablation 6: Chip x Outlier-Detection x Model Ablation")
     parser.add_argument("--task_id", type=int, default=0,
-                        help="Index into DATASETS -- 0=chip01, 1=chip02, 2=chip03, 3=chip04. "
-                             "One task = one chip.")
+                        help="Index into the sorted list of experiment folders under "
+                             "--exp_folder (same resolution as 01_curve_preprocessing_v6.py / "
+                             "pipeline_utils.get_exp_paths) -- one task = one chip folder, "
+                             "out-of-range exits cleanly instead of erroring.")
     parser.add_argument("--exp_folder", type=str, default=EXP_FOLDER,
                         help="Root containing each chip's experiment folder (default: "
                              f"{EXP_FOLDER!r}).")
@@ -208,7 +202,9 @@ if __name__ == "__main__":
     print(f"\n{'='*70}\n[RUNNING] ablation6_chip_outlier_model_ablation.py\n{'='*70}\n")
     set_global_determinism(0, strict=not args.fast_mode)
 
-    exp_path = Path(args.exp_folder) / DATASETS[args.task_id]
+    exp_paths = get_exp_paths(args.exp_folder)
+    check_task_id(args.task_id, exp_paths)
+    exp_path = exp_paths[args.task_id]
 
     print(f"\n{'#'*80}\nSTARTING ABLATION 6 -- task_id={args.task_id} -- {exp_path.name}\n{'#'*80}")
 
