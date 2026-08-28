@@ -894,7 +894,7 @@ if __name__ == "__main__":
             elif args.supcon == 3:
                 models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3', 'gnn_gat_supcon3']
             else:
-                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'gnn_gat']
+                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'gnn_gat']
 
         if args.models:
             import re
@@ -913,6 +913,13 @@ if __name__ == "__main__":
 
             models = [m for m in models
                       if m in _req or _strip_variant_suffixes(m) in _req]
+
+        # TEMPORARY: jobs 279786/279787 are already queued (--mode lofo --array=13,
+        if (args.mode == "lofo" and 'cnn_gru_dual_attn_recon' in models
+                and 'cnn_gru_dual_attn_recon_aug' not in models):
+            models.append('cnn_gru_dual_attn_recon_aug')
+            print("  [TEMP] Auto-added cnn_gru_dual_attn_recon_aug alongside cnn_gru_dual_attn_recon "
+                  "(see comment above this line -- remove after jobs 279786/279787 complete).")
 
         lofo_results = load_partitioned(out_dir, _mode_str, curve_type,
                                          train_center_frac=args.train_center_frac)

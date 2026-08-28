@@ -1,0 +1,53 @@
+#!/bin/bash
+#PBS -N abl6_chip_outlier_model_ablation
+#PBS -l walltime=36:00:00
+#PBS -l select=1:ncpus=8:mem=48gb:ngpus=1
+#PBS -J 4-9
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/abl6_chip_outlier_model_ablation/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/abl6_chip_outlier_model_ablation/
+#PBS -k eo
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/abl6_chip_outlier_model_ablation
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+TASK_ID=${PBS_ARRAY_INDEX}
+
+RAW_EXP_FOLDER="/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_final"
+# EXP_FOLDER="${RAW_EXP_FOLDER}_nc_subtract"
+EXP_FOLDER="${RAW_EXP_FOLDER}"
+
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)
+case "$GPU_NAME" in
+    *A30*) BATCH_SIZE=1024; AE_BATCH_SIZE=128 ;;
+    *)     BATCH_SIZE=2048; AE_BATCH_SIZE=256 ;;
+esac
+echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}  lstm_ae_batch_size=${AE_BATCH_SIZE}"
+
+
+python -u 01_curve_preprocessing_v6.py \
+    --task_id ${TASK_ID} --exp_folder ${RAW_EXP_FOLDER} \
+    --n_wells 10 --n_a_type v06 --sg_p4 --normalize_curves --drop_pc
+    # --nc_subtract
+
+python -u 02_outlier_detection_pipeline.py \
+    --task_id ${TASK_ID} --exp_folder ${EXP_FOLDER} \
+    --filters
+
+python -u ablations/ablation6_chip_outlier_model_ablation.py \
+    --task_id ${TASK_ID} --exp_folder ${EXP_FOLDER} \
+    --curve_type ori_curve_sg_p4_norm \
+    --n_splits 5 \
+    --batch_size ${BATCH_SIZE}
+
+deactivate

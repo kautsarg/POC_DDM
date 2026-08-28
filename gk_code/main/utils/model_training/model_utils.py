@@ -8,6 +8,7 @@ import gc
 import time
 import random
 import hashlib
+import zlib
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -308,6 +309,65 @@ def build_neighbor_curve_stack(curves, coords, well_ids, k):
             stack[global_i, 1:] = well_curves[chosen]
 
     return stack
+
+AUG_SHIFT_MAX_FRAMES = 50.0
+AUG_STRETCH_RANGE = (0.85, 1.15)
+
+
+def augment_neighbor_stack_temporal(stack, shift_max=AUG_SHIFT_MAX_FRAMES,
+                                    stretch_range=AUG_STRETCH_RANGE, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
+    batch, kp1, T = stack.shape
+    out = np.empty_like(stack)
+    shifts = rng.uniform(-shift_max, shift_max, size=batch)
+    stretches = rng.uniform(stretch_range[0], stretch_range[1], size=batch)
+    grid = np.arange(T, dtype=np.float64)
+
+    for i in range(batch):
+        s_int = int(round(shifts[i]))
+        r = stretches[i]
+        sub = stack[i]                                    # (k+1, T)
+
+        if s_int > 0:                                      # delay onset
+            shifted = np.empty_like(sub)
+            shifted[:, :s_int] = sub[:, :1]
+            shifted[:, s_int:] = sub[:, :T - s_int]
+        elif s_int < 0:                                     # advance onset
+            shifted = np.empty_like(sub)
+            shifted[:, s_int:] = sub[:, -1:]
+            shifted[:, :s_int] = sub[:, -s_int:]
+        else:
+            shifted = sub
+
+        query = grid / r
+        for j in range(kp1):
+            out[i, j] = np.interp(query, grid, shifted[j],
+                                   left=shifted[j, 0], right=shifted[j, -1])
+    return out
+
+
+class _AugmentedStackSequence(tf.keras.utils.Sequence):
+    def __init__(self, X, y, batch_size, shift_max=AUG_SHIFT_MAX_FRAMES,
+                stretch_range=AUG_STRETCH_RANGE, rng=None):
+        self.X, self.y = X, y
+        self.batch_size = batch_size
+        self.shift_max, self.stretch_range = shift_max, stretch_range
+        self.rng = rng if rng is not None else np.random.default_rng()
+        self.indices = np.arange(len(y))
+        self.rng.shuffle(self.indices)
+
+    def __len__(self):
+        return int(np.ceil(len(self.y) / self.batch_size))
+
+    def __getitem__(self, idx):
+        batch_idx = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+        X_batch = augment_neighbor_stack_temporal(
+            self.X[batch_idx], self.shift_max, self.stretch_range, self.rng)
+        return X_batch, self.y[batch_idx]
+
+    def on_epoch_end(self):
+        self.rng.shuffle(self.indices)
 
 
 def crop_train_to_well_centers(train_index, coords, well_ids, frac):
@@ -773,6 +833,7 @@ _XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under 
 
 _XAI_SAVE_NAME['cnn_gru_dual_cosine_recon'] = 'cnn_gru_dual_cosine_recon'
 _XAI_SAVE_NAME['cnn_gru_dual_attn_recon'] = 'cnn_gru_dual_attn_recon'
+_XAI_SAVE_NAME['cnn_gru_dual_attn_recon_aug'] = 'cnn_gru_dual_attn_recon_aug'
 _XAI_SAVE_NAME['gnn_gat'] = 'gnn_gat'
 _XAI_SAVE_NAME.update({_k: _k for _k in ALL_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_MTL_MODEL_KEYS})
@@ -827,6 +888,7 @@ def evaluate_outlier_filters(
 
     _SPATIAL_RECON_MODELS = (
         "cnn_gru_dual_cosine_recon",         "cnn_gru_dual_attn_recon",
+        "cnn_gru_dual_attn_recon_aug",
         "cnn_gru_dual_cosine_recon_mtl",     "cnn_gru_dual_attn_recon_mtl",
         "cnn_gru_dual_cosine_recon_supcon",     "cnn_gru_dual_attn_recon_supcon",
         "cnn_gru_dual_cosine_recon_supcon_mtl", "cnn_gru_dual_attn_recon_supcon_mtl",
@@ -1066,7 +1128,7 @@ def evaluate_outlier_filters(
                     X_test_curve = reconstruct_curves_cosine(build_neighbor_curve_stack(
                         X_AC[test_idx].astype(np.float32, copy=False),
                         coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors))
-                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_mtl',
+                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'cnn_gru_dual_attn_recon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
                                   'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl',
@@ -1250,6 +1312,42 @@ def evaluate_outlier_filters(
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
+                elif _base_m == "cnn_gru_dual_attn_recon_aug":
+                    tf.keras.backend.clear_session()
+                    model = create_cnn_gru_dual_attn_recon_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    epochs = 500
+
+                    _aug_rng = np.random.default_rng(
+                        seed=zlib.crc32(f"{mode_name}|{f}|{m}".encode()) & 0x7fffffff)
+
+                    if _val_split_ok:
+                        _train_seq = _AugmentedStackSequence(
+                            X_train_curve_fit, y_train_fit, batch_size=_bs, rng=_aug_rng)
+                        _hist = model.fit(_train_seq,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, verbose=0,
+                                 callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
+                    else:
+                        _train_seq = _AugmentedStackSequence(
+                            X_train_curve, y_train, batch_size=_bs, rng=_aug_rng)
+                        _hist = model.fit(_train_seq, epochs=epochs, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)   # unaugmented test stack
                     pred = np.argmax(prob, axis=1)
                     cls = np.unique(y_encoded)
 
