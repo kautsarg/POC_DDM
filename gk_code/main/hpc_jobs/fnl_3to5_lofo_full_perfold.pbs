@@ -1,0 +1,88 @@
+#!/bin/bash
+#PBS -N fnl_3to5_lofo_full_perfold
+#PBS -l walltime=10:00:00
+#PBS -l select=1:ncpus=16:mem=48gb:ngpus=1
+# PBS_ARRAY_INDEX (0-17) flattens fold(0-5, final_6_new's 6 folders) x
+# call(0=SC0, 1=DANN, 2=SUPCON3) into one array. Same models/filter/curve_type/
+# train_center_frac as fnl_3to5_lofo_full.pbs, just one (fold, call) combo per task
+# instead of all 6 folds run sequentially inside each of the 3 calls -- shrinks each
+# task's walltime from ~55-73h (borderline against that file's 72h budget) down to a
+# single fold's worth, and gives PBS backfill many small jobs instead of one big one.
+# Needs 04_cross_dataset_training.py's --held_out_chip (already added earlier this
+# session) to select one specific LOFO fold by name.
+#PBS -J 0-17
+#PBS -o /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_3to5_lofo_full_perfold/
+#PBS -e /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_3to5_lofo_full_perfold/
+#PBS -k eo
+
+set -e
+
+mkdir -p /rds/general/user/gk225/home/POC_DDM/hpc_jobs/logs/fnl_3to5_lofo_full_perfold
+
+# Load modules
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.6.0
+module load cuDNN/9.10.2.21-CUDA-12.6.0
+
+# Activate venv
+source /rds/general/user/gk225/home/venv_poc_ddm/bin/activate
+
+export PYTHONPATH="/rds/general/user/gk225/home/POC_DDM:/rds/general/user/gk225/home/POC_DDM/gk_code:$PYTHONPATH"
+cd /rds/general/user/gk225/home/POC_DDM/gk_code/main
+
+# EXP_FOLDER="/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_final_nc_subtract/"
+EXP_FOLDER="/rds/general/user/gk225/home/POC_DDM_datasets/POC_DDM_final/"
+
+CURVE_TYPES="ori_curve_sg_p4_norm"
+FILTERS="noamp_remove"
+ALIGN_ARGS="--curve_alignment pc_ttp --pc_ttp_anchor min"
+
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)
+case "$GPU_NAME" in
+    *A30*) BATCH_SIZE=1024 ;;
+    *)     BATCH_SIZE=2048 ;;
+esac
+echo "  [*] GPU: ${GPU_NAME}  ->  batch_size=${BATCH_SIZE}"
+
+LOFO_TASK_ID=13
+GROUP_NAME=$(python3 -c "import config; print(list(config.CROSS_DATASET_GROUPS.keys())[${LOFO_TASK_ID}])" | tail -n 1)
+
+N_CALL=3
+idx=$PBS_ARRAY_INDEX
+call_idx=$(( idx % N_CALL )); idx=$(( idx / N_CALL ))
+fold_idx=$idx
+
+HELD_OUT_CHIP=$(python3 -c "import config; print(config.CROSS_DATASET_GROUPS['${GROUP_NAME}'][${fold_idx}])" | tail -n 1)
+echo "  [*] PBS_ARRAY_INDEX=${PBS_ARRAY_INDEX} -> group=${GROUP_NAME} fold=${HELD_OUT_CHIP} call=${call_idx}"
+
+case "$call_idx" in
+    0)  ## DEFAULT / SC0
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --supcon 0 --curve_type ${CURVE_TYPES} \
+            --models cnn_gru_dual_attn_recon cnn_gru_dual_attn_recon_aug \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} \
+            --train_center_frac 0.5 --held_out_chip ${HELD_OUT_CHIP}
+        ;;
+    1)  ## DANN
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --dann --supcon 0 --curve_type ${CURVE_TYPES} \
+            --models "cnn_gru_dual_attn_recon_dann" \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} \
+            --train_center_frac 0.5 --held_out_chip ${HELD_OUT_CHIP}
+        ;;
+    2)  ## SUPCON 3
+        python -u /rds/general/user/gk225/home/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --supcon 3 --curve_type ${CURVE_TYPES} \
+            --models "cnn_gru_dual_attn_recon" \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} \
+            --train_center_frac 0.5 --held_out_chip ${HELD_OUT_CHIP}
+        ;;
+esac
+
+# 06b report call intentionally omitted here, same as the original fnl_3to5_lofo_full.pbs
+# (its own 06b call is commented out) -- run it separately once all 18 tasks finish.
+
+deactivate

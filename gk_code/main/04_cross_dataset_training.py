@@ -701,6 +701,12 @@ if __name__ == "__main__":
                              "instead of running sequentially in one process. Ignored outside "
                              "--mode lofo; if both this and --lofo_limit are given, this further "
                              "narrows whatever --lofo_limit already selected.")
+    parser.add_argument("--kfold_index", type=int, default=None,
+                        help="Restrict --mode kfold to exactly this one fold index (0 to "
+                             "n_splits-1), i.e. only 'fold_{kfold_index}'. Same purpose as "
+                             "--held_out_chip for LOFO -- lets every fold be parallelized across "
+                             "separate job submissions instead of running sequentially in one "
+                             "process. Ignored outside --mode kfold.")
     parser.add_argument("--train_center_frac", type=float, default=None,
                         help="Shrink the training pool to this fraction per well, keeping "
                              "only the spatially most-central pixels (by distance from each "
@@ -1129,6 +1135,8 @@ if __name__ == "__main__":
                 cv_splits = build_random_split(y_full, well_ids=combined["well_ids"], test_size=args.test_size)
             else:
                 cv_splits = build_nfold_splits(y_full, well_ids=combined["well_ids"], n_splits=args.n_splits)
+                if getattr(args, 'kfold_index', None) is not None:
+                    cv_splits = {k: v for k, v in cv_splits.items() if k == f"fold_{args.kfold_index}"}
             total_folds = len(cv_splits)
             for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
                 _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,

@@ -167,7 +167,7 @@ def load_saved_models(model_dir, filter_key, expected_seq_len, curve_type="ori_c
             'cnn', 'bigru', 'transformer',
             # 'cnn_lf', 'bigru_lf', 'transformer_lf',
             'cnn_gru_dual', 'cnn_trans_dual',
-            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon",
+            "cnn_gru_dual_cosine_recon", "cnn_gru_dual_attn_recon", "cnn_gru_dual_attn_recon_aug",
 
             # Standard MTL models
             'cnn_mtl', 'gru_mtl', 'transformer_mtl',
