@@ -9,7 +9,8 @@ from safe_io import safe_joblib_dump
 
 _LOCK_TIMEOUT_SECONDS = 300
 
-_SHARED_RES_ENTRY_KEYS = ("y_trues_", "well_ids_test_", "_split_signature", "mask_count", "y_true_count")
+_SHARED_RES_ENTRY_KEYS = ("y_trues_", "well_ids_test_", "_split_signature", "_train_crop_signature",
+                          "mask_count", "y_true_count")
 _SHARED_FOLD_KEYS = ("top_10_features", "class_names")
 
 _FILTER_TOKEN_RE = re.compile(r'[^A-Za-z0-9_.-]+')

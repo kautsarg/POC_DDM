@@ -1,11 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=abl6_chip_outlier_model_ablation
-# gnn_gat is now a Keras model (model_utils_gnn_recon.py) trained inside the same
-# evaluate_outlier_filters loop as cnn_gru_dual/cnn_gru_dual_attn_recon -- not the old
-# PyTorch 03b_gnn_spatial_training.py GNN, which no longer runs here at all. 3 Keras
-# models x n_splits=5 x 3 filters = 45 lightweight, mini-batched fit cycles (vs. the
-# original 2-model/30-cycle budget this job used before gnn_gat existed) -- 1.5x the
-# original 24h.
+#SBATCH --job-name=f_sngl_g13
 #SBATCH --time=36:00:00
 
 # Request resources for a single array task
@@ -14,7 +8,7 @@
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=4-9%1
+#SBATCH --array=4-9
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
