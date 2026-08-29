@@ -8,7 +8,7 @@
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-1
+#SBATCH --array=0-2
 
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
@@ -35,6 +35,7 @@ SUPCON=0
 case "$SLURM_ARRAY_TASK_ID" in
     0) MODELS="cnn_gru_dual" ;;
     1) MODELS="cnn_gru_dual_attn_recon" ;;
+    2) MODELS="knn" ;;
 esac
 
 python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
