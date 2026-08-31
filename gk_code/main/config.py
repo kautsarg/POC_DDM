@@ -450,6 +450,8 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_attn_recon_supcon3_dann": ("y_preds_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_dann_", "classes_AC_cnn_gru_dual_attn_recon_supcon3_dann_"),
     "gnn_gat_dann":                       ("y_preds_AC_gnn_gat_dann_",                       "y_probs_AC_gnn_gat_dann_",                       "classes_AC_gnn_gat_dann_"),
     "gnn_gat_supcon3_dann":               ("y_preds_AC_gnn_gat_supcon3_dann_",               "y_probs_AC_gnn_gat_supcon3_dann_",               "classes_AC_gnn_gat_supcon3_dann_"),
+    # DANN with concentration (not chip id) as the domain label
+    "cnn_gru_dual_attn_recon_dann_conc":  ("y_preds_AC_cnn_gru_dual_attn_recon_dann_conc_",  "y_probs_AC_cnn_gru_dual_attn_recon_dann_conc_",  "classes_AC_cnn_gru_dual_attn_recon_dann_conc_"),
     # Deep CORAL (non-adversarial domain alignment)
     "cnn_gru_dual_coral":                  ("y_preds_AC_cnn_gru_dual_coral_",                  "y_probs_AC_cnn_gru_dual_coral_",                  "classes_AC_cnn_gru_dual_coral_"),
     "cnn_gru_dual_attn_recon_coral":       ("y_preds_AC_cnn_gru_dual_attn_recon_coral_",       "y_probs_AC_cnn_gru_dual_attn_recon_coral_",       "classes_AC_cnn_gru_dual_attn_recon_coral_"),
@@ -524,6 +526,7 @@ _DANN_MODEL_KEYS = {
     "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
     "cnn_gru_dual_supcon3_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
     "gnn_gat_dann", "gnn_gat_supcon3_dann",
+    "cnn_gru_dual_attn_recon_dann_conc",
 }
 _CORAL_MODEL_KEYS = {
     "cnn_gru_dual_coral", "cnn_gru_dual_attn_recon_coral",
@@ -660,6 +663,7 @@ MODEL_PRINT_MAP = {
     "cnn_gru_dual_attn_recon_supcon3_coral": "CNN+GRU AttnRecon SC3 CORAL",
     "gnn_gat_dann": "GNN (GAT) DANN",
     "gnn_gat_supcon3_dann": "GNN (GAT) SC3 DANN",
+    "cnn_gru_dual_attn_recon_dann_conc": "CNN+GRU AttnRecon DANN(Conc)",
     "gnn_gat_coral": "GNN (GAT) CORAL",
     "gnn_gat_supcon3_coral": "GNN (GAT) SC3 CORAL",
 }

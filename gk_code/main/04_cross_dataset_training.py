@@ -493,13 +493,19 @@ def _derive_pool_labels(combined, args):
         print(f"  [MTL] Concentration loaded: {_n_valid} / {len(y_concentration)} samples "
               f"have non-sentinel concentration.")
 
-    return encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded
+    conc_id_encoded = None
+    raw_conc_for_domain = combined.get("concentration_raw")
+    if raw_conc_for_domain is not None:
+        _conc_for_encoding = np.array([v if v is not None else -1 for v in raw_conc_for_domain], dtype=object)
+        conc_id_encoded = LabelEncoder().fit_transform(_conc_for_encoding)
+
+    return encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded, conc_id_encoded
 
 
 def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
                   combined, y_full, encoder, X_candidates_clean, curve_type, models,
                   outlier_filters, out_dir, plot_dir, group_name, total_count,
-                  lofo_results, mode_str, args, y_concentration, chip_id_encoded):
+                  lofo_results, mode_str, args, y_concentration, chip_id_encoded, conc_id_encoded):
     progress_pct = ((fold_idx + 1) / total_folds) * 100
     print(f"\n{'='*75}")
     print(f"[{fold_idx+1}/{total_folds} | {progress_pct:.1f}%] FOLD: {fold_label} | train={len(train_idx)} test={len(test_idx)}")
@@ -543,6 +549,7 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
         multitask=args.mtl,
         y_concentration=y_concentration,
         chip_id_encoded=chip_id_encoded,
+        conc_id_encoded=conc_id_encoded,
         cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
         batch_size=args.batch_size,
         train_center_frac=args.train_center_frac,
@@ -861,7 +868,8 @@ if __name__ == "__main__":
         elif getattr(args, 'dann', False):
             models = (['cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann', 'gnn_gat_supcon3_dann']
                      if args.supcon == 3
-                     else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann', 'gnn_gat_dann'])
+                     else ['cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann', 'gnn_gat_dann',
+                          'cnn_gru_dual_attn_recon_dann_conc'])
 
         # DEEP CORAL MODELS
         elif getattr(args, 'coral', False):
@@ -1120,7 +1128,7 @@ if __name__ == "__main__":
 
             _save_alignment_artifacts(combined, out_dir, curve_type, args, held_out_chip=held_out_chip)
 
-            encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
+            encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded, conc_id_encoded = _derive_pool_labels(combined, args)
             total_count = len(y_full)
 
             if args.mode == "lofo":
@@ -1142,7 +1150,7 @@ if __name__ == "__main__":
                 _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
                               combined, y_full, encoder, X_candidates_clean, curve_type, models,
                               outlier_filters, out_dir, plot_dir, group_name, total_count,
-                              lofo_results, _mode_str, args, y_concentration, chip_id_encoded)
+                              lofo_results, _mode_str, args, y_concentration, chip_id_encoded, conc_id_encoded)
 
         if getattr(args, 'train_full', False):
             if _lofo_pc_ttp:
@@ -1155,7 +1163,7 @@ if __name__ == "__main__":
                         print(f"  [*] {NOAMP_FILTER_NAME}: {int((~keep_mask).sum())}/{len(keep_mask)} "
                               f"non-amplifying curves flagged for removal")
             if combined is not None:
-                encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded = _derive_pool_labels(combined, args)
+                encoder, y_full, X_candidates_clean, y_concentration, chip_id_encoded, conc_id_encoded = _derive_pool_labels(combined, args)
                 all_idx = np.arange(len(y_full))
                 top_10_features = _select_top_10_features(X_candidates_clean, y_full, all_idx, "full_data")
                 full_model_dir = out_dir / "model_interpretation" / f"full_data_{_mode_str}"
@@ -1188,6 +1196,7 @@ if __name__ == "__main__":
                     multitask=args.mtl,
                     y_concentration=y_concentration,
                     chip_id_encoded=chip_id_encoded,
+                    conc_id_encoded=conc_id_encoded,
                     cl_phase1_epochs=getattr(args, 'cl_phase1_epochs', None),
                     batch_size=args.batch_size,
                 )

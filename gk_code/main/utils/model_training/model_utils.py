@@ -96,7 +96,7 @@ from model_utils_arch_poc_st import (
     CCGD_ST_ALL_KEYS, _CCGD_FACTORIES,
 )
 from model_utils_dann import (
-    DANN_MODEL_KEYS, GRLLambdaSchedule,
+    DANN_MODEL_KEYS, DANN_CONC_MODEL_KEYS, GRLLambdaSchedule,
     create_cnn_gru_dual_dann_model, create_cnn_gru_dual_attn_recon_dann_model,
     create_cnn_gru_dual_supcon3_dann_model, create_cnn_gru_dual_attn_recon_supcon3_dann_model,
     create_gnn_gat_dann_model, create_gnn_gat_supcon3_dann_model,
@@ -845,6 +845,7 @@ _XAI_SAVE_NAME.update({k: k for k in ALL_LC_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in ALL_STAGED_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CCGD_ST_ALL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in DANN_MODEL_KEYS})
+_XAI_SAVE_NAME.update({k: k for k in DANN_CONC_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CORAL_MODEL_KEYS})
 
 
@@ -857,7 +858,7 @@ def evaluate_outlier_filters(
     save_model_dir=None, save_model_curve_type="ori_curve",
     pretrained_encoder_path=None, pretrained_scaler_path=None,
     coords=None, well_ids=None, k_neighbors=24,
-    multitask=False, y_concentration=None, chip_id_encoded=None,
+    multitask=False, y_concentration=None, chip_id_encoded=None, conc_id_encoded=None,
     cl_phase1_epochs=None,
     lc_classes=None,
     batch_size=512,
@@ -909,6 +910,7 @@ def evaluate_outlier_filters(
         *RCFD_ATTN_RECON_MODEL_KEYS,
         # DANN attn_recon variants
         "cnn_gru_dual_attn_recon_dann", "cnn_gru_dual_attn_recon_supcon3_dann",
+        *DANN_CONC_MODEL_KEYS,
         # CORAL attn_recon variants
         "cnn_gru_dual_attn_recon_coral", "cnn_gru_dual_attn_recon_supcon3_coral",
         "gnn_gat", "gnn_gat_dann", "gnn_gat_supcon3_dann",
@@ -938,6 +940,7 @@ def evaluate_outlier_filters(
         coords_m = coords[mask] if coords is not None else None
         well_ids_m = well_ids[mask] if well_ids is not None else None
         chip_id_m = chip_id_encoded[mask] if chip_id_encoded is not None else None
+        conc_id_m = conc_id_encoded[mask] if conc_id_encoded is not None else None
 
         unique_classes, class_counts = np.unique(y_true, return_counts=True)
         rare_classes = unique_classes[class_counts < 2]
@@ -955,6 +958,8 @@ def evaluate_outlier_filters(
                 well_ids_m = well_ids_m[valid_class_mask]
             if chip_id_m is not None:
                 chip_id_m = chip_id_m[valid_class_mask]
+            if conc_id_m is not None:
+                conc_id_m = conc_id_m[valid_class_mask]
 
         n_classes = len(np.unique(y_true))
 
@@ -1137,7 +1142,8 @@ def evaluate_outlier_filters(
                                   'cnn_gru_dual_attn_recon_supcon_staged', 'cnn_gru_dual_attn_recon_supcon2_staged',
                                   'cnn_gru_dual_attn_recon_supcon3_staged',
                                   'cnn_gru_dual_attn_recon_dann', 'cnn_gru_dual_attn_recon_supcon3_dann',
-                                  'cnn_gru_dual_attn_recon_coral', 'cnn_gru_dual_attn_recon_supcon3_coral'
+                                  'cnn_gru_dual_attn_recon_coral', 'cnn_gru_dual_attn_recon_supcon3_coral',
+                                  *DANN_CONC_MODEL_KEYS,
                                   ) or _base_m in RCFD_ATTN_RECON_MODEL_KEYS:
                     # (n, k+1, T) -- same axis-0 indexing as every other model's (n, T) curve
                     # array, just with an extra trailing "neighbour" dimension along for the ride.
@@ -1559,6 +1565,60 @@ def evaluate_outlier_filters(
                         _grl_cb = GRLLambdaSchedule(model.grl, total_steps=epochs * steps_per_epoch)
                         _hist = model.fit(X_train_curve,
                                  {'cls_out': y_train, 'chip_out': chip_train_all},
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=[_grl_cb])
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    dann_outputs = model.predict(X_test_curve, verbose=0)
+                    cls_prob = dann_outputs[0]
+                    pred = np.argmax(cls_prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(cls_prob)
+                    classes_list.append(cls)
+
+                    tf.keras.backend.clear_session()
+
+                elif _base_m in DANN_CONC_MODEL_KEYS:
+                    if conc_id_m is None:
+                        print(f"     [SKIP] {m}: no conc_id_encoded provided.")
+                        continue
+                    tf.keras.backend.clear_session()
+                    n_domains = len(np.unique(conc_id_m))
+                    domain_train_all = conc_id_m[train_idx]
+
+                    k_plus_1, T = X_train_curve.shape[1], X_train_curve.shape[2]
+                    model = create_cnn_gru_dual_attn_recon_dann_model(k_plus_1, T, n_classes, n_domains)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                 metrics=['accuracy'], jit_compile=False)
+                    epochs = 500
+
+                    # val_cls_ce, not val_loss -- domain_ce is meant to plateau near chance, not decrease.
+                    _dann_es = tf.keras.callbacks.EarlyStopping(monitor='val_cls_ce', mode='min', patience=100, restore_best_weights=True)
+                    _dann_rlrp = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_cls_ce', mode='min', factor=0.5, patience=30, min_lr=1e-5)
+
+                    if _val_split_ok:
+                        domain_train_fit = domain_train_all[_tr_sub]
+                        domain_val = domain_train_all[_val_sub]
+                        steps_per_epoch = max(int(np.ceil(len(X_train_curve_fit) / _bs)), 1)
+                        _grl_cb = GRLLambdaSchedule(model.grl, total_steps=epochs * steps_per_epoch)
+                        _hist = model.fit(X_train_curve_fit,
+                                 {'cls_out': y_train_fit, 'chip_out': domain_train_fit},
+                                 validation_data=(X_val_curve, {'cls_out': y_val, 'chip_out': domain_val}),
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=[_dann_es, _dann_rlrp, _grl_cb])
+                        histories.append(_hist.history)
+                    else:
+                        steps_per_epoch = max(int(np.ceil(len(X_train_curve) / _bs)), 1)
+                        _grl_cb = GRLLambdaSchedule(model.grl, total_steps=epochs * steps_per_epoch)
+                        _hist = model.fit(X_train_curve,
+                                 {'cls_out': y_train, 'chip_out': domain_train_all},
                                  epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
                                  callbacks=[_grl_cb])
                         histories.append(_hist.history)

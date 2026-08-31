@@ -8,7 +8,7 @@
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-5
+#SBATCH --array=0-8
 # Output and Error logs (using SLURM variables to prevent overwriting)
 #SBATCH --output=logs/%x/%A_%a.out
 #SBATCH --error=logs/%x/%A_%a.err
@@ -76,6 +76,24 @@ case "$SLURM_ARRAY_TASK_ID" in
         python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
             --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
             --supcon 0 --curve_type ${CURVE_TYPES} --models knn \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_center_frac 0.5
+        ;;
+    6)
+        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --mtl --supcon 0 --curve_type ${CURVE_TYPES} --models cnn_gru_dual_attn_recon_mtl \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_center_frac 0.5
+        ;;
+    7)
+        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --coral --supcon 0 --curve_type ${CURVE_TYPES} --models cnn_gru_dual_attn_recon_coral \
+            --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_center_frac 0.5
+        ;;
+    8)
+        python -u /vol/bitbucket/gk225/POC_DDM/gk_code/main/04_cross_dataset_training.py \
+            --exp_folder ${EXP_FOLDER} --task_id ${LOFO_TASK_ID} \
+            --dann --supcon 0 --curve_type ${CURVE_TYPES} --models cnn_gru_dual_attn_recon_dann_conc \
             --outlier_filter ${FILTERS} --batch_size ${BATCH_SIZE} ${ALIGN_ARGS} --train_center_frac 0.5
         ;;
 esac

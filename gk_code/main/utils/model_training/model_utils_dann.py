@@ -191,3 +191,7 @@ DANN_MODEL_KEYS = (
     'cnn_gru_dual_supcon3_dann', 'cnn_gru_dual_attn_recon_supcon3_dann',
     'gnn_gat_dann', 'gnn_gat_supcon3_dann',
 )
+
+DANN_CONC_MODEL_KEYS = (
+    'cnn_gru_dual_attn_recon_dann_conc',
+)

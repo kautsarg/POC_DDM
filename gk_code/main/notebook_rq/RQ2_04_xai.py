@@ -123,9 +123,9 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
     out_dir = exp_path / "xai_saliency"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(X_batch, timestamps)
+    # feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(X_batch, timestamps)
+    # chip_label = short_name(exp_path.name)
 
-    chip_label = short_name(exp_path.name)
     for c_idx, c_name in enumerate(class_names):
         save_path = out_dir / f"{model_key}_{curve_type}_{c_name}.png"
         saved = plot_per_label_saliency_heatmap(
@@ -135,15 +135,15 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
         )
         print(f"    {c_name}: {'saved -> ' + str(save_path) if saved else 'skipped'}")
 
-        mask = (y_true == c_idx) & (y_pred == c_idx)
-        mean_curve = X_batch[mask, :, 0].mean(0) if mask.any() else X_batch[:, :, 0].mean(0)
-        mapping_path = out_dir / f"{model_key}_{curve_type}_{c_name}_latent_feature_mapping.png"
-        plot_latent_feature_mapping(
-            art, model_key, timestamps,
-            feat_matrix, feat_sensitivity, feat_names,
-            mean_curve, f"{chip_label} | {c_name}", mapping_path,
-            TOP_N=top_n, sample_mask=mask,
-        )
+        # mask = (y_true == c_idx) & (y_pred == c_idx)
+        # mean_curve = X_batch[mask, :, 0].mean(0) if mask.any() else X_batch[:, :, 0].mean(0)
+        # mapping_path = out_dir / f"{model_key}_{curve_type}_{c_name}_latent_feature_mapping.png"
+        # # plot_latent_feature_mapping(
+        #     art, model_key, timestamps,
+        #     feat_matrix, feat_sensitivity, feat_names,
+        #     mean_curve, f"{chip_label} | {c_name}", mapping_path,
+        #     TOP_N=top_n, sample_mask=mask,
+        # )
 
     tf.keras.backend.clear_session()
 
