@@ -908,7 +908,7 @@ if __name__ == "__main__":
             elif args.supcon == 3:
                 models = ['cnn_gru_dual_supcon3', 'cnn_gru_dual_cosine_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3', 'gnn_gat_supcon3']
             else:
-                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'gnn_gat']
+                models = ['knn', 'cnn_gru_dual', 'cnn_gru_dual_cosine_recon', 'cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'cnn_trans_dual_attn_recon', 'gnn_gat']
 
         if args.models:
             import re

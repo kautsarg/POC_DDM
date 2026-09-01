@@ -458,29 +458,23 @@ def create_cnn_gru_dual_attn_recon_model(k_plus_1, input_size_curve, output_size
     return model
 
 
-def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1, inception_smoothing=False):
-    """
-    Dual-branch architecture combining CNN (Local) and Transformer (Global)
-    using only the raw curve as input.
-    """
-    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
-    x = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
-
+def _build_cnn_trans_dual_branches(input_tensor, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1):
+    """CNN+Transformer dual branches; mirrors _build_cnn_gru_dual_branches's role."""
     # 1. Local Feature Branch (CNN)
-    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(x)
+    c = tf.keras.layers.Conv1D(16, 5, activation='relu')(input_tensor)
     c = tf.keras.layers.Conv1D(8, 3, activation='relu')(c)
     c = tf.keras.layers.Flatten()(c)
     cnn_emb = tf.keras.layers.Dense(32, activation='relu')(c)
 
     # 2. Global Feature Branch (Transformer)
-    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(x)
+    t = tf.keras.layers.Conv1D(filters=head_size, kernel_size=5, strides=2, padding="same", activation="relu")(input_tensor)
     t = tf.keras.layers.MaxPooling1D(pool_size=2, padding="same")(t)
-    
-    new_seq_len = t.shape[1] 
+
+    new_seq_len = t.shape[1]
     positions = tf.range(start=0, limit=new_seq_len, delta=1)
     pos_embedding = tf.keras.layers.Embedding(input_dim=new_seq_len, output_dim=head_size)(positions)
-    t = t + pos_embedding 
-    
+    t = t + pos_embedding
+
     for _ in range(num_blocks):
         attn_output = tf.keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(t, t)
         attn_output = tf.keras.layers.Dropout(dropout)(attn_output)
@@ -488,21 +482,56 @@ def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=3
 
         ffn_output = tf.keras.layers.Dense(ff_dim, activation="relu")(t)
         ffn_output = tf.keras.layers.Dropout(dropout)(ffn_output)
-        ffn_output = tf.keras.layers.Dense(head_size)(ffn_output) 
+        ffn_output = tf.keras.layers.Dense(head_size)(ffn_output)
         t = tf.keras.layers.LayerNormalization(epsilon=1e-6)(t + ffn_output)
 
     t = tf.keras.layers.GlobalAveragePooling1D(data_format="channels_last")(t)
     trans_emb = tf.keras.layers.Dense(32, activation="relu")(t)
-    
-    # 3. Fusion & Output
+
+    # 3. Fusion
     merged = tf.keras.layers.Concatenate()([cnn_emb, trans_emb])
     z = tf.keras.layers.Dense(64, activation='relu')(merged)
-    z = tf.keras.layers.Dropout(0.2)(z)
+    return tf.keras.layers.Dropout(0.2)(z)
+
+
+def create_cnn_transformer_dual_model(input_size_curve, output_size, head_size=32, num_heads=2, ff_dim=32, num_blocks=2, dropout=0.1, inception_smoothing=False):
+    input_curve = tf.keras.layers.Input(shape=(input_size_curve, 1), name="curve_input")
+    x = model_utils_gated.inception_smoothing_block(input_curve) if inception_smoothing else input_curve
+
+    z = _build_cnn_trans_dual_branches(x, head_size, num_heads, ff_dim, num_blocks, dropout)
     outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
 
     # Compile
     model = tf.keras.models.Model(inputs=input_curve, outputs=outputs)
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+
+def create_cnn_trans_dual_attn_recon_model(k_plus_1, input_size_curve, output_size, attn_dim=16):
+    stack_input = tf.keras.layers.Input(shape=(k_plus_1, input_size_curve), name="neighbor_stack_input")
+
+    per_curve_encoder = tf.keras.Sequential([
+        tf.keras.layers.Reshape((input_size_curve, 1)),
+        tf.keras.layers.Conv1D(16, 5, activation='relu', padding='same'),
+        tf.keras.layers.Conv1D(8, 3, activation='relu', padding='same'),
+        tf.keras.layers.GlobalAveragePooling1D(),
+        tf.keras.layers.Dense(attn_dim, activation='relu'),
+    ], name="per_curve_encoder")
+    embeddings = tf.keras.layers.TimeDistributed(per_curve_encoder)(stack_input)   # (N, k+1, attn_dim)
+
+    query = _QuerySlice()(embeddings)                                              # (N, 1, attn_dim)
+    scores = _AttnScores(attn_dim)([query, embeddings])                           # (N, 1, k+1)
+    attn_weights = tf.keras.layers.Softmax(axis=-1, name="attn_weights")(scores)  # (N, 1, k+1)
+
+    reconstructed = _WeightedRecon()([attn_weights, stack_input])                 # (N, 1, T)
+    reconstructed = tf.keras.layers.Reshape((input_size_curve, 1))(reconstructed)  # (N, T, 1)
+
+    z = _build_cnn_trans_dual_branches(reconstructed)
+    outputs = tf.keras.layers.Dense(output_size, activation='softmax')(z)
+
+    model = tf.keras.models.Model(inputs=stack_input, outputs=outputs)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
@@ -834,6 +863,7 @@ _XAI_SAVE_NAME.update({k: k for k in MTL_MODEL_KEYS})  # MTL models saved under 
 _XAI_SAVE_NAME['cnn_gru_dual_cosine_recon'] = 'cnn_gru_dual_cosine_recon'
 _XAI_SAVE_NAME['cnn_gru_dual_attn_recon'] = 'cnn_gru_dual_attn_recon'
 _XAI_SAVE_NAME['cnn_gru_dual_attn_recon_aug'] = 'cnn_gru_dual_attn_recon_aug'
+_XAI_SAVE_NAME['cnn_trans_dual_attn_recon'] = 'cnn_trans_dual_attn_recon'
 _XAI_SAVE_NAME['gnn_gat'] = 'gnn_gat'
 _XAI_SAVE_NAME.update({_k: _k for _k in ALL_SUPCON_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in CL_MTL_MODEL_KEYS})
@@ -1133,7 +1163,7 @@ def evaluate_outlier_filters(
                     X_test_curve = reconstruct_curves_cosine(build_neighbor_curve_stack(
                         X_AC[test_idx].astype(np.float32, copy=False),
                         coords_m[test_idx], well_ids_m[test_idx], k=k_neighbors))
-                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'cnn_gru_dual_attn_recon_mtl',
+                elif _base_m in ('cnn_gru_dual_attn_recon', 'cnn_trans_dual_attn_recon', 'cnn_gru_dual_attn_recon_aug', 'cnn_gru_dual_attn_recon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon', 'cnn_gru_dual_attn_recon_supcon_mtl',
                                   'cnn_gru_dual_attn_recon_supcon2', 'cnn_gru_dual_attn_recon_supcon2_mtl',
                                   'cnn_gru_dual_attn_recon_supcon3', 'cnn_gru_dual_attn_recon_supcon3_mtl',
@@ -1299,6 +1329,35 @@ def evaluate_outlier_filters(
                     # 07 XAI pipeline skips these via input-shape mismatch; notebook uses the saved file.
                     tf.keras.backend.clear_session()
                     model = create_cnn_gru_dual_attn_recon_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    epochs = 500
+
+                    if _val_split_ok:
+                        _hist = model.fit(X_train_curve_fit, y_train_fit,
+                                 validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                                 callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
+                    else:
+                        _hist = model.fit(X_train_curve, y_train, epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_suffix(train_center_frac)}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
+                elif _base_m == "cnn_trans_dual_attn_recon":
+                    tf.keras.backend.clear_session()
+                    model = create_cnn_trans_dual_attn_recon_model(
                         X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
                     epochs = 500
 

@@ -316,6 +316,7 @@ MODEL_KEY_MAP = {
     "cnn_gru_dual_cosine_recon": ("y_preds_AC_cnn_gru_dual_cosine_recon_", "y_probs_AC_cnn_gru_dual_cosine_recon_", "classes_AC_cnn_gru_dual_cosine_recon_"),
     "cnn_gru_dual_attn_recon":   ("y_preds_AC_cnn_gru_dual_attn_recon_",   "y_probs_AC_cnn_gru_dual_attn_recon_",   "classes_AC_cnn_gru_dual_attn_recon_"),
     "cnn_gru_dual_attn_recon_aug": ("y_preds_AC_cnn_gru_dual_attn_recon_aug_", "y_probs_AC_cnn_gru_dual_attn_recon_aug_", "classes_AC_cnn_gru_dual_attn_recon_aug_"),
+    "cnn_trans_dual_attn_recon": ("y_preds_AC_cnn_trans_dual_attn_recon_", "y_probs_AC_cnn_trans_dual_attn_recon_", "classes_AC_cnn_trans_dual_attn_recon_"),
     "cnn_mtl":                       ("y_preds_AC_cnn_mtl_",                        "y_probs_AC_cnn_mtl_",                        "classes_AC_cnn_mtl_"),
     "lstm_mtl":                      ("y_preds_AC_lstm_mtl_",                       "y_probs_AC_lstm_mtl_",                       "classes_AC_lstm_mtl_"),
     "gru_mtl":                       ("y_preds_AC_gru_mtl_",                        "y_probs_AC_gru_mtl_",                        "classes_AC_gru_mtl_"),
@@ -557,7 +558,7 @@ MODEL_PRINT_MAP = {
     "cnn_trans_crossattn": "CNN+Tr CoAttn", "cnn_trans_film": "CNN+Tr FiLM",
     "gnn_gat": "GNN (GAT)", "gnn_gcn": "GNN (GCN)",
     "cnn_gru_dual_cosine_recon": "CNN+GRU CosRecon", "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
-    "cnn_gru_dual_attn_recon_aug": "CNN+GRU AttnRecon+Aug",
+    "cnn_gru_dual_attn_recon_aug": "CNN+GRU AttnRecon+Aug", "cnn_trans_dual_attn_recon": "CNN+Tr AttnRecon",
     # MTL
     "cnn_mtl": "CNN MTL", "lstm_mtl": "LSTM MTL", "gru_mtl": "GRU MTL",
     "rnn_mtl": "RNN MTL", "transformer_mtl": "Trans MTL",
