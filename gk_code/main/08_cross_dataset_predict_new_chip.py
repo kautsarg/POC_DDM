@@ -73,8 +73,8 @@ def _resolve_alignment_path(out_dir, path_template, curve_type, held_out_chip):
 
 
 def align_new_chip(new_chip_path, out_dir, curve_type, curve_alignment, pc_ttp_anchor, group_name=None,
-                   held_out_chip=None):
-    d = load_new_chip_curves(new_chip_path, curve_type, group_name=group_name)
+                   held_out_chip=None, exclusion_group=None):
+    d = load_new_chip_curves(new_chip_path, curve_type, group_name=exclusion_group if exclusion_group is not None else group_name)
     if d is None:
         return None
 
@@ -247,6 +247,13 @@ if __name__ == "__main__":
                         help="Root containing the TRAINED group's cross_dataset_cv/ output.")
     parser.add_argument("--group", type=str, required=True,
                         help="Which CROSS_DATASET_GROUPS group's trained model/resampler/recipe to use.")
+    parser.add_argument("--exclusion_group", type=str, default=None,
+                        help="Which group's LOFO_EXCLUDE_WELL_MAPPING to apply to the NEW chip's own "
+                             "wells (e.g. to drop its PC/NC/no-amp wells before prediction). Defaults "
+                             "to --group. Set this separately when the new chip belongs to a different "
+                             "group than the one the model was trained on (cross-group generalization "
+                             "testing) -- --group must still name the TRAINED group so the saved "
+                             "model/resampler/recipe can be found.")
     parser.add_argument("--new_chip_folder", type=str, required=True,
                         help="Path to the new chip's own experiment folder (containing "
                              "curve_for_training.joblib, already produced by 01_curve_preprocessing_v6.py).")
@@ -287,7 +294,8 @@ if __name__ == "__main__":
         out_dir = out_dir / "curve_alignment_pc_ttp" / f"anchor_{args.pc_ttp_anchor}"
 
     result = align_new_chip(Path(args.new_chip_folder), out_dir, args.curve_type,
-                            args.curve_alignment, args.pc_ttp_anchor, group_name=args.group)
+                            args.curve_alignment, args.pc_ttp_anchor, group_name=args.group,
+                            exclusion_group=args.exclusion_group)
     if result is None:
         sys.exit(1)
     curves, resampler, Y_well_raw, pc_curves_aligned, coords, well_ids = result

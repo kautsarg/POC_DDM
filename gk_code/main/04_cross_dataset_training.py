@@ -720,7 +720,16 @@ if __name__ == "__main__":
                              "well's own pixel centroid) and dropping border pixels -- for "
                              "fast baselining/iteration. Requires pixel_row_idx/pixel_col_idx "
                              "metadata. The test set and --train_full are never affected.")
+    parser.add_argument("--train_full_only", action="store_true",
+                        help="Skip every per-chip LOFO fold (or the single random_split/kfold "
+                             "evaluation fold) and train ONLY the --train_full full-data model "
+                             "(implies --train_full). Much cheaper when you don't need the "
+                             "within-group holdout metrics -- e.g. training one model on a "
+                             "whole group to deploy against an external chip/group via "
+                             "08_cross_dataset_predict_new_chip.py.")
     args = parser.parse_args()
+    if args.train_full_only:
+        args.train_full = True
     if args.mtl_cl:
         args.mtl = True  # --mtl_cl implies --mtl
     if args.condreg:
@@ -928,13 +937,6 @@ if __name__ == "__main__":
             models = [m for m in models
                       if m in _req or _strip_variant_suffixes(m) in _req]
 
-        # TEMPORARY: jobs 279786/279787 are already queued (--mode lofo --array=13,
-        if (args.mode == "lofo" and 'cnn_gru_dual_attn_recon' in models
-                and 'cnn_gru_dual_attn_recon_aug' not in models):
-            models.append('cnn_gru_dual_attn_recon_aug')
-            print("  [TEMP] Auto-added cnn_gru_dual_attn_recon_aug alongside cnn_gru_dual_attn_recon "
-                  "(see comment above this line -- remove after jobs 279786/279787 complete).")
-
         lofo_results = load_partitioned(out_dir, _mode_str, curve_type,
                                          train_center_frac=args.train_center_frac)
         if args.force_rerun:
@@ -1113,6 +1115,8 @@ if __name__ == "__main__":
             pool_held_out_chips = pool_held_out_chips[:args.lofo_limit]
         if _lofo_pc_ttp and getattr(args, 'held_out_chip', None):
             pool_held_out_chips = [c for c in pool_held_out_chips if c == args.held_out_chip]
+        if getattr(args, 'train_full_only', False):
+            pool_held_out_chips = []
 
         combined = None
         for held_out_chip in pool_held_out_chips:
@@ -1153,7 +1157,7 @@ if __name__ == "__main__":
                               lofo_results, _mode_str, args, y_concentration, chip_id_encoded, conc_id_encoded)
 
         if getattr(args, 'train_full', False):
-            if _lofo_pc_ttp:
+            if _lofo_pc_ttp or combined is None:
                 combined = _build_pool(None)  # fresh group-wide pool
                 if combined is not None:
                     _save_alignment_artifacts(combined, out_dir, curve_type, args)
