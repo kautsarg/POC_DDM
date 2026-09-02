@@ -12,7 +12,6 @@ sys.path.insert(0, str(_ROOT / "utils"))
 sys.path.insert(0, str(_ROOT / "utils" / "model_training"))
 
 import config
-from pipeline_utils import get_scoped_exp_paths
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -20,7 +19,9 @@ import tensorflow as tf
 from saliency import (extract_dual_saliency, plot_per_label_saliency_heatmap,
                       compute_kinetic_feature_cache, plot_latent_feature_mapping)
 
-MODEL_KEYS = ['cnn_gru_dual', 'cnn_gru_dual_attn_recon']
+MODEL_KEY = 'cnn_gru_dual'
+CURVE_TYPE = 'ori_curve'
+LAB_DATASETS = ['01_ACA_qdPCR', '02_AMCA_qdLAMP', '03_AMCA_qdPCR']
 EXTRACT_N_DIMS = 100
 
 
@@ -34,7 +35,7 @@ def filter_datasets(dataset_name, dataset, kinetic_features):
     return filtered_names, filtered_dataset, filtered_features
 
 
-def load_dataset_curves(exp_path, curve_type):
+def load_dataset_curves(exp_path, curve_type=CURVE_TYPE):
     data_path = os.path.join(exp_path, config.TRAINING_DATA_PATH)
     if not os.path.exists(data_path):
         print(f"  [SKIP] {exp_path.name}: '{data_path}' not found.")
@@ -71,27 +72,14 @@ def load_dataset_curves(exp_path, curve_type):
     return curves_2d, y_full, list(encoder.classes_)
 
 
-def predict_labels(model, X_batch, batch_size=256):
-    is_ns = (not isinstance(model.input, (list, tuple))
-             and hasattr(model.input, 'name')
-             and 'neighbor_stack' in model.input.name)
-    if is_ns:
-        k_plus_1 = model.input.shape[1]
-        x = np.repeat(X_batch[:, np.newaxis, :, 0], k_plus_1, axis=1)
-    else:
-        x = X_batch
-    out = model.predict(x, batch_size=batch_size, verbose=0)
-    out = out[0] if isinstance(out, (list, tuple)) else out
-    return np.argmax(out, axis=1)
-
-
-def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
-    model_path = exp_path / "ablations" / "model_interpretation" / f"{model_key}_None_{curve_type}_model.keras"
+def run_one(exp_path, n_dims, top_n, batch_n, seed):
+    model_path = (exp_path / "ablations" / "model_interpretation"
+                  / f"{MODEL_KEY}_None_{CURVE_TYPE}_model.keras")
     if not model_path.is_file():
         print(f"  [!] Missing model, skipping: {model_path}")
         return
 
-    loaded = load_dataset_curves(exp_path, curve_type)
+    loaded = load_dataset_curves(exp_path)
     if loaded is None:
         return
     curves_2d, y_full, class_names = loaded
@@ -103,7 +91,7 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
     timestamps = np.arange(X_batch.shape[1])
 
     model = tf.keras.models.load_model(model_path, compile=False)
-    y_pred = predict_labels(model, X_batch)
+    y_pred = np.argmax(model.predict(X_batch, batch_size=256, verbose=0), axis=1)
     art = extract_dual_saliency(model, X_batch, n_dims=EXTRACT_N_DIMS)
 
     out_dir = exp_path / "ablations" / "xai_saliency"
@@ -112,7 +100,7 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
     feat_matrix, feat_sensitivity, feat_names = compute_kinetic_feature_cache(X_batch, timestamps)
 
     for c_idx, c_name in enumerate(class_names):
-        save_path = out_dir / f"{model_key}_{curve_type}_{c_name}.png"
+        save_path = out_dir / f"{MODEL_KEY}_{CURVE_TYPE}_{c_name}.png"
         saved = plot_per_label_saliency_heatmap(
             art, X_batch, y_true, y_pred, c_idx, c_name,
             timestamps=timestamps, n_dims=n_dims, save_path=save_path,
@@ -122,9 +110,9 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
 
         mask = (y_true == c_idx) & (y_pred == c_idx)
         mean_curve = X_batch[mask, :, 0].mean(0) if mask.any() else X_batch[:, :, 0].mean(0)
-        mapping_path = out_dir / f"{model_key}_{curve_type}_{c_name}_latent_feature_mapping.png"
+        mapping_path = out_dir / f"{MODEL_KEY}_{CURVE_TYPE}_{c_name}_latent_feature_mapping.png"
         plot_latent_feature_mapping(
-            art, model_key, timestamps,
+            art, MODEL_KEY, timestamps,
             feat_matrix, feat_sensitivity, feat_names,
             mean_curve, f"{exp_path.name} | {c_name}", mapping_path,
             TOP_N=top_n, sample_mask=mask,
@@ -134,31 +122,19 @@ def run_one(exp_path, model_key, curve_type, n_dims, top_n, batch_n, seed):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="cnn_gru_dual / cnn_gru_dual_attn_recon saliency + latent-feature-mapping plots.")
-    parser.add_argument("--exp_folder", type=str, default=config.DEFAULT_EXP_FOLDER)
-    parser.add_argument("--curve_type", type=str, nargs="+",
-                        choices=list(config.CURVE_TYPE_ALIASES.keys()),
-                        default=["ori_curve_norm", "ori_curve_sg_p4_norm"])
-    parser.add_argument("--n_dims", type=int, default=25, metavar="N",
-                        help="Top N latent dims per branch to show in the saliency heatmap.")
-    parser.add_argument("--top_n", type=int, default=5, metavar="N",
-                        help="Top N unique-feature latent dims per branch in the latent-feature-mapping plot.")
-    parser.add_argument("--batch_n", type=int, default=512, metavar="N",
-                        help="Number of samples to draw for gradient computation.")
+    parser = argparse.ArgumentParser(description="cnn_gru_dual saliency + latent-feature-mapping plots.")
+    parser.add_argument("--n_dims", type=int, default=25, metavar="N")
+    parser.add_argument("--top_n", type=int, default=5, metavar="N")
+    parser.add_argument("--batch_n", type=int, default=512, metavar="N")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args(argv)
 
-    print(f"\n{'='*70}\n[RUNNING] chip/saliency.py\n{'='*70}\n")
+    print(f"\n{'='*70}\n[RUNNING] lab/saliency.py\n{'='*70}\n")
 
-    exp_paths = get_scoped_exp_paths(args.exp_folder, config.CROSS_DATASET_GROUPS['final_6_new'])
-    for exp_path in exp_paths:
-        for model_key in MODEL_KEYS:
-            for curve_type in args.curve_type:
-                print(f"\n{'-'*70}\n[{exp_path.name} | {model_key} | {curve_type}]\n{'-'*70}")
-                run_one(exp_path, model_key, curve_type, args.n_dims, args.top_n, args.batch_n, args.seed)
-
-    print(f"\n{'='*70}\n[DONE] chip/saliency.py\n{'='*70}\n")
+    for name in LAB_DATASETS:
+        exp_path = Path(config.LAB_EXP_FOLDER) / name
+        print(f"\n{'-'*70}\n[{name}]\n{'-'*70}")
+        run_one(exp_path, args.n_dims, args.top_n, args.batch_n, args.seed)
 
 
 if __name__ == "__main__":

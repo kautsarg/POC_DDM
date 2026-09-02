@@ -7,9 +7,11 @@ sys.path.insert(0, str(_ROOT))
 
 SUBCOMMANDS = {
     "preprocess": ("chip.preprocessing", "Curve preprocessing + kinetic features + optional LSTM-AE outlier detection"),
-    "train": ("chip.training", "Per-experiment model training"),
     "cross-dataset": ("chip.cross_dataset_training", "Cross-dataset leave-one-folder-out training"),
+    "ablation6": ("chip.ablation6", "Per-fold outlier-filter x model ablation"),
     "saliency": ("chip.saliency", "Saliency + latent-feature-mapping plots"),
+    "embedding-analysis": ("chip.embedding_analysis", "Per-model t-SNE embedding grid"),
+    "confidence-shift": ("chip.confidence_shift", "In-distribution vs LOCO softmax confidence"),
 }
 
 

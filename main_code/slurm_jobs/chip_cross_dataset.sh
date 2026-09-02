@@ -19,13 +19,13 @@ cd /vol/bitbucket/gk225/POC_DDM/main_code
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final
 
-TASK_ID=8   # final_6_chip_clean_nn
+TASK_ID=0   # final_6_new
 
 MODELS="cnn_gru_dual cnn_gru_dual_attn_recon \
         cnn_gru_dual_supcon1 cnn_gru_dual_attn_recon_supcon1 \
         cnn_gru_dual_supcon3 cnn_gru_dual_attn_recon_supcon3 \
         cnn_gru_dual_dann cnn_gru_dual_attn_recon_dann \
-        cnn_gru_dual_pc_recentering cnn_gru_dual_attn_recon_pc_recentering"
+        cnn_gru_dual_attn_recon_aug cnn_gru_dual_attn_recon_mtl"
 CURVE_TYPES="ori_curve_sg_p4_norm"
 
 python -u main_chip.py cross-dataset \
@@ -34,7 +34,8 @@ python -u main_chip.py cross-dataset \
     --mode lofo \
     --curve_type $CURVE_TYPES \
     --models $MODELS \
-    --outlier_filter none
+    --outlier_filter noamp_remove \
+    --train_center_frac 0.5
     # --force_rerun
     # --batch_size 2048
     # --n_splits 5            # only used by --mode kfold

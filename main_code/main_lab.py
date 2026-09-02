@@ -8,6 +8,7 @@ sys.path.insert(0, str(_ROOT))
 SUBCOMMANDS = {
     "preprocess": ("lab.preprocessing", "LAB curve preprocessing (sigmoid fitting)"),
     "train": ("lab.training", "Per-experiment model comparison training"),
+    "saliency": ("lab.saliency", "cnn_gru_dual saliency + latent-feature-mapping plots"),
 }
 
 

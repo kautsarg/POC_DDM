@@ -14,7 +14,7 @@ sys.path.insert(0, str(_ROOT / "utils" / "model_training"))
 
 import config
 from safe_io import safe_joblib_dump
-from pipeline_utils import get_exp_paths, check_task_id
+from pipeline_utils import get_scoped_exp_paths, check_task_id
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -102,14 +102,14 @@ def main(argv=None):
 
     set_global_determinism(0, strict=True)
 
-    exp_paths = get_exp_paths(args.exp_folder)
+    exp_paths = get_scoped_exp_paths(args.exp_folder, config.LAB_DATASETS_IN_SCOPE)
     check_task_id(args.task_id, exp_paths)
     exp_path = exp_paths[args.task_id]
     print(f"\n\n{'#'*80}\nSTARTING TRAINING FOR: {exp_path.name}\n{'#'*80}")
 
     out_dir = exp_path / "ablations"
     out_dir.mkdir(parents=True, exist_ok=True)
-    results_file_path = out_dir / "model_comparison_performances.joblib"
+    results_file_path = out_dir / "ablation1_model_comparison_performances.joblib"
     model_interp_dir = out_dir / "model_interpretation"
 
     training_data = load_training_data(exp_path)

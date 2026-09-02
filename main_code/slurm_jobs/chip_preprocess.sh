@@ -7,7 +7,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-6   # one task per chip subfolder -- check `ls $EXP_FOLDER | wc -l` and adjust
+#SBATCH --array=0-5   # one task per chip in CROSS_DATASET_GROUPS['final_6_new']
 
 #SBATCH --output=logs/%x/%A_%a.out
 #SBATCH --error=logs/%x/%A_%a.err

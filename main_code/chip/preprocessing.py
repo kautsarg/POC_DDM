@@ -20,6 +20,7 @@ from safe_io import safe_joblib_dump
 import sigmoid_fitting as sp
 from chip_v6_utils import load_and_preprocess_v6
 from kinetic_features import build_kinetic_features
+from pipeline_utils import get_scoped_exp_paths
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -279,8 +280,7 @@ def main(argv=None):
     n_wells = config.N_WELLS
     n_a_type = config.N_A_TYPE
 
-    exp_paths = sorted([Path(args.exp_folder, name) for name in os.listdir(args.exp_folder)
-                        if (os.path.isdir(os.path.join(args.exp_folder, name)) and name not in config.EXCLUDED_FOLDERS)])
+    exp_paths = get_scoped_exp_paths(args.exp_folder, config.CROSS_DATASET_GROUPS['final_6_new'])
 
     if args.task_id >= len(exp_paths):
         print(f"Task ID {args.task_id} is out of bounds for {len(exp_paths)} folders. Exiting.")

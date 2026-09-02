@@ -20,7 +20,8 @@ sys.path.insert(0, str(_ROOT / "utils" / "outlier_detection"))
 
 import config
 from safe_io import safe_joblib_dump, safe_keras_save
-from cross_dataset_result_io import save_partitioned, load_partitioned, filter_token
+from cross_dataset_result_io import save_partitioned, load_partitioned
+from pipeline_utils import get_scoped_exp_paths
 import sigmoid_fitting as sp
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -32,8 +33,6 @@ from model_utils import (evaluate_outlier_filters, plot_ml_results, set_global_d
                           CurveResampler, build_well_stratified_random_split,
                           build_well_stratified_nfold_splits, build_neighbor_curve_stack)
 from lstm_autoencoder_outlier import build_lstm_autoencoder
-from pc_recentering import (cls_layer, compute_embeddings, compute_embeddings_stack,
-                            infer_k, pc_mean_stack, recentered_predict, is_spatial_model)
 
 PC_TTP_ANCHOR = "min"
 PC_TTP_ANCHOR_PCT_DEFAULT = 10
@@ -44,7 +43,8 @@ MODEL_CHOICES = [
     'cnn_gru_dual_supcon1', 'cnn_gru_dual_attn_recon_supcon1',
     'cnn_gru_dual_supcon3', 'cnn_gru_dual_attn_recon_supcon3',
     'cnn_gru_dual_dann', 'cnn_gru_dual_attn_recon_dann',
-    'cnn_gru_dual_pc_recentering', 'cnn_gru_dual_attn_recon_pc_recentering',
+    'cnn_gru_dual_attn_recon_aug', 'cnn_gru_dual_attn_recon_mtl',
+    'knn',
 ]
 _ENGINE_KEY = {
     'cnn_gru_dual': 'cnn_gru_dual',
@@ -55,8 +55,10 @@ _ENGINE_KEY = {
     'cnn_gru_dual_attn_recon_supcon3': 'cnn_gru_dual_attn_recon_supcon3',
     'cnn_gru_dual_dann': 'cnn_gru_dual_dann',
     'cnn_gru_dual_attn_recon_dann': 'cnn_gru_dual_attn_recon_dann',
+    'cnn_gru_dual_attn_recon_aug': 'cnn_gru_dual_attn_recon_aug',
+    'cnn_gru_dual_attn_recon_mtl': 'cnn_gru_dual_attn_recon_mtl',
+    'knn': 'knn',
 }
-PC_RECENTER_SUFFIX = '_pc_recentering'
 
 LOFO_AE_FILTER_NAME = "lofo_ae"
 NOAMP_FILTER_NAME = "noamp_remove"
@@ -233,10 +235,60 @@ def align_parts_to_pc_ttp(parts, pc_ttp, held_out_chip, anchor_method, anchor_pc
     return aligned, anchor, common_duration
 
 
-def combine_group(exp_paths, group_name, curve_type, held_out_chip, pc_ttp_cache_dir,
-                  anchor_method=PC_TTP_ANCHOR, anchor_pct=PC_TTP_ANCHOR_PCT_DEFAULT):
-    """Concatenates a group's chips onto one common time grid, zero-referenced at
-    each chip's PC-well time-to-positivity (pc_ttp alignment, always on)."""
+def combine_group(exp_paths, group_name, curve_type="ori_curve"):
+    parts = []
+    for exp_path in exp_paths:
+        d = load_curve_data(exp_path, curve_type, group_name=group_name)
+        if d is None:
+            continue
+        parts.append(d)
+
+    if len(parts) < 2:
+        print(f"  -> Skipping group '{group_name}': fewer than 2 usable datasets found.")
+        return None
+
+    timestamps_zeroed = [p["timestamps"] - p["timestamps"][0] for p in parts]
+    resampler = CurveResampler.fit(timestamps_zeroed)
+    print(f"  [*] Resampling curves onto common grid: {len(resampler.t_grid)} points, "
+          f"duration={resampler.t_grid[-1]:.4g}")
+    for p in parts:
+        p["curves"] = resampler.transform(p["timestamps"], p["curves"])
+
+    if all(p["coords"] is not None for p in parts):
+        coords_combined = np.concatenate([p["coords"] for p in parts], axis=0)
+        well_ids_combined = np.concatenate([p["well_ids"] for p in parts], axis=0)
+    else:
+        missing = [p["dataset_id"] for p in parts if p["coords"] is None]
+        if missing:
+            print(f"  [*] No pixel_row_idx/pixel_col_idx metadata for: {missing} -- "
+                  f"cnn_gru_dual_attn_recon will be skipped for group '{group_name}'.")
+        coords_combined, well_ids_combined = None, None
+
+    combined_curves = np.concatenate([p["curves"] for p in parts], axis=0)
+    if curve_type.endswith("_norm"):
+        combined_curves = normalize_curves_minmax(combined_curves)
+
+    conc_parts = []
+    for p in parts:
+        raw = p.get("concentration_raw")
+        conc_parts.append(np.asarray(raw, dtype=object) if raw is not None
+                          else np.full(len(p["Y_mapped"]), None, dtype=object))
+
+    return {
+        "curves": combined_curves,
+        "features_df": pd.concat([p["features_df"] for p in parts], axis=0, ignore_index=True),
+        "Y_mapped": np.concatenate([p["Y_mapped"] for p in parts], axis=0),
+        "dataset_id": np.concatenate([np.full(len(p["Y_mapped"]), p["dataset_id"], dtype=object) for p in parts], axis=0),
+        "dataset_names": [p["dataset_id"] for p in parts],
+        "resampler": resampler,
+        "coords": coords_combined,
+        "well_ids": well_ids_combined,
+        "concentration_raw": np.concatenate(conc_parts, axis=0),
+    }
+
+
+def combine_group_pc_aligned(exp_paths, group_name, curve_type, held_out_chip, pc_ttp_cache_dir,
+                             anchor_method=PC_TTP_ANCHOR, anchor_pct=PC_TTP_ANCHOR_PCT_DEFAULT):
     parts = []
     for exp_path in exp_paths:
         d = load_curve_data(exp_path, curve_type, group_name=group_name)
@@ -324,9 +376,10 @@ def _save_alignment_artifacts(combined, out_dir, curve_type, held_out_chip=None)
     resampler_path = align_dir / config.CROSS_DATASET_RESAMPLER_PATH.format(curve_type=curve_type)
     safe_joblib_dump(combined["resampler"], resampler_path, compress=3)
     print(f"  [*] Saved curve resampler -> {resampler_path}")
-    recipe_path = align_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
-    safe_joblib_dump(combined["pc_ttp_recipe"], recipe_path, compress=3)
-    print(f"  [*] Saved pc_ttp alignment recipe -> {recipe_path}")
+    if "pc_ttp_recipe" in combined:
+        recipe_path = align_dir / config.CROSS_DATASET_PC_TTP_RECIPE_PATH.format(curve_type=curve_type)
+        safe_joblib_dump(combined["pc_ttp_recipe"], recipe_path, compress=3)
+        print(f"  [*] Saved pc_ttp alignment recipe -> {recipe_path}")
 
 
 def is_amplifying_mask(curves):
@@ -402,114 +455,10 @@ def _derive_pool_labels(combined):
 
 
 # ============================================================
-# PC-RECENTERING
-# ============================================================
-def _align_chip_pc_curves(exp_path, resampler, pc_ttp_recipe, curve_type):
-    pc = load_pc_wells_snapshot(exp_path, curve_type)
-    if pc is None:
-        return None
-    timestamps, curves = pc["timestamps"], pc["curves"]
-    ttp = pc_ttp_recipe["pc_ttp_per_chip"].get(Path(exp_path).name)
-    timestamps, curves, _ = shift_to_pc_ttp_anchor(timestamps, curves, ttp, pc_ttp_recipe["anchor"])
-    timestamps, curves = truncate_to_common_duration(timestamps, curves, pc_ttp_recipe["common_duration"])
-    curves = resampler.transform(timestamps, curves)
-    if curve_type.endswith("_norm"):
-        curves = normalize_curves_minmax(curves)
-    return curves
-
-
-def _chip_pc_embedding(model, is_spatial, k, exp_path, resampler, pc_ttp_recipe, curve_type):
-    curves = _align_chip_pc_curves(exp_path, resampler, pc_ttp_recipe, curve_type)
-    if curves is None:
-        return None
-    if is_spatial:
-        return compute_embeddings_stack(model, pc_mean_stack(curves, k))[0]
-    return compute_embeddings(model, curves).mean(axis=0)
-
-
-def _reference_pc_embedding(model, model_key, exp_paths_train, out_dir, curve_type, filter_key,
-                            resampler, pc_ttp_recipe, is_spatial, k, held_out_chip, force_rerun):
-    align_dir = config.cross_dataset_alignment_dir(out_dir, held_out_chip)
-    embed_path = align_dir / config.CROSS_DATASET_PC_EMBED_PATH.format(
-        model=model_key, filter=filter_token(filter_key), curve_type=curve_type)
-    if not force_rerun and embed_path.exists():
-        return joblib.load(embed_path)
-
-    pc_curves_all = []
-    for exp_path in exp_paths_train:
-        curves = _align_chip_pc_curves(exp_path, resampler, pc_ttp_recipe, curve_type)
-        if curves is None:
-            continue
-        pc_curves_all.append(pc_mean_stack(curves, k) if is_spatial else curves)
-    if not pc_curves_all:
-        return None
-    stacked = np.concatenate(pc_curves_all, axis=0)
-    mean_embed = (compute_embeddings_stack(model, stacked) if is_spatial
-                  else compute_embeddings(model, stacked)).mean(axis=0)
-
-    embed_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(mean_embed, embed_path, compress=3)
-    print(f"  [*] Saved PC reference embedding -> {embed_path}")
-    return mean_embed
-
-
-def _apply_pc_recentering(res_entry, y_full, test_idx, combined, exp_paths, held_out_chip,
-                          lofo_model_dir, out_dir, curve_type, filter_key, pc_variants, force_rerun):
-    for variant in pc_variants:
-        base_model = variant[:-len(PC_RECENTER_SUFFIX)]
-        base_model = _ENGINE_KEY.get(base_model, base_model)
-        if base_model not in config.MODEL_KEY_MAP or variant not in config.MODEL_KEY_MAP:
-            continue
-        base_preds_key = config.MODEL_KEY_MAP[base_model][0]
-        if base_preds_key not in res_entry:
-            continue
-
-        model_path = lofo_model_dir / f"{base_model}_{filter_key}_{curve_type}_model.keras"
-        if not model_path.exists():
-            print(f"  [SKIP] {variant}: base model file missing at {model_path}")
-            continue
-
-        model = tf.keras.models.load_model(model_path, compile=False)
-        spatial = is_spatial_model(base_model)
-        k = infer_k(model) if spatial else None
-
-        exp_paths_train = [p for p in exp_paths if p.name != held_out_chip]
-        ref_embed = _reference_pc_embedding(
-            model, base_model, exp_paths_train, out_dir, curve_type, filter_key,
-            combined["resampler"], combined["pc_ttp_recipe"], spatial, k,
-            held_out_chip=held_out_chip, force_rerun=force_rerun)
-        held_out_path = next((p for p in exp_paths if p.name == held_out_chip), None)
-        new_chip_embed = (_chip_pc_embedding(model, spatial, k, held_out_path, combined["resampler"],
-                                             combined["pc_ttp_recipe"], curve_type)
-                          if held_out_path is not None else None)
-
-        if ref_embed is None or new_chip_embed is None:
-            print(f"  [SKIP] {variant}: could not compute PC embeddings for {held_out_chip}.")
-            tf.keras.backend.clear_session()
-            continue
-
-        if spatial:
-            X_test = build_neighbor_curve_stack(
-                combined["curves"][test_idx].astype(np.float32, copy=False),
-                combined["coords"][test_idx], combined["well_ids"][test_idx], k=k)
-        else:
-            X_test = combined["curves"][test_idx]
-
-        probs, shift_norm = recentered_predict(model, base_model, X_test, ref_embed, new_chip_embed)
-        pred = np.argmax(probs, axis=1)
-        pk, pbk, ck = config.MODEL_KEY_MAP[variant]
-        res_entry[pk] = [pred]
-        res_entry[pbk] = [probs]
-        res_entry[ck] = [np.unique(y_full)]
-        print(f"  [PC-RECENTER] {variant} | filter={filter_key} | shift_norm={shift_norm:.4f}")
-        tf.keras.backend.clear_session()
-
-
-# ============================================================
 # PER-FOLD ORCHESTRATION
 # ============================================================
 def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx, combined, y_full, encoder,
-                  curve_type, models, pc_variants, outlier_filters, out_dir, plot_dir, group_name,
+                  curve_type, models, outlier_filters, out_dir, plot_dir, group_name,
                   total_count, lofo_results, mode_str, args, chip_id_encoded, exp_paths):
     progress_pct = ((fold_idx + 1) / total_folds) * 100
     print(f"\n{'='*75}")
@@ -520,7 +469,8 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx, combin
 
     def checkpoint(updated_results, fold_label=fold_label):
         lofo_results[fold_label] = updated_results
-        save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3, models=models)
+        save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3, models=models,
+                         train_center_frac=args.train_center_frac)
 
     lofo_model_dir = out_dir / "model_interpretation" / fold_label
     lofo_model_dir.mkdir(parents=True, exist_ok=True)
@@ -548,23 +498,15 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx, combin
         k_neighbors=K_NEIGHBORS,
         chip_id_encoded=chip_id_encoded,
         batch_size=args.batch_size,
+        y_concentration=combined["concentration_raw"],
+        train_center_frac=args.train_center_frac,
     )
 
     lofo_results[fold_label] = res
     lofo_results[fold_label]["class_names"] = [str(c) for c in encoder.classes_]
 
-    if pc_variants and args.mode == "lofo":
-        held_out_chip = fold_label[len("lofo_"):]
-        for f in outlier_filters:
-            res_entry = lofo_results[fold_label].get(f)
-            if res_entry is None:
-                continue
-            _apply_pc_recentering(res_entry, y_full, test_idx, combined, exp_paths, held_out_chip,
-                                  lofo_model_dir, out_dir, curve_type, f, pc_variants, args.force_rerun)
-
-    # pc_variants' result keys only exist after _apply_pc_recentering above -- must be
-    # included here or they're silently dropped from what's persisted to disk.
-    save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3, models=models + pc_variants)
+    save_partitioned(lofo_results, out_dir, mode_str, curve_type, compress=3, models=models,
+                     train_center_frac=args.train_center_frac)
 
     features_df_all = combined["features_df"]
     snapshot_path = lofo_model_dir / f"xai_data_{curve_type}.joblib"
@@ -590,12 +532,13 @@ def _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx, combin
     gc.collect()
 
 
-def _clear_cached_results(lofo_results, models, pc_variants):
+def _clear_cached_results(lofo_results, models):
     keys_to_clear = set()
-    for m in list(models) + list(pc_variants):
+    for m in models:
         if m in config.MODEL_KEY_MAP:
             pk, pbk, ck = config.MODEL_KEY_MAP[m]
-            keys_to_clear.update([pk, pbk, ck, f'train_history_{m}_'])
+            keys_to_clear.update([pk, pbk, ck, f'train_history_{m}_',
+                                  f'y_reg_preds_{m}_', f'y_reg_trues_{m}_'])
     for fold_res in lofo_results.values():
         if not isinstance(fold_res, dict):
             continue
@@ -633,6 +576,7 @@ def main(argv=None):
     parser.add_argument("--test_size", type=float, default=0.1, help="Test fraction for --mode random_split.")
     parser.add_argument("--held_out_chip", type=str, default=None,
                         help="Restrict --mode lofo to exactly this one held-out chip/folder.")
+    parser.add_argument("--train_center_frac", type=float, default=None)
     args = parser.parse_args(argv)
 
     set_global_determinism(0, strict=True)
@@ -644,33 +588,31 @@ def main(argv=None):
 
     group_name = group_names[args.task_id]
     folder_names = config.CROSS_DATASET_GROUPS[group_name]
-    exp_paths = [Path(args.exp_folder, name) for name in folder_names]
+    exp_paths = get_scoped_exp_paths(args.exp_folder, folder_names)
 
     pc_ttp_cache_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name / "_cache_pc_ttp"
     pc_ttp_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    pc_variants = [m for m in args.models if m.endswith(PC_RECENTER_SUFFIX)]
-    base_requested = [m for m in args.models if not m.endswith(PC_RECENTER_SUFFIX)]
-    models_set = {_ENGINE_KEY[m] for m in base_requested}
-    for v in pc_variants:
-        models_set.add(_ENGINE_KEY[v[:-len(PC_RECENTER_SUFFIX)]])
-    models = sorted(models_set)
+    models = sorted({_ENGINE_KEY[m] for m in args.models})
+    use_pc_aligned = args.mode != "kfold"
 
     ordered = list(reversed(args.curve_type))
     for curve_type in ordered:
         print(f"\n\n{'#'*80}\nLOFO CROSS-DATASET CV FOR GROUP: {group_name} (curve_type: {curve_type})\nFolders: {folder_names}\n{'#'*80}")
 
-        out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name / "curve_alignment_pc_ttp" / f"anchor_{PC_TTP_ANCHOR}"
+        out_dir = Path(args.exp_folder) / "cross_dataset_cv" / group_name
+        if use_pc_aligned:
+            out_dir = out_dir / "curve_alignment_pc_ttp" / f"anchor_{PC_TTP_ANCHOR}"
         plot_dir = out_dir / f"model_performance_{curve_type}"
         plot_dir.mkdir(parents=True, exist_ok=True)
 
         mode_str = args.mode if args.mode != "kfold" else f"kfold{args.n_splits}"
         outlier_filters = [None if f.lower() == "none" else f for f in args.outlier_filter]
 
-        lofo_results = load_partitioned(out_dir, mode_str, curve_type)
+        lofo_results = load_partitioned(out_dir, mode_str, curve_type, train_center_frac=args.train_center_frac)
         if args.force_rerun:
-            print(f"  -> [FORCE RERUN] Clearing cached results for models: {models + pc_variants}")
-            _clear_cached_results(lofo_results, models, pc_variants)
+            print(f"  -> [FORCE RERUN] Clearing cached results for models: {models}")
+            _clear_cached_results(lofo_results, models)
 
         pool_held_out_chips = list(folder_names) if args.mode == "lofo" else [None]
         if args.mode == "lofo" and args.held_out_chip:
@@ -678,7 +620,10 @@ def main(argv=None):
 
         combined = None
         for held_out_chip in pool_held_out_chips:
-            combined = combine_group(exp_paths, group_name, curve_type, held_out_chip, pc_ttp_cache_dir)
+            if use_pc_aligned:
+                combined = combine_group_pc_aligned(exp_paths, group_name, curve_type, held_out_chip, pc_ttp_cache_dir)
+            else:
+                combined = combine_group(exp_paths, group_name, curve_type=curve_type)
             if combined is None:
                 continue
 
@@ -707,12 +652,15 @@ def main(argv=None):
             total_folds = len(cv_splits)
             for fold_idx, (fold_label, (train_idx, test_idx)) in enumerate(reversed(list(cv_splits.items()))):
                 _process_fold(fold_idx, total_folds, fold_label, train_idx, test_idx,
-                              combined, y_full, encoder, curve_type, models, pc_variants,
+                              combined, y_full, encoder, curve_type, models,
                               outlier_filters, out_dir, plot_dir, group_name, total_count,
                               lofo_results, mode_str, args, chip_id_encoded, exp_paths)
 
         if args.train_full:
-            combined = combine_group(exp_paths, group_name, curve_type, None, pc_ttp_cache_dir)
+            if use_pc_aligned:
+                combined = combine_group_pc_aligned(exp_paths, group_name, curve_type, None, pc_ttp_cache_dir)
+            else:
+                combined = combine_group(exp_paths, group_name, curve_type=curve_type)
             if combined is not None:
                 _save_alignment_artifacts(combined, out_dir, curve_type)
                 if NOAMP_FILTER_NAME in outlier_filters:
@@ -748,6 +696,7 @@ def main(argv=None):
                     k_neighbors=K_NEIGHBORS,
                     chip_id_encoded=chip_id_encoded,
                     batch_size=args.batch_size,
+                    y_concentration=combined["concentration_raw"],
                 )
                 lofo_results["full_data"] = res_full
                 lofo_results["full_data"]["class_names"] = [str(c) for c in encoder.classes_]
