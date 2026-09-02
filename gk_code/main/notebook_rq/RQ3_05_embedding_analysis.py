@@ -28,7 +28,6 @@ pred08 = importlib.import_module("08_cross_dataset_predict_new_chip")
 vis07 = importlib.import_module("07_attribution_vis_all")
 b06 = importlib.import_module("06b_cross_dataset_prediction_report")
 
-# Same constants as RQ3_02_loco_results.ipynb's final_6_new comparison.
 EXP_FOLDER = config.FINAL_EXP_FOLDER
 GROUP_NAME = "final_6_new"
 CURVE_TYPE = "ori_curve_sg_p4_norm"
@@ -37,9 +36,6 @@ CURVE_ALIGNMENT = "pc_ttp"
 PC_TTP_ANCHOR = "min"
 TRAIN_CENTER_FRAC = 0.5
 
-# Copied from RQ3_02_loco_results.ipynb's currently-active RQ3_2_BASE_MODELS /
-# PC_RECENTER_BASES (knn/coral/dann_conc commented out there too) -- kept as two
-# separate lists here in case they diverge later, update both if that notebook changes.
 BASE_MODELS = [
     "cnn_gru_dual", "cnn_gru_dual_attn_recon",
     "cnn_gru_dual_attn_recon_dann", "cnn_gru_dual_attn_recon_supcon3",
@@ -190,6 +186,96 @@ def plot_model_grid(model_key, fold_results, chip_colors, seed, save_path):
     plt.close(fig)
 
 
+def plot_model_comparison_grid(model_entries, held_out, chip_colors, seed, save_path):
+    n_models = len(model_entries)
+    fig, axes = plt.subplots(n_models, 2, figsize=(11, 4.3 * n_models), facecolor="white", squeeze=False)
+
+    all_targets = sorted({lab for _, fr in model_entries for lab in np.unique(fr["labels"])})
+    target_colors = {t: _PALETTE[i % len(_PALETTE)] for i, t in enumerate(all_targets)}
+
+    for row, (model_label, fr) in enumerate(model_entries):
+        ts = TSNE(n_components=2, random_state=seed, init="pca", perplexity=30).fit_transform(fr["embeddings"])
+        is_held = fr["chip_ids"] == fr["held_out"]
+
+        _scatter_train_held(axes[row, 0], ts, fr["labels"], is_held, target_colors)
+        _scatter_train_held(axes[row, 1], ts, fr["chip_ids"], is_held, chip_colors)
+        axes[row, 0].set_ylabel(model_label, fontsize=11, fontweight="bold")
+
+    axes[0, 0].set_title("Coloured by target", fontsize=11, fontweight="bold")
+    axes[0, 1].set_title("Coloured by chip", fontsize=11, fontweight="bold")
+
+    target_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7, label=str(t))
+                      for t, c in target_colors.items()]
+    chip_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7,
+                           label=short_name(chip)) for chip, c in chip_colors.items()]
+    shape_handles = [
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="gray", markersize=6, label="training chip"),
+        Line2D([0], [0], marker="X", color="none", markerfacecolor="gray", markeredgecolor="black",
+              markersize=8, label="held-out chip"),
+    ]
+    fig.legend(handles=target_handles, title="target", fontsize=7, title_fontsize=8,
+              loc="upper left", bbox_to_anchor=(1.0, 0.98), frameon=False)
+    fig.legend(handles=chip_handles, title="chip", fontsize=7, title_fontsize=8,
+              loc="upper left", bbox_to_anchor=(1.0, 0.62), frameon=False)
+    fig.legend(handles=shape_handles, title="marker", fontsize=7, title_fontsize=8,
+              loc="upper left", bbox_to_anchor=(1.0, 0.28), frameon=False)
+
+    fig.suptitle(f"t-SNE projection of embeddings with {short_name(held_out)} as held-out (crosses)",
+                fontsize=13, fontweight="bold", y=1.0)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def run_pairwise_comparison(batch_n, seed, models_to_compare, model_labels):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    chips = list(config.CROSS_DATASET_GROUPS[GROUP_NAME])
+    chip_colors = {chip: _PALETTE[i % len(_PALETTE)] for i, chip in enumerate(chips)}
+    group_dir = group_out_dir()
+    rng = np.random.default_rng(seed)
+
+    for held_out in chips:
+        t0 = time.perf_counter()
+        print(f"\n{'-'*70}\n[fold] held out = {held_out}\n{'-'*70}")
+        aligned, resampler = load_fold(group_dir, chips, held_out, rng, batch_n)
+        if aligned is None or len(aligned) < 2:
+            print(f"  [!] fold {held_out}: fewer than 2 chips aligned, skipping fold.")
+            continue
+
+        model_dir = group_dir / "model_interpretation" / f"lofo_{held_out}"
+        keras_models = vis07.load_saved_models(model_dir, FILTER_KEY, len(resampler.t_grid),
+                                               curve_type=CURVE_TYPE, model_names=models_to_compare,
+                                               train_center_frac=TRAIN_CENTER_FRAC)
+
+        model_entries = []
+        for base_model in models_to_compare:
+            model = keras_models.get(base_model)
+            if model is None:
+                print(f"  [!] fold {held_out}: missing {base_model}.keras, skipping this model.")
+                continue
+            per_chip_emb, _, _ = model_embeddings(model, base_model, aligned)
+            if len(per_chip_emb) < 2:
+                continue
+            cs = list(per_chip_emb.keys())
+            fr = dict(
+                held_out=held_out,
+                embeddings=np.concatenate([per_chip_emb[c] for c in cs], axis=0),
+                labels=np.concatenate([aligned[c]["y_labels"] for c in cs], axis=0),
+                chip_ids=np.concatenate([np.full(len(per_chip_emb[c]), c) for c in cs]))
+            model_entries.append((model_labels[base_model], fr))
+
+        tf.keras.backend.clear_session()
+
+        if len(model_entries) < len(models_to_compare):
+            print(f"  [!] fold {held_out}: only {len(model_entries)}/{len(models_to_compare)} "
+                 f"models available, skipping plot.")
+            continue
+
+        save_path = OUT_DIR / f"{short_name(held_out)}_pairwise_tsne.png"
+        plot_model_comparison_grid(model_entries, held_out, chip_colors, seed, save_path)
+        print(f"  [+] fold {held_out} done in {time.perf_counter()-t0:.1f}s -> {save_path}")
+
+
 def run(batch_n, seed):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     chips = list(config.CROSS_DATASET_GROUPS[GROUP_NAME])
@@ -253,6 +339,11 @@ def run(batch_n, seed):
         print(f"  [+] saved -> {save_path}")
 
 
+PAIRWISE_MODEL_LABELS = {
+    "cnn_gru_dual": "CNN GRU DUAL",
+    "cnn_gru_dual_attn_recon": "CNN GRU DUAL + Spatial Attn",
+}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Per-model 6(fold) x 2(target/chip) t-SNE embedding grid for the "
@@ -260,8 +351,19 @@ if __name__ == "__main__":
     parser.add_argument("--batch_n", type=int, default=800, metavar="N",
                         help="Samples drawn per chip for the t-SNE (default: 800).")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--pairwise", action="store_true",
+                        help="Instead of the full 12-model-variant sweep, produce one "
+                             "figure per held-out chip comparing cnn_gru_dual vs "
+                             "cnn_gru_dual_attn_recon (rows = model, cols = target/chip) -- "
+                             "the Figure 4.8 layout, for every fold. Much cheaper since it "
+                             "only loads these 2 models instead of all 12.")
     args = parser.parse_args()
 
     print(f"\n{'='*70}\n[RUNNING] RQ3_05_embedding_analysis.py\n{'='*70}\n")
-    run(args.batch_n, args.seed)
+    if args.pairwise:
+        run_pairwise_comparison(args.batch_n, args.seed,
+                                models_to_compare=list(PAIRWISE_MODEL_LABELS.keys()),
+                                model_labels=PAIRWISE_MODEL_LABELS)
+    else:
+        run(args.batch_n, args.seed)
     print(f"\n{'='*70}\n[DONE] RQ3_05_embedding_analysis.py\n{'='*70}\n")
