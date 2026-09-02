@@ -40,6 +40,10 @@ from model_utils_dann import (
     DANN_MODEL_KEYS, GRLLambdaSchedule,
     create_cnn_gru_dual_dann_model, create_cnn_gru_dual_attn_recon_dann_model,
 )
+from model_utils_mtl import (
+    REG_SENTINEL, _normalize_concentration,
+    create_cnn_gru_dual_attn_recon_mtl_model,
+)
 
 # ====================================================================
 # GPU SETUP & VERIFICATION
@@ -338,6 +342,82 @@ def build_well_stratified_nfold_splits(y, well_ids, n_splits=5, random_state=0):
             for i, (tr, te) in enumerate(skf.split(np.zeros(len(y)), well_ids))}
 
 
+def crop_train_to_well_centers(train_index, coords, well_ids, frac):
+    kept = []
+    for well in np.unique(well_ids[train_index]):
+        well_rows = train_index[well_ids[train_index] == well]
+        well_coords = coords[well_rows]
+        centroid = well_coords.mean(axis=0)
+        dist = np.linalg.norm(well_coords - centroid, axis=1)
+        n_keep = max(1, round(len(well_rows) * frac))
+        kept.append(well_rows[np.argsort(dist)[:n_keep]])
+    return np.sort(np.concatenate(kept)) if kept else train_index[:0]
+
+
+def _frac_suffix(train_center_frac):
+    return f"_center{train_center_frac:g}" if train_center_frac is not None else ""
+
+
+AUG_SHIFT_MAX_FRAMES = 50.0
+AUG_STRETCH_RANGE = (0.85, 1.15)
+
+
+def augment_neighbor_stack_temporal(stack, shift_max=AUG_SHIFT_MAX_FRAMES,
+                                    stretch_range=AUG_STRETCH_RANGE, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
+    batch, kp1, T = stack.shape
+    out = np.empty_like(stack)
+    shifts = rng.uniform(-shift_max, shift_max, size=batch)
+    stretches = rng.uniform(stretch_range[0], stretch_range[1], size=batch)
+    grid = np.arange(T, dtype=np.float64)
+
+    for i in range(batch):
+        s_int = int(round(shifts[i]))
+        r = stretches[i]
+        sub = stack[i]
+
+        if s_int > 0:
+            shifted = np.empty_like(sub)
+            shifted[:, :s_int] = sub[:, :1]
+            shifted[:, s_int:] = sub[:, :T - s_int]
+        elif s_int < 0:
+            shifted = np.empty_like(sub)
+            shifted[:, s_int:] = sub[:, -1:]
+            shifted[:, :s_int] = sub[:, -s_int:]
+        else:
+            shifted = sub
+
+        query = grid / r
+        for j in range(kp1):
+            out[i, j] = np.interp(query, grid, shifted[j],
+                                   left=shifted[j, 0], right=shifted[j, -1])
+    return out
+
+
+class _AugmentedStackSequence(tf.keras.utils.Sequence):
+    def __init__(self, X, y, batch_size, shift_max=AUG_SHIFT_MAX_FRAMES,
+                stretch_range=AUG_STRETCH_RANGE, rng=None):
+        self.X, self.y = X, y
+        self.batch_size = batch_size
+        self.shift_max, self.stretch_range = shift_max, stretch_range
+        self.rng = rng if rng is not None else np.random.default_rng()
+        self.indices = np.arange(len(y))
+        self.rng.shuffle(self.indices)
+
+    def __len__(self):
+        return int(np.ceil(len(self.y) / self.batch_size))
+
+    def __getitem__(self, idx):
+        batch_idx = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+        X_batch = augment_neighbor_stack_temporal(
+            self.X[batch_idx], self.shift_max, self.stretch_range, self.rng)
+        return X_batch, self.y[batch_idx]
+
+    def on_epoch_end(self):
+        self.rng.shuffle(self.indices)
+
+
 _XAI_SAVE_NAME = {
     'cnn': 'cnn',
     'gru': 'bigru',
@@ -348,6 +428,8 @@ _XAI_SAVE_NAME = {
 _XAI_SAVE_NAME.update({k: k for k in SUPCON_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in BRANCH_SUPCON3_MODEL_KEYS})
 _XAI_SAVE_NAME.update({k: k for k in DANN_MODEL_KEYS})
+_XAI_SAVE_NAME['cnn_gru_dual_attn_recon_aug'] = 'cnn_gru_dual_attn_recon_aug'
+_XAI_SAVE_NAME['cnn_gru_dual_attn_recon_mtl'] = 'cnn_gru_dual_attn_recon_mtl'
 
 
 def evaluate_outlier_filters(
@@ -358,11 +440,13 @@ def evaluate_outlier_filters(
     coords=None, well_ids=None, k_neighbors=24,
     chip_id_encoded=None,
     batch_size=512,
+    y_concentration=None, train_center_frac=None,
 ):
     if save_model_dir is not None:
         Path(save_model_dir).mkdir(parents=True, exist_ok=True)
 
     _bs = batch_size
+    _frac_tag = _frac_suffix(train_center_frac)
     results_dict = cached_results.copy() if cached_results is not None else {}
     total_filters = len(outlier_filters)
     models = [m.lower() for m in models]
@@ -376,6 +460,8 @@ def evaluate_outlier_filters(
         "cnn_gru_dual_attn_recon_supcon",
         "cnn_gru_dual_attn_recon_supcon3",
         "cnn_gru_dual_attn_recon_dann",
+        "cnn_gru_dual_attn_recon_aug",
+        "cnn_gru_dual_attn_recon_mtl",
     )
 
     for idx, f in enumerate(outlier_filters):
@@ -448,6 +534,21 @@ def evaluate_outlier_filters(
 
             splits = list(splitter.split(X_AC, y_true))
 
+        if train_center_frac is not None:
+            if coords_m is None or well_ids_m is None:
+                raise ValueError("train_center_frac requires per-pixel coords/well_ids.")
+            splits = [(crop_train_to_well_centers(train_index, coords_m, well_ids_m, train_center_frac), test_index)
+                      for train_index, test_index in splits]
+
+        y_conc_filtered = None
+        if y_concentration is not None:
+            _conc_m = y_concentration[mask]
+            if valid_class_mask is not None:
+                _conc_m = _conc_m[valid_class_mask]
+            y_conc_filtered = np.array(
+                [float(v) if v is not None and float(v) != 0 else REG_SENTINEL for v in _conc_m],
+                dtype=float)
+
         current_mask_count = int(np.sum(mask))
         cached_mask_count = res_entry.get("mask_count")
         if cached_mask_count is not None and cached_mask_count != current_mask_count:
@@ -457,14 +558,17 @@ def evaluate_outlier_filters(
             res_entry = {}
 
         _split_signature = tuple(hashlib.md5(np.sort(test_index).tobytes()).hexdigest() for _, test_index in splits)
-        _had_cached_predictions = any(k.startswith('y_preds_') for k in res_entry)
-        if res_entry.get("_split_signature") != _split_signature:
+        _train_crop_signature = train_center_frac
+        _had_cached_predictions = any(k.startswith(('y_preds_', 'y_reg_preds_')) for k in res_entry)
+        if (res_entry.get("_split_signature") != _split_signature
+                or res_entry.get("_train_crop_signature") != _train_crop_signature):
             if _had_cached_predictions:
                 print(f"     [Warning] Cached results for filter '{filter_name}' were built from a "
                       f"different train/test split (splitter changed upstream, or this cache predates "
                       f"split tracking). Discarding stale cache for this filter.")
             res_entry = {}
         res_entry["_split_signature"] = _split_signature
+        res_entry["_train_crop_signature"] = _train_crop_signature
 
         res_entry["y_trues_"] = [y_true[test_index] for _, test_index in splits]
         res_entry["well_ids_test_"] = ([well_ids_m[test_index] for _, test_index in splits]
@@ -496,7 +600,7 @@ def evaluate_outlier_filters(
             if preds_key in res_entry:
                 _xai_file_missing = (
                     save_model_dir is not None and m in _XAI_SAVE_NAME
-                    and not (Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras").exists()
+                    and not (Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_tag}_model.keras").exists()
                 )
                 if not _xai_file_missing:
                     fold_accs = [accuracy_score(yt, yp) for yt, yp in zip(res_entry["y_trues_"], res_entry[preds_key])]
@@ -565,7 +669,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 
@@ -594,11 +698,92 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
                     prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
+                elif _base_m == "cnn_gru_dual_attn_recon_aug":
+                    tf.keras.backend.clear_session()
+                    model = create_cnn_gru_dual_attn_recon_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    epochs = 500
+                    _aug_rng = np.random.default_rng(
+                        seed=hash((mode_name, f, m)) & 0x7fffffff)
+
+                    if _val_split_ok:
+                        _train_seq = _AugmentedStackSequence(
+                            X_train_curve_fit, y_train_fit, batch_size=_bs, rng=_aug_rng)
+                        _hist = model.fit(_train_seq, validation_data=(X_val_curve, y_val),
+                                 epochs=epochs, verbose=0, callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
+                    else:
+                        _train_seq = _AugmentedStackSequence(
+                            X_train_curve, y_train, batch_size=_bs, rng=_aug_rng)
+                        _hist = model.fit(_train_seq, epochs=epochs, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)
+                    pred = np.argmax(prob, axis=1)
+                    cls = np.unique(y_encoded)
+
+                    preds.append(pred)
+                    probs.append(prob)
+                    classes_list.append(cls)
+
+                elif _base_m == "cnn_gru_dual_attn_recon_mtl":
+                    tf.keras.backend.clear_session()
+                    model = create_cnn_gru_dual_attn_recon_mtl_model(
+                        X_train_curve.shape[1], X_train_curve.shape[2], n_classes)
+                    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+                                  metrics=['accuracy'])
+                    epochs = 500
+
+                    conc_train_raw = (y_conc_filtered[train_idx] if y_conc_filtered is not None
+                                      else np.full(len(train_idx), REG_SENTINEL, dtype=float))
+                    conc_test_raw = (y_conc_filtered[test_idx] if y_conc_filtered is not None
+                                     else np.full(len(test_idx), REG_SENTINEL, dtype=float))
+                    conc_train_scaled, _conc_scaler = _normalize_concentration(conc_train_raw)
+                    conc_test_scaled = conc_test_raw.copy()
+                    _valid_test = conc_test_raw != REG_SENTINEL
+                    if _valid_test.sum() > 0 and hasattr(_conc_scaler, 'mean_'):
+                        conc_test_scaled[_valid_test] = _conc_scaler.transform(
+                            conc_test_raw[_valid_test].reshape(-1, 1)).ravel()
+
+                    if _val_split_ok:
+                        conc_train_fit_scaled = conc_train_scaled[_tr_sub]
+                        conc_val_scaled = conc_train_scaled[_val_sub]
+                        _hist = model.fit(
+                            X_train_curve_fit,
+                            {'cls_out': y_train_fit, 'reg_out': conc_train_fit_scaled},
+                            validation_data=(X_val_curve, {'cls_out': y_val, 'reg_out': conc_val_scaled}),
+                            epochs=epochs, batch_size=_bs, shuffle=True, verbose=0,
+                            callbacks=_fit_callbacks)
+                        histories.append(_hist.history)
+                    else:
+                        _hist = model.fit(
+                            X_train_curve, {'cls_out': y_train, 'reg_out': conc_train_scaled},
+                            epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
+                        histories.append(_hist.history)
+
+                    if _do_xai_save:
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
+                        safe_keras_save(model, _xai_path)
+                        print(f"     [XAI] Saved {m} -> {_xai_path}")
+
+                    prob = model.predict(X_test_curve, verbose=0)[0]
                     pred = np.argmax(prob, axis=1)
                     cls = np.unique(y_encoded)
 
@@ -649,7 +834,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -688,7 +873,7 @@ def evaluate_outlier_filters(
                         histories.append(_hist.history)
 
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
 
@@ -722,7 +907,7 @@ def evaluate_outlier_filters(
                                   epochs=epochs, batch_size=_bs, shuffle=True, verbose=0)
                         histories.append(_hist.history)
                     if _do_xai_save:
-                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{m}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(model, _xai_path)
                         print(f"     [XAI] Saved {m} -> {_xai_path}")
                     raw_out  = model.predict(X_test_curve, verbose=0)
@@ -752,7 +937,7 @@ def evaluate_outlier_filters(
                             histories.append(clf.history_)
 
                     if _do_xai_save and _base_m in ['cnn', 'gru', 'transformer']:
-                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}_model.keras"
+                        _xai_path = Path(save_model_dir) / f"{_XAI_SAVE_NAME[m]}_{f}_{save_model_curve_type}{_frac_tag}_model.keras"
                         safe_keras_save(clf.model_, _xai_path)
                         print(f"     [XAI] Saved {_XAI_SAVE_NAME[m]} -> {_xai_path}")
 

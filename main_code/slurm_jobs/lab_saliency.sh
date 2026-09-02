@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=lab_preprocess
+#SBATCH --job-name=lab_saliency
 #SBATCH --time=12:00:00
 
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-3   # one task per folder in LAB_DATASETS_IN_SCOPE
 
 #SBATCH --output=logs/%x/%A_%a.out
 #SBATCH --error=logs/%x/%A_%a.err
@@ -17,11 +17,7 @@ mkdir -p "logs/${SLURM_JOB_NAME}"
 source /vol/bitbucket/gk225/venv_poc_ddm/bin/activate
 cd /vol/bitbucket/gk225/POC_DDM/main_code
 
-EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/LAB_DDM_paper
-
-python -u main_lab.py preprocess \
-    --task_id "$SLURM_ARRAY_TASK_ID" \
-    --exp_folder "$EXP_FOLDER"
-    # --force_rerun
+python -u main_lab.py saliency
+    # --n_dims 25 --top_n 5 --batch_n 512 --seed 42
 
 deactivate

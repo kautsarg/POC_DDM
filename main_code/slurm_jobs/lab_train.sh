@@ -7,7 +7,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=a30
-#SBATCH --array=0-14   # one task per LAB subfolder -- check `ls $EXP_FOLDER | wc -l` and adjust
+#SBATCH --array=0-3   # one task per folder in LAB_DATASETS_IN_SCOPE
 
 #SBATCH --output=logs/%x/%A_%a.out
 #SBATCH --error=logs/%x/%A_%a.err
