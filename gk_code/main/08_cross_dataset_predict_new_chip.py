@@ -135,10 +135,10 @@ def _cls_layer(model):
         return model.layers[-1]
 
 
-def compute_embeddings(model, curves):
+def compute_embeddings(model, curves, batch_size=256):
     """Runs curves through model up to (not including) its classification layer."""
     embed_model = tf.keras.Model(inputs=model.input, outputs=_cls_layer(model).input)
-    return embed_model.predict(curves[..., None].astype(np.float32), verbose=0)
+    return embed_model.predict(curves[..., None].astype(np.float32), verbose=0, batch_size=batch_size)
 
 
 def _infer_k(model):
@@ -147,9 +147,9 @@ def _infer_k(model):
     return model.input_shape[1] - 1
 
 
-def compute_embeddings_stack(model, stack):
+def compute_embeddings_stack(model, stack, batch_size=256):
     embed_model = tf.keras.Model(inputs=model.input, outputs=_cls_layer(model).input)
-    return embed_model.predict(stack.astype(np.float32), verbose=0)
+    return embed_model.predict(stack.astype(np.float32), verbose=0, batch_size=batch_size)
 
 
 def _pc_mean_stack(pc_curves, k):
@@ -158,7 +158,7 @@ def _pc_mean_stack(pc_curves, k):
 
 
 def _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=None,
-                                  held_out_chip=None):
+                                  held_out_chip=None, batch_size=256):
     resampler_path = _resolve_alignment_path(out_dir, config.CROSS_DATASET_RESAMPLER_PATH, curve_type, held_out_chip)
     resampler = joblib.load(resampler_path)
 
@@ -186,12 +186,12 @@ def _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_a
             pc_curves_all.append(curves)
 
     if k is not None:
-        return compute_embeddings_stack(model, np.concatenate(pc_curves_all, axis=0))
-    return compute_embeddings(model, np.concatenate(pc_curves_all, axis=0))
+        return compute_embeddings_stack(model, np.concatenate(pc_curves_all, axis=0), batch_size=batch_size)
+    return compute_embeddings(model, np.concatenate(pc_curves_all, axis=0), batch_size=batch_size)
 
 
 def reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type, filter_key,
-                           curve_alignment, force_rerun=False, held_out_chip=None):
+                           curve_alignment, force_rerun=False, held_out_chip=None, batch_size=256):
     align_dir = config.cross_dataset_alignment_dir(out_dir, held_out_chip)
     embed_path = align_dir / config.CROSS_DATASET_PC_EMBED_PATH.format(
         model=model_key, filter=filter_key, curve_type=curve_type)
@@ -200,7 +200,7 @@ def reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type, fil
 
     k = _infer_k(model) if _is_spatial(model_key) else None
     embeddings = _build_training_pc_embeddings(model, exp_paths, out_dir, curve_type, curve_alignment, k=k,
-                                               held_out_chip=held_out_chip)
+                                               held_out_chip=held_out_chip, batch_size=batch_size)
     mean_embed = embeddings.mean(axis=0)
     embed_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(mean_embed, embed_path, compress=3)
@@ -210,7 +210,7 @@ def reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type, fil
 
 def predict_new_chip(model, model_key, curves, coords, well_ids, pc_curves_aligned,
                      exp_paths, out_dir, curve_type, filter_key, curve_alignment,
-                     pc_recenter=False, force_rerun=False, held_out_chip=None):
+                     pc_recenter=False, force_rerun=False, held_out_chip=None, batch_size=256):
     is_spatial = _is_spatial(model_key)
     if is_spatial:
         k = _infer_k(model)
@@ -224,18 +224,18 @@ def predict_new_chip(model, model_key, curves, coords, well_ids, pc_curves_align
             raise ValueError("pc_recenter requires the chip's own PC well curves, none found.")
         ref_embed = reference_pc_embedding(model, model_key, exp_paths, out_dir, curve_type,
                                            filter_key, curve_alignment, force_rerun=force_rerun,
-                                           held_out_chip=held_out_chip)
+                                           held_out_chip=held_out_chip, batch_size=batch_size)
         if is_spatial:
-            new_chip_embed = compute_embeddings_stack(model, _pc_mean_stack(pc_curves_aligned, k))[0]
-            embeddings = compute_embeddings_stack(model, X)
+            new_chip_embed = compute_embeddings_stack(model, _pc_mean_stack(pc_curves_aligned, k), batch_size=batch_size)[0]
+            embeddings = compute_embeddings_stack(model, X, batch_size=batch_size)
         else:
-            new_chip_embed = compute_embeddings(model, pc_curves_aligned).mean(axis=0)
-            embeddings = compute_embeddings(model, curves)
+            new_chip_embed = compute_embeddings(model, pc_curves_aligned, batch_size=batch_size).mean(axis=0)
+            embeddings = compute_embeddings(model, curves, batch_size=batch_size)
         shift = ref_embed - new_chip_embed
         shift_norm = float(np.linalg.norm(shift))
         out = _cls_layer(model)(embeddings + shift).numpy()
     else:
-        out = model.predict(X, verbose=0)
+        out = model.predict(X, verbose=0, batch_size=batch_size)
     probs = out[0] if isinstance(out, list) else out
     return probs, shift_norm
 
