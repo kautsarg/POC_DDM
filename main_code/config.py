@@ -8,7 +8,7 @@ from model_utils import set_global_determinism
 set_global_determinism(0)
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_hex, ListedColormap
+from matplotlib.colors import to_hex
 from cycler import cycler
 
 # ==========================================
@@ -118,65 +118,31 @@ OUTLIER_FILTERS = [
 ]
 
 # model key -> (y_preds_ key, y_probs_ key, classes_ key), written by
-# evaluate_outlier_filters() in utils/model_training/model_utils.py.
-MODEL_KEY_MAP = {
-    "cnn":         ("y_preds_AC_",       "y_probs_AC_",       "classes_AC_"),
-    "gru":         ("y_preds_AC_gru_",   "y_probs_AC_gru_",   "classes_AC_gru_"),
-    "transformer": ("y_preds_AC_trans_", "y_probs_AC_trans_", "classes_AC_trans_"),
-    "knn":         ("y_preds_AC_kNN_",   "y_probs_AC_kNN_",   "classes_AC_kNN_"),
-    "cnn_gru_dual": ("y_preds_AC_cnn_gru_dual_", "y_probs_AC_cnn_gru_dual_", "classes_AC_cnn_gru_dual_"),
-    "cnn_gru_dual_attn_recon": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_",
-        "classes_AC_cnn_gru_dual_attn_recon_",
-    ),
-    "cnn_gru_dual_supcon": (
-        "y_preds_AC_cnn_gru_dual_supcon_",
-        "y_probs_AC_cnn_gru_dual_supcon_",
-        "classes_AC_cnn_gru_dual_supcon_",
-    ),
-    "cnn_gru_dual_attn_recon_supcon": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_supcon_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_supcon_",
-        "classes_AC_cnn_gru_dual_attn_recon_supcon_",
-    ),
-    "cnn_gru_dual_supcon3": (
-        "y_preds_AC_cnn_gru_dual_supcon3_",
-        "y_probs_AC_cnn_gru_dual_supcon3_",
-        "classes_AC_cnn_gru_dual_supcon3_",
-    ),
-    "cnn_gru_dual_attn_recon_supcon3": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_supcon3_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_supcon3_",
-        "classes_AC_cnn_gru_dual_attn_recon_supcon3_",
-    ),
-    "cnn_gru_dual_dann": (
-        "y_preds_AC_cnn_gru_dual_dann_",
-        "y_probs_AC_cnn_gru_dual_dann_",
-        "classes_AC_cnn_gru_dual_dann_",
-    ),
-    "cnn_gru_dual_attn_recon_dann": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_dann_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_dann_",
-        "classes_AC_cnn_gru_dual_attn_recon_dann_",
-    ),
-    "cnn_gru_dual_attn_recon_aug": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_aug_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_aug_",
-        "classes_AC_cnn_gru_dual_attn_recon_aug_",
-    ),
-    "cnn_gru_dual_attn_recon_mtl": (
-        "y_preds_AC_cnn_gru_dual_attn_recon_mtl_",
-        "y_probs_AC_cnn_gru_dual_attn_recon_mtl_",
-        "classes_AC_cnn_gru_dual_attn_recon_mtl_",
-    ),
-}
+# evaluate_outlier_filters() in utils/model_training/model_utils.py. Infix defaults to
+# the model key itself; only the 4 legacy sklearn/scikeras models abbreviate it.
+_MODEL_KEY_INFIX_OVERRIDES = {"cnn": "", "transformer": "trans", "knn": "kNN"}
+
+
+def _model_key_entry(model_key):
+    infix = _MODEL_KEY_INFIX_OVERRIDES.get(model_key, model_key)
+    suffix = f"{infix}_" if infix else ""
+    return (f"y_preds_AC_{suffix}", f"y_probs_AC_{suffix}", f"classes_AC_{suffix}")
+
+
+MODEL_KEY_MAP = {k: _model_key_entry(k) for k in [
+    "cnn", "gru", "transformer", "knn",
+    "cnn_gru_dual", "cnn_gru_dual_attn_recon",
+    "cnn_gru_dual_supcon", "cnn_gru_dual_attn_recon_supcon",
+    "cnn_gru_dual_supcon3", "cnn_gru_dual_attn_recon_supcon3",
+    "cnn_gru_dual_dann", "cnn_gru_dual_attn_recon_dann",
+    "cnn_gru_dual_attn_recon_aug", "cnn_gru_dual_attn_recon_mtl",
+]}
 
 MODEL_PRINT_MAP = {
-    "cnn": "CNN (ACA)",
-    "gru": "GRU (ACA)",
-    "transformer": "Trans (ACA)",
-    "knn": "KNN (ACA)",
+    "cnn": "CNN",
+    "gru": "GRU",
+    "transformer": "Trans",
+    "knn": "KNN",
     "cnn_gru_dual": "CNN+GRU Dual",
     "cnn_gru_dual_attn_recon": "CNN+GRU AttnRecon",
     "cnn_gru_dual_supcon": "CNN+GRU Dual SupCon",
@@ -256,9 +222,6 @@ def get_palette(categories, fixed_map=None):
     return palette
 
 
-WELL_COLORS = VIZ_PALETTE[:N_WELLS]
-WELL_COLOR_MAP = dict(enumerate(WELL_COLORS))
-WELL_CMAP = ListedColormap(WELL_COLORS)
 FILTER_COLORS = get_palette([f for f in OUTLIER_FILTERS if f is not None])
 FILTER_COLORS[None] = '#888888'
 

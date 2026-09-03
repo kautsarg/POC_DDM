@@ -1,8 +1,4 @@
-# main_code
-
-Self-contained CHIP + LAB pipeline, scoped to exactly what
-`gk_code/main/notebook_rq/` needs. Nothing here imports from outside this
-folder; `gk_code/main`, `titan_v6`, and existing datasets are untouched.
+# Point-of-Care Data Driven Multiplexing
 
 ```
 main_code/
@@ -255,3 +251,49 @@ root, both `POC_DDM_final`/`LAB_DDM_paper` derive from it), `CROSS_DATASET_GROUP
 (only `final_6_new`), `LAB_DATASETS_IN_SCOPE` (4 folders), `MODEL_KEY_MAP` (14
 models, including `_aug`/`_mtl` — no `_pc_recentering` entries, that's on-demand
 now), `OUTLIER_FILTERS`.
+
+## Adding a new dataset
+
+### CHIP
+
+1. **Put the raw data** in a new subfolder under `config.DEFAULT_EXP_FOLDER`
+   (`POC_DDM_final/`), same raw instrument-file layout (vref sweep + readout time
+   `.bin` files, titan_v6 format) as an existing chip folder — copy an existing
+   folder's layout as reference.
+2. **Add to `config.py`** (all keyed by the new folder's exact name):
+   - `CROSS_DATASET_GROUPS['final_6_new']` — append the folder name. This is the
+     only group any notebook_rq notebook reads; a chip left out of it (or put in a
+     new group) won't show up in cross-dataset training, embedding-analysis,
+     confidence-shift, or any `RQ2_0x`/`RQ3_0x`/`RQALL` notebook.
+   - `LOFO_EXCLUDE_WELL_MAPPING['final_6_new'][<folder>]` — well indices to drop
+     from LOFO pools for this chip (PC/NC-ALL wells at minimum, e.g. `[8, 9]`; add
+     any other non-target well like `06_02`'s `[6, 8, 9]`).
+   - `LABEL_MAPPINGS[<folder>]` — `{well_idx: target_label}` for all `N_WELLS` (10)
+     wells, PC/NC-ALL included (`'PC'` / `'NC-ALL'`).
+   - `CONC_MAPPINGS[<folder>]` — `{well_idx: concentration}`, `0` for PC/NC-ALL.
+     Feeds `_mtl`'s regression target and XAI concentration coloring.
+   - `EXCLUDE_WELL_MAPPING[<folder>]` — well indices to drop for non-LOFO stages
+     (`ablation6`, `saliency`, plain `cross-dataset --mode kfold`) — usually the
+     same PC/NC-ALL wells as the LOFO mapping.
+3. **Update `slurm_jobs/`** — bump `chip_preprocess.sh` / `chip_ablation6.sh` /
+   `chip_full_pipeline.sh`'s `--array` upper bound to match the new chip count
+   (`len(config.CROSS_DATASET_GROUPS['final_6_new']) - 1`).
+4. **Run** `chip/preprocessing.py --task_id <new chip's index>` first (writes
+   `curve_for_training.joblib`), then `ablation6`/`cross-dataset` as normal.
+
+### LAB
+
+1. **Put the raw data** in a new subfolder under `config.LAB_EXP_FOLDER`
+   (`LAB_DDM_paper/`), containing one CSV with a concentration column and a
+   target/label column (see an existing folder's CSV for the row/column shape).
+2. **Add to `config.py`**: `LAB_DATASETS_IN_SCOPE` — append the folder name.
+3. **Add to `lab/preprocessing.py`** (module-level dicts, not in `config.py` —
+   they're LAB-preprocessing-specific, keyed by the new folder's exact name):
+   `FILE_MAPPING[<folder>]` (the CSV filename inside that folder),
+   `FILE_CONC[<folder>]` (its concentration column name),
+   `FILE_TARGET[<folder>]` (its target/label column name).
+4. **Update `slurm_jobs/`** — bump `lab_preprocess.sh` / `lab_train.sh` /
+   `lab_full_pipeline.sh`'s `--array` upper bound to
+   `len(config.LAB_DATASETS_IN_SCOPE) - 1`.
+5. **Run** `lab/preprocessing.py --task_id <new folder's index>` first, then
+   `lab/training.py` / `lab/saliency.py` as normal.
