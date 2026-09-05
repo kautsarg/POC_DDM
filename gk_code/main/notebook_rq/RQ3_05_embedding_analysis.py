@@ -131,6 +131,10 @@ def pc_recenter(per_chip_emb, per_chip_own_pc, ref_embed):
     return recentered
 
 
+def _well_num(w):
+    return str(w).split("::")[-1]
+
+
 def _scatter_train_held(ax, xy, labels, is_held, color_map):
     train_mask = ~is_held
     for lab, color in color_map.items():
@@ -148,10 +152,13 @@ def _scatter_train_held(ax, xy, labels, is_held, color_map):
 
 def plot_model_grid(model_key, fold_results, chip_colors, seed, save_path):
     n_folds = len(fold_results)
-    fig, axes = plt.subplots(n_folds, 2, figsize=(11, 4.3 * n_folds), facecolor="white", squeeze=False)
+    fig, axes = plt.subplots(n_folds, 3, figsize=(16.5, 4.3 * n_folds), facecolor="white", squeeze=False)
 
     all_targets = sorted({lab for fr in fold_results for lab in np.unique(fr["labels"])})
     target_colors = {t: _PALETTE[i % len(_PALETTE)] for i, t in enumerate(all_targets)}
+    well_vals = sorted({w for fr in fold_results for w in np.unique(fr["well_ids"])},
+                       key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else x))
+    well_colors = {w: _PALETTE[i % len(_PALETTE)] for i, w in enumerate(well_vals)}
 
     for row, fr in enumerate(fold_results):
         ts = TSNE(n_components=2, random_state=seed, init="pca", perplexity=30).fit_transform(fr["embeddings"])
@@ -159,10 +166,12 @@ def plot_model_grid(model_key, fold_results, chip_colors, seed, save_path):
 
         _scatter_train_held(axes[row, 0], ts, fr["labels"], is_held, target_colors)
         _scatter_train_held(axes[row, 1], ts, fr["chip_ids"], is_held, chip_colors)
+        _scatter_train_held(axes[row, 2], ts, fr["well_ids"], is_held, well_colors)
         axes[row, 0].set_ylabel(short_name(fr["held_out"]), fontsize=10, fontweight="bold")
 
     axes[0, 0].set_title("Coloured by target", fontsize=11, fontweight="bold")
     axes[0, 1].set_title("Coloured by chip", fontsize=11, fontweight="bold")
+    axes[0, 2].set_title("Coloured by well", fontsize=11, fontweight="bold")
 
     target_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7, label=str(t))
                       for t, c in target_colors.items()]
@@ -173,12 +182,16 @@ def plot_model_grid(model_key, fold_results, chip_colors, seed, save_path):
         Line2D([0], [0], marker="X", color="none", markerfacecolor="gray", markeredgecolor="black",
               markersize=8, label="held-out chip"),
     ]
+    well_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7,
+                           label=str(w)) for w, c in well_colors.items()]
     fig.legend(handles=target_handles, title="target", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.98), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.99), frameon=False)
     fig.legend(handles=chip_handles, title="chip", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.62), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.72), frameon=False)
+    fig.legend(handles=well_handles, title="well", fontsize=7, title_fontsize=8,
+              loc="upper left", bbox_to_anchor=(1.0, 0.45), frameon=False)
     fig.legend(handles=shape_handles, title="marker", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.28), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.14), frameon=False)
 
     fig.suptitle(f"{model_key} -- {GROUP_NAME}  (row = held-out fold)", fontsize=13, fontweight="bold", y=1.0)
     fig.tight_layout()
@@ -188,10 +201,13 @@ def plot_model_grid(model_key, fold_results, chip_colors, seed, save_path):
 
 def plot_model_comparison_grid(model_entries, held_out, chip_colors, seed, save_path):
     n_models = len(model_entries)
-    fig, axes = plt.subplots(n_models, 2, figsize=(11, 4.3 * n_models), facecolor="white", squeeze=False)
+    fig, axes = plt.subplots(n_models, 3, figsize=(16.5, 4.3 * n_models), facecolor="white", squeeze=False)
 
     all_targets = sorted({lab for _, fr in model_entries for lab in np.unique(fr["labels"])})
     target_colors = {t: _PALETTE[i % len(_PALETTE)] for i, t in enumerate(all_targets)}
+    well_vals = sorted({w for _, fr in model_entries for w in np.unique(fr["well_ids"])},
+                       key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else x))
+    well_colors = {w: _PALETTE[i % len(_PALETTE)] for i, w in enumerate(well_vals)}
 
     for row, (model_label, fr) in enumerate(model_entries):
         ts = TSNE(n_components=2, random_state=seed, init="pca", perplexity=30).fit_transform(fr["embeddings"])
@@ -199,10 +215,12 @@ def plot_model_comparison_grid(model_entries, held_out, chip_colors, seed, save_
 
         _scatter_train_held(axes[row, 0], ts, fr["labels"], is_held, target_colors)
         _scatter_train_held(axes[row, 1], ts, fr["chip_ids"], is_held, chip_colors)
+        _scatter_train_held(axes[row, 2], ts, fr["well_ids"], is_held, well_colors)
         axes[row, 0].set_ylabel(model_label, fontsize=11, fontweight="bold")
 
     axes[0, 0].set_title("Coloured by target", fontsize=11, fontweight="bold")
     axes[0, 1].set_title("Coloured by chip", fontsize=11, fontweight="bold")
+    axes[0, 2].set_title("Coloured by well", fontsize=11, fontweight="bold")
 
     target_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7, label=str(t))
                       for t, c in target_colors.items()]
@@ -213,12 +231,16 @@ def plot_model_comparison_grid(model_entries, held_out, chip_colors, seed, save_
         Line2D([0], [0], marker="X", color="none", markerfacecolor="gray", markeredgecolor="black",
               markersize=8, label="held-out chip"),
     ]
+    well_handles = [Line2D([0], [0], marker="o", color="none", markerfacecolor=c, markersize=7,
+                           label=str(w)) for w, c in well_colors.items()]
     fig.legend(handles=target_handles, title="target", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.98), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.99), frameon=False)
     fig.legend(handles=chip_handles, title="chip", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.62), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.72), frameon=False)
+    fig.legend(handles=well_handles, title="well", fontsize=7, title_fontsize=8,
+              loc="upper left", bbox_to_anchor=(1.0, 0.45), frameon=False)
     fig.legend(handles=shape_handles, title="marker", fontsize=7, title_fontsize=8,
-              loc="upper left", bbox_to_anchor=(1.0, 0.28), frameon=False)
+              loc="upper left", bbox_to_anchor=(1.0, 0.14), frameon=False)
 
     fig.suptitle(f"t-SNE projection of embeddings with {short_name(held_out)} as held-out (crosses)",
                 fontsize=13, fontweight="bold", y=1.0)
@@ -261,7 +283,10 @@ def run_pairwise_comparison(batch_n, seed, models_to_compare, model_labels):
                 held_out=held_out,
                 embeddings=np.concatenate([per_chip_emb[c] for c in cs], axis=0),
                 labels=np.concatenate([aligned[c]["y_labels"] for c in cs], axis=0),
-                chip_ids=np.concatenate([np.full(len(per_chip_emb[c]), c) for c in cs]))
+                chip_ids=np.concatenate([np.full(len(per_chip_emb[c]), c) for c in cs]),
+                well_ids=np.concatenate([np.array([_well_num(w) for w in aligned[c]["well_ids"]])
+                                          if aligned[c]["well_ids"] is not None
+                                          else np.full(len(per_chip_emb[c]), "?") for c in cs]))
             model_entries.append((model_labels[base_model], fr))
 
         tf.keras.backend.clear_session()
@@ -315,7 +340,10 @@ def run(batch_n, seed):
                     held_out=held_out,
                     embeddings=np.concatenate([emb_by_chip[c] for c in cs], axis=0),
                     labels=np.concatenate([aligned[c]["y_labels"] for c in cs], axis=0),
-                    chip_ids=np.concatenate([np.full(len(emb_by_chip[c]), c) for c in cs]))
+                    chip_ids=np.concatenate([np.full(len(emb_by_chip[c]), c) for c in cs]),
+                    well_ids=np.concatenate([np.array([_well_num(w) for w in aligned[c]["well_ids"]])
+                                              if aligned[c]["well_ids"] is not None
+                                              else np.full(len(emb_by_chip[c]), "?") for c in cs]))
 
             fold_results[base_model].append(_stack(per_chip_emb))
 
