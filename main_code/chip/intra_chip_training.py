@@ -169,7 +169,7 @@ def main(argv=None):
     parser.add_argument("--force_rerun", action="store_true")
     args = parser.parse_args(argv)
 
-    print(f"\n{'='*70}\n[RUNNING] chip/ablation6.py\n{'='*70}\n")
+    print(f"\n{'='*70}\n[RUNNING] chip/intra_chip_training.py\n{'='*70}\n")
     set_global_determinism(0, strict=True)
 
     exp_paths = get_scoped_exp_paths(args.exp_folder, config.CROSS_DATASET_GROUPS['final_6_new'])

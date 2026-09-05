@@ -2,7 +2,7 @@
 
 ```
 main_code/
-├── main_chip.py    # dispatcher: preprocess | cross-dataset | ablation6 | saliency
+├── main_chip.py    # dispatcher: preprocess | cross-dataset | intra-chip-training | saliency
 │                    #             | embedding-analysis | confidence-shift
 ├── main_lab.py      # dispatcher: preprocess | train | saliency
 ├── config.py         # shared config (paths, model registry, chip/LAB scope, labels)
@@ -76,10 +76,10 @@ computed on demand at analysis time (see below), not trained.
   `cross_dataset_pc_ttp_recipe_{curve_type}.joblib` — curve alignment artifacts
   (only under the PC-TTP-aligned path).
 
-### `ablation6`
+### `intra-chip-training`
 
 ```
-python main_chip.py ablation6 --exp_folder <dir> --task_id 0 [--force_rerun]
+python main_chip.py intra-chip-training --exp_folder <dir> --task_id 0 [--force_rerun]
     [--curve_type ori_curve_sg_p4_norm] [--n_splits 5] [--batch_size 512]
 ```
 
@@ -99,7 +99,7 @@ python main_chip.py saliency --exp_folder <dir> [--curve_type ori_curve_norm ori
 ```
 
 Saliency + latent-feature-mapping plots for `cnn_gru_dual` / `cnn_gru_dual_attn_recon`,
-against models saved by `ablation6` (`ablations/model_interpretation/`).
+against models saved by `intra-chip-training` (`ablations/model_interpretation/`).
 
 **Writes:** `{exp_folder}/{chip}/ablations/xai_saliency/`.
 
@@ -191,8 +191,8 @@ up `sys.path`/`chdir`).
   → titan_v6 pixel/well linearisation → `chip/preprocessing.py` → `cross-dataset`'s
   curve-alignment pipeline, on one example chip.
 - `chip/RQ2_03_spatial_attn_pooling.ipynb` — per-chip raw vs. `cnn_gru_dual_attn_recon`
-  reconstruction/attention-weighted curves, against `ablation6`'s saved models.
-- `chip/RQ2_05_results.ipynb` — `ablation6`'s per-fold outlier-filter × model results
+  reconstruction/attention-weighted curves, against `intra-chip-training`'s saved models.
+- `chip/RQ2_05_results.ipynb` — `intra-chip-training`'s per-fold outlier-filter × model results
   (`cnn_gru_dual` vs. `cnn_gru_dual_attn_recon`), accuracy/F1/sens/spec tables.
 - `chip/RQ3_01_cv_results.ipynb` — 5-fold cross-chip CV (plain-aligned, `kfold` mode)
   accuracy, `knn`/`cnn_gru_dual`/`cnn_gru_dual_attn_recon`.
@@ -223,9 +223,9 @@ Submit from inside `slurm_jobs/` (logs land in `slurm_jobs/logs/<job-name>/`), m
 the convention in `gk_code/main/slurm_jobs/`. One script per stage, plus a chained
 `*_full_pipeline.sh` per side:
 
-- `chip_preprocess.sh` / `chip_cross_dataset.sh` / `chip_ablation6.sh` /
+- `chip_preprocess.sh` / `chip_cross_dataset.sh` / `chip_intra_chip_training.sh` /
   `chip_saliency.sh` / `chip_embedding_analysis.sh` / `chip_confidence_shift.sh`
-- `chip_full_pipeline.sh` — preprocess → ablation6, array over the 6 `final_6_new`
+- `chip_full_pipeline.sh` — preprocess → intra-chip-training, array over the 6 `final_6_new`
   chips. Saliency/embedding-analysis/confidence-shift need every chip's models at
   once, so they aren't chained inside the array — run as dependent jobs instead:
   ```
@@ -273,13 +273,13 @@ now), `OUTLIER_FILTERS`.
    - `CONC_MAPPINGS[<folder>]` — `{well_idx: concentration}`, `0` for PC/NC-ALL.
      Feeds `_mtl`'s regression target and XAI concentration coloring.
    - `EXCLUDE_WELL_MAPPING[<folder>]` — well indices to drop for non-LOFO stages
-     (`ablation6`, `saliency`, plain `cross-dataset --mode kfold`) — usually the
+     (`intra-chip-training`, `saliency`, plain `cross-dataset --mode kfold`) — usually the
      same PC/NC-ALL wells as the LOFO mapping.
-3. **Update `slurm_jobs/`** — bump `chip_preprocess.sh` / `chip_ablation6.sh` /
+3. **Update `slurm_jobs/`** — bump `chip_preprocess.sh` / `chip_intra_chip_training.sh` /
    `chip_full_pipeline.sh`'s `--array` upper bound to match the new chip count
    (`len(config.CROSS_DATASET_GROUPS['final_6_new']) - 1`).
 4. **Run** `chip/preprocessing.py --task_id <new chip's index>` first (writes
-   `curve_for_training.joblib`), then `ablation6`/`cross-dataset` as normal.
+   `curve_for_training.joblib`), then `intra-chip-training`/`cross-dataset` as normal.
 
 ### LAB
 

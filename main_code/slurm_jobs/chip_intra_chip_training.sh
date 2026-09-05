@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=chip_ablation6
+#SBATCH --job-name=chip_intra_chip_training
 #SBATCH --time=48:00:00
 
 #SBATCH --nodes=1
@@ -20,7 +20,7 @@ cd /vol/bitbucket/gk225/POC_DDM/main_code
 
 EXP_FOLDER=/vol/bitbucket/gk225/POC_DDM_datasets/POC_DDM_final
 
-python -u main_chip.py ablation6 \
+python -u main_chip.py intra-chip-training \
     --task_id "$SLURM_ARRAY_TASK_ID" \
     --exp_folder "$EXP_FOLDER" \
     --n_splits 5
