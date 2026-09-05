@@ -316,7 +316,7 @@ now), `OUTLIER_FILTERS`.
 <br />
 
 ---
-# Folder Mapping
+# Folder Mapping (see 'Experiment' branch)
 
 
 | Folder | Status | What it is |
