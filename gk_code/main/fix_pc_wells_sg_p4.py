@@ -1,18 +1,3 @@
-"""
-One-off patch: adds the 'ori_curves_sg_p4'/'ori_curves_sg_p4_norm' variants into
-curve_for_training.joblib's 'pc_wells' snapshot for experiments where they're
-missing (see check-this-error-275554-3-out-serialized-church.md for the root cause).
-
-pc_wells['curves']['ori_curves'] is already the exact same array
-01_curve_preprocessing_v6.py's own --drop_pc path would feed into
-sg_p4_denoise_curves (process_experiment_data(..., compute_sigmoid_fits=False)
-returns its input curve unchanged) -- so this reproduces what a full --force_rerun
-would produce for these two keys, without re-reading raw files or re-running
-truncation/NC-subtraction. Purely additive: only adds the two new keys, never
-touches or rebuilds the existing ones.
-
-Deletable once the fix is verified (see the plan's Step 4).
-"""
 import os
 import sys
 import argparse
